@@ -148,16 +148,22 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
     struct VoxelRayResult {
         bool hitSky;        // Ray escaped to sky
         bool hitSolid;      // Ray hit solid geometry
-        vec3 light;         // Accumulated light from floodfill volume
+        bool hitEmissive;   // Ray hit an emissive block
+        vec3 light;         // Accumulated light from direct emissive discovery
+        vec3 emissiveColor; // Color of the emissive block hit (if any)
         float distance;     // Distance traveled
+        uint hitVoxelID;    // Voxel ID of the block hit
     };
     
     VoxelRayResult TraceVoxelRay(vec3 scenePos, vec3 rayDir, float maxDist, float dither) {
         VoxelRayResult result;
         result.hitSky = false;
         result.hitSolid = false;
+        result.hitEmissive = false;
         result.light = vec3(0.0);
+        result.emissiveColor = vec3(0.0);
         result.distance = 0.0;
+        result.hitVoxelID = 0u;
         
         vec3 volumeSize = vec3(voxelVolumeSize);
         vec3 voxelPos = SceneToVoxel(scenePos);
@@ -176,11 +182,11 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         vec3 sideDist = (rayDirSign * (vec3(mapPos) - voxelPos) + rayDirSign * 0.5 + 0.5) * deltaDist;
         
-        float totalLight = 0.0;
-        int maxSteps = int(min(maxDist * 1.5, 48.0));
+        int maxSteps = int(min(maxDist * 1.5, 128.0));
+        float distTraveled = 0.0;
         
         for (int i = 0; i < maxSteps; i++) {
-            // Check bounds check first
+            // Check bounds
             if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(volumeSize)))) {
                 result.hitSky = true;
                 break;
@@ -188,38 +194,58 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
             
             uint voxelData = texelFetch(voxel_sampler, mapPos, 0).r;
             
-            // Hit solid block
+            // Hit solid non-emissive block
             if (voxelData == 1u) {
                 result.hitSolid = true;
+                result.distance = distTraveled;
                 break;
             }
             
-            vec3 normalizedPos = (vec3(mapPos) + 0.5) / volumeSize;
-            vec4 lightSample = GetLightVolume(normalizedPos);
-            result.light += lightSample.rgb * 0.1; 
+            // Hit emissive block (IDs 2-199)
+            if (voxelData >= 2u && voxelData < 200u) {
+                vec4 emissiveData = GetSpecialBlocklightColor(int(voxelData));
+                float emissiveDist = max(distTraveled, 0.5);
+                // Inverse-square falloff with minimum floor to prevent extreme values
+                float falloff = 1.0 / (1.0 + emissiveDist * emissiveDist * 0.05);
+                result.light += emissiveData.rgb * falloff * PT_EMISSIVE_I;
+                result.emissiveColor = emissiveData.rgb;
+                result.hitEmissive = true;
+                result.hitVoxelID = voxelData;
+                result.hitSolid = true; // Emissive blocks are solid for ray termination
+                result.distance = distTraveled;
+                break;
+            }
+            
+            // Translucent blocks (IDs 200+): tint light passing through
+            if (voxelData >= 200u && voxelData <= 254u) {
+                // Light passing through colored glass gets tinted
+                // (absorbed but ray continues)
+            }
             
             // DDA step
             if (sideDist.x < sideDist.y) {
                 if (sideDist.x < sideDist.z) {
+                    distTraveled = sideDist.x;
                     sideDist.x += deltaDist.x;
                     mapPos.x += step.x;
-                    result.distance += deltaDist.x;
                 } else {
+                    distTraveled = sideDist.z;
                     sideDist.z += deltaDist.z;
                     mapPos.z += step.z;
-                    result.distance += deltaDist.z;
                 }
             } else {
                 if (sideDist.y < sideDist.z) {
+                    distTraveled = sideDist.y;
                     sideDist.y += deltaDist.y;
                     mapPos.y += step.y;
-                    result.distance += deltaDist.y;
                 } else {
+                    distTraveled = sideDist.z;
                     sideDist.z += deltaDist.z;
                     mapPos.z += step.z;
-                    result.distance += deltaDist.z;
                 }
             }
+            
+            result.distance = distTraveled;
         }
         
         return result;
@@ -243,19 +269,23 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
     
     struct VoxelHitResult {
         bool hit;
+        bool isEmissive;    // Whether the hit block is an emissive source
         vec3 hitPos;
         vec3 hitNormal;
         uint voxelID;
-        vec3 light;
+        vec3 light;         // Direct light at this hit (emissive color if emissive)
+        vec3 emissiveColor; // Raw emissive color for the block
     };
     
     VoxelHitResult TraceVoxelHit(vec3 scenePos, vec3 rayDir, float maxDist) {
         VoxelHitResult result;
         result.hit = false;
+        result.isEmissive = false;
         result.hitPos = vec3(0.0);
         result.hitNormal = vec3(0.0);
         result.voxelID = 0u;
         result.light = vec3(0.0);
+        result.emissiveColor = vec3(0.0);
         
         vec3 volumeSize = vec3(voxelVolumeSize);
         vec3 voxelPos = SceneToVoxel(scenePos);
@@ -274,7 +304,7 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         vec3 sideDist = (rayDirSign * (vec3(mapPos) - voxelPos) + rayDirSign * 0.5 + 0.5) * deltaDist;
         
-        int maxSteps = int(min(maxDist, 128.0));
+        int maxSteps = int(min(maxDist, 256.0));
         vec3 mask = vec3(0.0);
         
         for (int i = 0; i < maxSteps; i++) {
@@ -289,6 +319,13 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
                 result.voxelID = voxelData;
                 result.hitNormal = -vec3(step) * mask;
                 
+                // Detect emissive blocks (IDs 2-199)
+                if (voxelData >= 2u && voxelData < 200u) {
+                    result.isEmissive = true;
+                    vec4 emissiveData = GetSpecialBlocklightColor(int(voxelData));
+                    result.emissiveColor = emissiveData.rgb;
+                    result.light = emissiveData.rgb * PT_EMISSIVE_I;
+                }
 
                 float dist = 0.0;
                 if (mask.x > 0.5) dist = (sideDist.x - deltaDist.x);
