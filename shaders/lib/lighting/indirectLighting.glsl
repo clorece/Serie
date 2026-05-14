@@ -569,7 +569,7 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                         if (!inShadow) {
                             float hitNdotL = max(dot(voxelHit.hitNormal, sunDirBias), 0.0);
                             vec3 sunAlbedo = voxelAlbedo * 20.0 * min(0.25, receiverShadowMask);
-                            directLight = (lightColor * 0.5 + sunAlbedo * 0.5) * 2.0 * hitNdotL * (1.0 - rainFactor * 0.8) * (1.0 - nightFactor * 2.0) + pow2(0.5 - skyLightFactor) * receiverShadowMask;
+                            directLight = (lightColor * 0.5 + sunAlbedo * 0.5) * 2.0 * hitNdotL * (1.0 - rainFactor * 0.8) * (1.0 - nightFactor * 2.0) + pow2(1.0 - skyLightFactor) * receiverShadowMask;
                             directLight *= shadowTint;
                         }
 
@@ -616,7 +616,7 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
 
                         // --- Sky ambient approximation ---
                         float skyExposure = max(lpvLight.a, lpvLightDeep.a);
-                        vec3 skyAmbient = ambientColor * 0.005 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
+                        vec3 skyAmbient = ambientColor * 0.05 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
 
                         // --- Combine ---
                         vec3 bounceColor = directLight 

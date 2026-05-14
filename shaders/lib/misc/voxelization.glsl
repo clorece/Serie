@@ -314,14 +314,12 @@
             if (isEligible && CheckInsideVoxelVolume(voxelPos)) {
                 int voxelData = GetVoxelIDs(mat);
                 
-                // FORCE AIR (0) for excluded blocks to clear them from voxel map
-                // Only clear if it's a standard block (ID 1) OR explicitly a transparent/glass block
-                // This preserves Emissive blocks (ID > 1) because their voxelData will not be 1.
-                // It also clears Non-Solid Standard Blocks (Fences, Bars, Stairs) to prevent shadows.
-                if (voxelData < 200 && ((mat >= 30000 &&  mat != 30020) // Water, Glass, Transparents - Always Clear
-                ||  (voxelData == 1 && ( // Only clear Standard Blocks if they match exclusion:
-                        (mat < 30000 && (mat & 3) == 1) // Fences, Walls, Foliage, Non-full blocks
-                     || (mat < 10000) // Block entities
+                // Clear non-full blocks to air — the PT falls back to screen-space for these.
+                // Transparent blocks (glass, ice) have voxelData >= 200 so they stay in the volume.
+                if (voxelData < 200 && ((mat >= 30000 && mat != 30020) // Water, Glass, Transparents
+                ||  (voxelData == 1 && (
+                        (mat < 10000) // Block entities (chests, signs, etc.)
+                     || (mat < 30000 && (mat & 3) == 1) // All non-full blocks (fences, walls, foliage, stairs, slabs)
                     ))
                 )) {
                     voxelData = 0;
@@ -329,12 +327,14 @@
                 
                 imageStore(voxel_img, ivec3(voxelPos), uvec4(voxelData, 0u, 0u, 0u));
                 
-                // Store Voxel Color
+                // Store Voxel Color — 10-10-10 bit packing with sqrt encoding
+                // sqrt gives perceptual precision: dark colors get more bits
                 vec4 albedo = texture(tex, texCoord) * color;
-                uint r = uint(albedo.r * 255.0);
-                uint g = uint(albedo.g * 255.0);
-                uint b = uint(albedo.b * 255.0);
-                uint packedColor = r | (g << 8) | (b << 16);
+                vec3 encoded = sqrt(clamp(albedo.rgb, 0.0, 1.0)); // sqrt for perceptual encoding
+                uint r = uint(encoded.r * 1023.0);
+                uint g = uint(encoded.g * 1023.0);
+                uint b = uint(encoded.b * 1023.0);
+                uint packedColor = r | (g << 10) | (b << 20);
                 imageStore(voxel_color_img, ivec3(voxelPos), uvec4(packedColor, 0u, 0u, 0u));
             }
         }

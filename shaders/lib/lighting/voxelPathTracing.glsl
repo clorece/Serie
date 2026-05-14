@@ -87,7 +87,7 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         if (all(greaterThan(upSamplePos, vec3(0.5))) && all(lessThan(upSamplePos, volumeSize - 0.5))) {
             uint aboveVoxel = texelFetch(voxel_sampler, ivec3(upSamplePos), 0).r;
             if (aboveVoxel >= 1u && aboveVoxel < 200u) {
-                skyExposure *= 0.3;
+                skyExposure *= 1.0;
             }
         }
         
@@ -103,43 +103,53 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         }
         
         float occlusion = 0.0;
-        float totalWeight = 0.0;
         
-        const int VOXEL_AO_SAMPLES = 8;
-        const float VOXEL_AO_RADIUS = 1.0;
+        const int VOXEL_AO_SAMPLES = 16;
+        const float VOXEL_AO_RADIUS = 4.0;
         
         vec3 tangent, bitangent;
         BuildOrthonormalBasis(normal, tangent, bitangent);
         
+        // Offset starting position slightly along normal to avoid self-occlusion
+        vec3 startPos = voxelPos + normal * 0.15;
+        
         for (int i = 0; i < VOXEL_AO_SAMPLES; i++) {
-            vec2 Xi = R2Sequence(i, int(dither * 1000.0));
+            vec2 Xi = R2Sequence(i, int(dither * 7919.0));
             Xi = CranleyPattersonRotation(Xi, dither);
             vec3 sampleDir = SampleHemisphereCosine(Xi);
             sampleDir = normalize(tangent * sampleDir.x + bitangent * sampleDir.y + normal * sampleDir.z);
-
-            for (float dist = 1.0; dist <= VOXEL_AO_RADIUS; dist += 1.0) {
-                vec3 samplePos = voxelPos + sampleDir * dist;
+            
+            // DDA ray march for accurate intersection
+            float hitDist = VOXEL_AO_RADIUS;
+            bool hitSolid = false;
+            
+            for (float dist = 0.5; dist <= VOXEL_AO_RADIUS; dist += 0.75) {
+                vec3 samplePos = startPos + sampleDir * dist;
                 
                 if (any(lessThan(samplePos, vec3(0.5))) || any(greaterThanEqual(samplePos, volumeSize - 0.5))) {
-                    continue;
+                    break;
                 }
                 
                 uint voxelData = texelFetch(voxel_sampler, ivec3(samplePos), 0).r;
 
-                if (voxelData == 1u) {
-                    float weight = 1.0 - (dist / VOXEL_AO_RADIUS);
-                    weight = weight * weight;
-                    occlusion += weight;
-                    totalWeight += weight;
+                // Any solid or emissive block causes occlusion
+                if (voxelData >= 1u && voxelData < 200u) {
+                    hitDist = dist;
+                    hitSolid = true;
                     break;
                 }
-                totalWeight += (1.0 - dist / VOXEL_AO_RADIUS) * 0.5;
+            }
+            
+            if (hitSolid) {
+                // Stronger occlusion for closer hits, smooth falloff
+                float normalizedDist = hitDist / VOXEL_AO_RADIUS;
+                float aoContrib = 1.0 - normalizedDist;
+                aoContrib = aoContrib * aoContrib; // Quadratic falloff
+                occlusion += aoContrib;
             }
         }
         
-        if (totalWeight > 0.0) {
-            occlusion /= totalWeight;
-        }
+        occlusion /= float(VOXEL_AO_SAMPLES);
         
         return clamp(occlusion, 0.0, 1.0);
     }
@@ -260,11 +270,13 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         if (packedColor == 0u) return vec3(0.5); // Fallback
         
-        float r = float(packedColor & 0xFFu) / 255.0;
-        float g = float((packedColor >> 8) & 0xFFu) / 255.0;
-        float b = float((packedColor >> 16) & 0xFFu) / 255.0;
+        // Decode 10-10-10 bit sqrt-encoded color
+        float r = float(packedColor & 0x3FFu) / 1023.0;
+        float g = float((packedColor >> 10) & 0x3FFu) / 1023.0;
+        float b = float((packedColor >> 20) & 0x3FFu) / 1023.0;
         
-        return vec3(r, g, b);
+        // Square to reverse sqrt encoding → back to linear space
+        return vec3(r * r, g * g, b * b);
     }
     
     struct VoxelHitResult {
