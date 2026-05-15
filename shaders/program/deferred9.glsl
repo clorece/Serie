@@ -523,7 +523,7 @@ void main() {
                 float pureAdditive = 0.3 * intensityRatio;
                 float albedoMod = 1.0 - pureAdditive;
 
-               vec3 colorAdd = mix(color, (gi * albedo * finalAO) * 1.0, 0.5) * 1.2;
+               vec3 colorAdd = mix(color, (gi * albedo * finalAO) * 1.0, 0.5) * 0.75;
                //vec3 colorAdd = (gi * albedo * finalAO) * 0.5 + color * 0.5;
                 //vec3 colorAdd = color * 0.5 + (gi * albedo * finalAO) + emissiveColor * PT_EMISSIVE_I;
                 

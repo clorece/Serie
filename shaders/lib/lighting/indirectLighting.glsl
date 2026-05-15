@@ -573,29 +573,8 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                             directLight *= shadowTint;
                         }
 
-                        // --- Self-sufficient emissive discovery with shadow verification ---
-                        // Trace short rays from the bounce hit to find nearby emissive blocks,
-                        // then verify line-of-sight with a shadow ray
                         vec3 discoveredEmissive = vec3(0.0);
                         vec3 hitScenePos = voxelHit.hitPos + voxelHit.hitNormal * 0.1;
-                        
-                        const int EMISSIVE_DISCOVERY_RAYS = 3;
-                        for (int er = 0; er < EMISSIVE_DISCOVERY_RAYS; er++) {
-                            int erSeed = seed * 100 + er + bounce * 37;
-                            vec3 erDir = RayDirection(voxelHit.hitNormal, dither, erSeed);
-                            VoxelRayResult emissiveTrace = TraceVoxelRay(hitScenePos, erDir, 24.0, fract(dither + float(erSeed) * PHI_INV));
-                            
-                            if (emissiveTrace.hitEmissive) {
-                                // The ray traced directly to the emitter through the DDA,
-                                // so line-of-sight is already confirmed (it would have hit
-                                // a solid block first if occluded). Apply NdotL weighting.
-                                float erNdotL = max(dot(voxelHit.hitNormal, erDir), 0.0);
-                                float erDist = max(emissiveTrace.distance, 0.5);
-                                float erFalloff = 1.0 / (1.0 + erDist * erDist * 0.04);
-                                discoveredEmissive += emissiveTrace.light * erNdotL * erFalloff;
-                            }
-                        }
-                        discoveredEmissive /= float(EMISSIVE_DISCOVERY_RAYS);
                         
                         // --- LPV for ambient fill with directional weighting ---
                         vec3 samplePos = voxelHit.hitPos + voxelHit.hitNormal * 0.5;
@@ -612,11 +591,11 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                         
                         // Use the minimum of near and deep samples to reduce bleed
                         vec3 lpvFinal = min(lpvLight.rgb, lpvLightDeep.rgb);
-                        vec3 lpvAmbient = lpvFinal * voxelAlbedo * 0.1;
+                        vec3 lpvAmbient = lpvFinal * voxelAlbedo * 1.0;
 
                         // --- Sky ambient approximation ---
                         float skyExposure = max(lpvLight.a, lpvLightDeep.a);
-                        vec3 skyAmbient = ambientColor * 0.05 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
+                        vec3 skyAmbient = ambientColor * 5.0 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
 
                         // --- Combine ---
                         vec3 bounceColor = directLight 
