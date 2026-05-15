@@ -137,11 +137,12 @@ vec2 texelSize = 1.0 / vec2(viewWidth, viewHeight);
         vec3 endVoxel = SceneToVoxel(endWorld);
         vec3 volumeSize = vec3(voxelVolumeSize);
 
-        int steps = 24; 
         vec3 dir = endVoxel - startVoxel;
         float dist = length(dir);
-        if (dist < 0.001) return tint;
+        if (dist < 0.2) return tint;
         
+        // Scale steps by distance to avoid redundant fetches for short segments
+        int steps = clamp(int(dist * 1.2), 2, 20); 
         vec3 stepDir = dir / float(steps);
         vec3 pos = startVoxel;
 
@@ -158,6 +159,9 @@ vec2 texelSize = 1.0 / vec2(viewWidth, viewHeight);
                 int idx = int(id) - 200;
                 tint *= specialTintColorPT[idx];
             }
+
+            // Early exit if tint is near black
+            if (dot(tint, tint) < 0.001) break;
         }
         return tint;
     }
@@ -268,7 +272,8 @@ RayHit MarchRay(vec3 start, vec3 rayDir, sampler2D depthtex, vec2 screenEdge, fl
         minZ = maxZ - biasamount / currZ;
         maxZ = rayScreen.z;
 
-        stepSize = min(stepSize, 0.1) * 2.5;
+        stepSize *= 1.4; // More stable growth than 2.5x jump
+        stepSize = min(stepSize, 0.4);
     }
     
     return result;

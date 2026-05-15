@@ -115,17 +115,29 @@ vec4 GetLightSample(sampler3D lightSampler, ivec3 pos) {
 	return texelFetch(lightSampler, pos, 0);
 }
 
-vec4 GetLightAverage(sampler3D lightSampler, ivec3 pos, ivec3 voxelVolumeSize) {
-	vec4 light_old = GetLightSample(lightSampler, pos);
-	vec4 light_px  = GetLightSample(lightSampler, clamp(pos + face_offsets[0], ivec3(0), voxelVolumeSize - 1));
-	vec4 light_py  = GetLightSample(lightSampler, clamp(pos + face_offsets[1], ivec3(0), voxelVolumeSize - 1));
-	vec4 light_pz  = GetLightSample(lightSampler, clamp(pos + face_offsets[2], ivec3(0), voxelVolumeSize - 1));
-	vec4 light_nx  = GetLightSample(lightSampler, clamp(pos + face_offsets[3], ivec3(0), voxelVolumeSize - 1));
-	vec4 light_ny  = GetLightSample(lightSampler, clamp(pos + face_offsets[4], ivec3(0), voxelVolumeSize - 1));
-	vec4 light_nz  = GetLightSample(lightSampler, clamp(pos + face_offsets[5], ivec3(0), voxelVolumeSize - 1));
+vec4 GetLightAverage(sampler3D lightSampler, ivec3 pos, ivec3 voxelVolumeSize, out vec4 light_py) {
+    // Branchless(ish) bounds check for performance - most voxels are not on the edge
+    if (all(greaterThan(pos, ivec3(0))) && all(lessThan(pos, voxelVolumeSize - 1))) {
+        vec4 light_old = GetLightSample(lightSampler, pos);
+        vec4 light_px  = GetLightSample(lightSampler, pos + face_offsets[0]);
+        light_py       = GetLightSample(lightSampler, pos + face_offsets[1]);
+        vec4 light_pz  = GetLightSample(lightSampler, pos + face_offsets[2]);
+        vec4 light_nx  = GetLightSample(lightSampler, pos + face_offsets[3]);
+        vec4 light_ny  = GetLightSample(lightSampler, pos + face_offsets[4]);
+        vec4 light_nz  = GetLightSample(lightSampler, pos + face_offsets[5]);
 
-	vec4 light = light_old + light_px + light_py + light_pz + light_nx + light_ny + light_nz;
-    return light / 7.2; // Slightly higher than 7 to prevent the light from travelling too far
+        return (light_old + light_px + light_py + light_pz + light_nx + light_ny + light_nz) / 7.2;
+    } else {
+        vec4 light_old = GetLightSample(lightSampler, pos);
+        vec4 light_px  = GetLightSample(lightSampler, clamp(pos + face_offsets[0], ivec3(0), voxelVolumeSize - 1));
+        light_py       = GetLightSample(lightSampler, clamp(pos + face_offsets[1], ivec3(0), voxelVolumeSize - 1));
+        vec4 light_pz  = GetLightSample(lightSampler, clamp(pos + face_offsets[2], ivec3(0), voxelVolumeSize - 1));
+        vec4 light_nx  = GetLightSample(lightSampler, clamp(pos + face_offsets[3], ivec3(0), voxelVolumeSize - 1));
+        vec4 light_ny  = GetLightSample(lightSampler, clamp(pos + face_offsets[4], ivec3(0), voxelVolumeSize - 1));
+        vec4 light_nz  = GetLightSample(lightSampler, clamp(pos + face_offsets[5], ivec3(0), voxelVolumeSize - 1));
+
+        return (light_old + light_px + light_py + light_pz + light_nx + light_ny + light_nz) / 7.2;
+    }
 }
 
 //Includes//
@@ -166,6 +178,7 @@ void main() {
 	}
 
 	vec4 light = vec4(0.0);
+    vec4 lightAbove = vec4(0.0);
 	uint voxel = texelFetch(voxel_sampler, pos, 0).x;
 
 	if ((frameCounter & 1) == 0) {
@@ -175,7 +188,7 @@ void main() {
 				return;
 			}
 		#endif
-		light = GetLightAverage(floodfill_sampler, previousPos, voxelVolumeSize);
+		light = GetLightAverage(floodfill_sampler, previousPos, voxelVolumeSize, lightAbove);
 	} else {
 		#ifdef OPTIMIZATION_ACL_HALF_RATE_UPDATES
 			if (posM.x > 0.5) {
@@ -183,7 +196,7 @@ void main() {
 				return;
 			}
 		#endif
-		light = GetLightAverage(floodfill_sampler_copy, previousPos, voxelVolumeSize);
+		light = GetLightAverage(floodfill_sampler_copy, previousPos, voxelVolumeSize, lightAbove);
 	}
 
 	if (voxel == 0u || voxel >= 200u) {
@@ -208,12 +221,8 @@ void main() {
                 skyAlpha = baseSkyStrength * 0.2;
             } else {
                 // Use the averaged alpha from neighbors (already in 'light.a')
-                // and apply a tiny bit of vertical bias towards the neighbor above
-                vec4 aboveLight;
-                if ((frameCounter & 1) == 0) aboveLight = GetLightSample(floodfill_sampler, previousPos + ivec3(0, 1, 0));
-                else aboveLight = GetLightSample(floodfill_sampler_copy, previousPos + ivec3(0, 1, 0));
-                
-                skyAlpha = max(light.a, aboveLight.a * 0.99);
+                // and apply vertical bias towards neighbor above to favor top-down propagation
+                skyAlpha = max(light.a, lightAbove.a * 0.98);
                 skyInject = ambientColor * skyAlpha * 2.0;
             }
 

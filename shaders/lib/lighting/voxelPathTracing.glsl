@@ -104,14 +104,13 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         float occlusion = 0.0;
         
-        const int VOXEL_AO_SAMPLES = 12;
-        const float VOXEL_AO_RADIUS = 4.0;
+        const int VOXEL_AO_SAMPLES = 8;
+        const float VOXEL_AO_RADIUS = 3.5;
         
         vec3 tangent, bitangent;
         BuildOrthonormalBasis(normal, tangent, bitangent);
         
-        // Offset starting position slightly along normal to avoid self-occlusion
-        vec3 startPos = voxelPos + normal * 0.15;
+        vec3 startPos = voxelPos + normal * 0.25;
         
         for (int i = 0; i < VOXEL_AO_SAMPLES; i++) {
             vec2 Xi = R2Sequence(i, int(dither * 7919.0));
@@ -122,10 +121,10 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
             float hitDist = VOXEL_AO_RADIUS;
             bool hitSolid = false;
             
-            // Fast loop with 3-4 steps for robustness against small voxels
-            for (float d = 0.6; d <= VOXEL_AO_RADIUS; d += 1.2) {
+            // Reduced steps for AO, relying more on temporal filtering for smoothness
+            for (float d = 0.8; d <= VOXEL_AO_RADIUS; d += 1.3) {
                 vec3 samplePos = startPos + sampleDir * d;
-                if (CheckInsideVoxelVolume(samplePos)) {
+                if (all(greaterThanEqual(samplePos, vec3(0.5))) && all(lessThan(samplePos, volumeSize - 0.5))) {
                     uint voxel = texelFetch(voxel_sampler, ivec3(samplePos), 0).r;
                     if (voxel >= 1u && voxel < 200u) {
                         hitDist = d;
@@ -136,16 +135,11 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
             }
             
             if (hitSolid) {
-                float normalizedDist = hitDist / VOXEL_AO_RADIUS;
-                float aoContrib = 1.0 - normalizedDist;
-                aoContrib = aoContrib * aoContrib;
-                occlusion += aoContrib;
+                occlusion += pow2(1.0 - hitDist / VOXEL_AO_RADIUS);
             }
         }
         
-        occlusion /= float(VOXEL_AO_SAMPLES);
-        
-        return clamp(occlusion, 0.0, 1.0);
+        return clamp(occlusion / float(VOXEL_AO_SAMPLES), 0.0, 1.0);
     }
     
 
@@ -186,44 +180,33 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         vec3 sideDist = (rayDirSign * (vec3(mapPos) - voxelPos) + rayDirSign * 0.5 + 0.5) * deltaDist;
         
-        int maxSteps = int(min(maxDist * 1.5, 128.0));
+        // --- Exit distance calculation to reduce bounds checks ---
+        vec3 tExit = (max(rayDirSign, 0.0) * volumeSize - voxelPos) / rayDir;
+        float exitDist = min(min(tExit.x, tExit.y), tExit.z);
+        float maxDDA = min(maxDist, exitDist);
+
+        int maxSteps = int(min(maxDDA * 1.5, 96.0));
         float distTraveled = 0.0;
         
         for (int i = 0; i < maxSteps; i++) {
-            // Check bounds
-            if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(volumeSize)))) {
-                result.hitSky = true;
-                break;
-            }
-            
             uint voxelData = texelFetch(voxel_sampler, mapPos, 0).r;
             
-            // Hit solid non-emissive block
             if (voxelData == 1u) {
                 result.hitSolid = true;
                 result.distance = distTraveled;
                 break;
             }
             
-            // Hit emissive block (IDs 2-199)
             if (voxelData >= 2u && voxelData < 200u) {
                 vec4 emissiveData = GetSpecialBlocklightColor(int(voxelData));
-                float emissiveDist = max(distTraveled, 0.5);
-                // Inverse-square falloff with minimum floor to prevent extreme values
-                float falloff = 1.0 / (1.0 + emissiveDist * emissiveDist * 0.05);
+                float falloff = 1.0 / (1.0 + max(distTraveled, 0.5) * distTraveled * 0.05);
                 result.light += emissiveData.rgb * falloff * PT_EMISSIVE_I;
                 result.emissiveColor = emissiveData.rgb;
                 result.hitEmissive = true;
                 result.hitVoxelID = voxelData;
-                result.hitSolid = true; // Emissive blocks are solid for ray termination
+                result.hitSolid = true;
                 result.distance = distTraveled;
                 break;
-            }
-            
-            // Translucent blocks (IDs 200+): tint light passing through
-            if (voxelData >= 200u && voxelData <= 254u) {
-                // Light passing through colored glass gets tinted
-                // (absorbed but ray continues)
             }
             
             // DDA step
@@ -249,6 +232,7 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
                 }
             }
             
+            if (distTraveled > maxDDA) break;
             result.distance = distTraveled;
         }
         
@@ -310,14 +294,15 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         vec3 sideDist = (rayDirSign * (vec3(mapPos) - voxelPos) + rayDirSign * 0.5 + 0.5) * deltaDist;
         
-        int maxSteps = int(min(maxDist, 128.0));
+        // --- Exit distance calculation ---
+        vec3 tExit = (max(rayDirSign, 0.0) * volumeSize - voxelPos) / rayDir;
+        float exitDist = min(min(tExit.x, tExit.y), tExit.z);
+        float maxDDA = min(maxDist, exitDist);
+
+        int maxSteps = int(min(maxDDA, 96.0));
         vec3 mask = vec3(0.0);
         
         for (int i = 0; i < maxSteps; i++) {
-            if (any(lessThan(mapPos, ivec3(0))) || any(greaterThanEqual(mapPos, ivec3(volumeSize)))) {
-                break;
-            }
-            
             uint voxelData = texelFetch(voxel_sampler, mapPos, 0).r;
 
             if (voxelData > 0u) {
@@ -325,7 +310,6 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
                 result.voxelID = voxelData;
                 result.hitNormal = -vec3(step) * mask;
                 
-                // Detect emissive blocks (IDs 2-199)
                 if (voxelData >= 2u && voxelData < 200u) {
                     result.isEmissive = true;
                     vec4 emissiveData = GetSpecialBlocklightColor(int(voxelData));
@@ -366,6 +350,8 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
                     mask.z = 1.0;
                 }
             }
+
+            if (min(min(sideDist.x, sideDist.y), sideDist.z) > maxDDA + 1.0) break;
         }
         
         return result;
