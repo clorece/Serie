@@ -19,7 +19,16 @@ vec3 SampleShadow(vec3 shadowPos, float colorMult, float colorPow) {
 }
 
 float InterleavedGradientNoiseForShadows() {
-    float n = 52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y);
+    vec2 coord;
+    #ifdef FRAGMENT_SHADER
+        coord = gl_FragCoord.xy;
+    #elif defined SHADOWCOMP
+        coord = vec2(gl_GlobalInvocationID.xy);
+    #else
+        coord = vec2(0.0);
+    #endif
+
+    float n = 52.9829189 * fract(0.06711056 * coord.x + 0.00583715 * coord.y);
     #if !defined GBUFFERS_ENTITIES && !defined GBUFFERS_HAND && !defined GBUFFERS_TEXTURED && defined TAA
         return fract(n + goldenRatio * mod(float(frameCounter), 3600.0));
     #else

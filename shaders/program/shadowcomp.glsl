@@ -5,6 +5,14 @@
 //Common//
 #include "/lib/common.glsl"
 
+#if defined SHADOWCOMP
+	vec3 upVec = normalize(gbufferModelView[1].xyz);
+	vec3 sunVec = normalize(sunPosition);
+	#include "/lib/commonVariables.glsl"
+#endif
+
+#include "/lib/colors/lightAndAmbientColors.glsl"
+
 //////////Shadowcomp 1//////////Shadowcomp 1//////////Shadowcomp 1//////////
 #if defined SHADOWCOMP && COLORED_LIGHTING_INTERNAL > 0 && COLORED_LIGHTING > 0
 
@@ -122,6 +130,14 @@ vec4 GetLightAverage(sampler3D lightSampler, ivec3 pos, ivec3 voxelVolumeSize) {
 
 //Includes//
 #include "/lib/misc/voxelization.glsl"
+#include "/lib/util/spaceConversion.glsl"
+#include "/lib/lighting/shadowSampling.glsl"
+
+//Voxel to Scene Function//
+vec3 VoxelToScene(vec3 voxelPos) {
+    return voxelPos - vec3(voxelVolumeSize) * 0.5 
+           + (floor(cameraPosition) - cameraPosition);
+}
 
 //Program//
 void main() {
@@ -153,10 +169,6 @@ void main() {
 	uint voxel = texelFetch(voxel_sampler, pos, 0).x;
 
 	if ((frameCounter & 1) == 0) {
-		if (voxel == 1u) {
-			imageStore(floodfill_img_copy, pos, vec4(0.0));
-			return;
-		}
 		#ifdef OPTIMIZATION_ACL_HALF_RATE_UPDATES
 			if (posM.x < 0.5) {
 				imageStore(floodfill_img_copy, pos, GetLightSample(floodfill_sampler, previousPos));
@@ -165,10 +177,6 @@ void main() {
 		#endif
 		light = GetLightAverage(floodfill_sampler, previousPos, voxelVolumeSize);
 	} else {
-		if (voxel == 1u) {
-			imageStore(floodfill_img, pos, vec4(0.0));
-			return;
-		}
 		#ifdef OPTIMIZATION_ACL_HALF_RATE_UPDATES
 			if (posM.x > 0.5) {
 				imageStore(floodfill_img, pos, GetLightSample(floodfill_sampler_copy, previousPos));
@@ -184,10 +192,11 @@ void main() {
 			light.rgb *= tint;
 		}
 		
-		// ============ SKYLIGHT INJECTION ============
-		// Trace upward to check if this voxel can see the sky
 		#if defined OVERWORLD
+			// --- Sky + Sun injection ---
+			// Trace upward to find sky exposure
 			bool canSeeSky = true;
+			vec3 accumulatedTint = vec3(1.0);
 			int maxTraceHeight = min(voxelVolumeSize.y - pos.y - 1, 64);
 			
 			for (int i = 1; i <= maxTraceHeight; i++) {
@@ -195,36 +204,143 @@ void main() {
 				if (checkPos.y >= voxelVolumeSize.y) break;
 				
 				uint checkVoxel = texelFetch(voxel_sampler, checkPos, 0).x;
-				// If we hit a solid block, no sky visibility
-				if (checkVoxel == 1u) {
-					canSeeSky = false;
-					break;
-				}
-				// Transparent blocks reduce but don't block
+				if (checkVoxel == 1u) { canSeeSky = false; break; }
 				if (checkVoxel >= 200u && checkVoxel < 254u) {
-					// Continue but sky will be tinted
+					accumulatedTint *= specialTintColor[checkVoxel - 200u];
 				}
 			}
 			
 			if (canSeeSky) {
-				// Inject skylight - use a sky blue color that matches ambient
-				vec3 skylightColor = vec3(0.6, 0.75, 1.0) * 0.8; // Daylight blue-white (reduced)
-				
-				// Lower intensity at direct injection points
 				float heightFactor = float(pos.y) / float(voxelVolumeSize.y);
-				float skylightIntensity = 1.5 * (0.3 + heightFactor * 0.7);
 				
-				// Blend skylight with existing light (don't override emissive)
-				light.rgb = max(light.rgb, skylightColor * skylightIntensity);
-				light.a = max(light.a, skylightIntensity * 0.15);
+				// Sky ambient — use actual ambientColor uniform
+				// attenuated by height (deeper = less sky)
+				float skyStrength = 2.0 * (0.4 + 0.6 * heightFactor);
+				vec3 skyInject = ambientColor * skyStrength * accumulatedTint;
+				
+				// Sun injection — only if sun is up and this voxel faces it
+				// Use the shadowmap to check if this world position is lit
+				vec3 scenePos = VoxelToScene(vec3(pos));
+				vec3 worldPos = scenePos + cameraPosition;
+				vec3 shadowPos = GetShadowPos(worldPos - cameraPosition);
+				
+				bool inSunlight = false;
+				if (length(shadowPos.xy * 2.0 - 1.0) < 0.95) {
+					float shadowSample = texture(shadowtex1, shadowPos).x;
+					inSunlight = shadowSample > 0.5;
+				}
+				
+				if (inSunlight) {
+					// Inject direct sunlight — use lightColor uniform
+					// Scale by nightFactor so it fades at night
+					float sunStrength = 0.1 * (1.0 - nightFactor * 0.9);
+					skyInject += lightColor * sunStrength * accumulatedTint;
+				}
+				
+				light.rgb = max(light.rgb, skyInject);
+				light.a   = max(light.a, skyStrength * 0.2);
+			}
+			
+			// --- Horizontal sky injection ---
+			// Check 4 horizontal directions for open air leading outside
+			// This is what makes cave openings bleed light inward
+			ivec3 horizDirs[4] = ivec3[4](
+				ivec3(1, 0, 0), ivec3(-1, 0, 0),
+				ivec3(0, 0, 1), ivec3(0, 0, -1)
+			);
+			
+			for (int d = 0; d < 4; d++) {
+				bool horizOpenToSky = false;
+				int horizSteps = min(16, 
+					horizDirs[d].x > 0 ? voxelVolumeSize.x - pos.x - 1 :
+					horizDirs[d].x < 0 ? pos.x :
+					horizDirs[d].z > 0 ? voxelVolumeSize.z - pos.z - 1 : pos.z
+				);
+				
+				for (int s = 1; s <= horizSteps; s++) {
+					ivec3 checkPos = pos + horizDirs[d] * s;
+					uint checkVoxel = texelFetch(voxel_sampler, checkPos, 0).x;
+					if (checkVoxel == 1u) break; // hit solid wall, stop
+					
+					// Check if this horizontal position can see the sky
+					bool colCanSeeSky = true;
+					int upSteps = min(voxelVolumeSize.y - checkPos.y - 1, 32);
+					for (int u = 1; u <= upSteps; u++) {
+						ivec3 upPos = checkPos + ivec3(0, u, 0);
+						if (upPos.y >= voxelVolumeSize.y) break;
+						uint upVoxel = texelFetch(voxel_sampler, upPos, 0).x;
+						if (upVoxel == 1u) { colCanSeeSky = false; break; }
+					}
+					
+					if (colCanSeeSky) {
+						horizOpenToSky = true;
+						// Attenuate by horizontal distance
+						float horizFalloff = 1.0 - float(s) / float(horizSteps);
+						horizFalloff = horizFalloff * horizFalloff;
+						
+						vec3 horizSky = ambientColor * 1.0 * horizFalloff;
+						// Add some sun color for side-lit openings
+						horizSky += lightColor * 0.3 * horizFalloff * (1.0 - nightFactor);
+						
+						light.rgb = max(light.rgb, horizSky);
+						light.a   = max(light.a, horizFalloff * 0.1);
+						break;
+					}
+				}
 			}
 		#endif
-		// ============ END SKYLIGHT INJECTION ============
+		
+	} else if (voxel == 1u) {
+		// voxel == 1u: solid block
+		// Instead of just zeroing, check if this surface is sunlit
+		// and inject a small amount of bounced light into the volume
+		
+		#if defined OVERWORLD
+			vec3 scenePos = VoxelToScene(vec3(pos));
+			vec3 worldPos = scenePos + cameraPosition;
+			vec3 shadowPos = GetShadowPos(worldPos - cameraPosition);
+			
+			bool surfaceInSun = false;
+			if (length(shadowPos.xy * 2.0 - 1.0) < 0.95) {
+				float shadowSample = texture(shadowtex1, shadowPos).x;
+				surfaceInSun = shadowSample > 0.5;
+			}
+			
+			if (surfaceInSun) {
+				// Approximate albedo of this block from voxel_color_sampler
+				uint packedColor = texelFetch(voxel_color_sampler, pos, 0).r;
+				vec3 blockAlbedo = vec3(0.5); // fallback
+				if (packedColor != 0u) {
+					float r = float(packedColor & 0x3FFu) / 1023.0;
+					float g = float((packedColor >> 10) & 0x3FFu) / 1023.0;
+					float b = float((packedColor >> 20) & 0x3FFu) / 1023.0;
+					blockAlbedo = vec3(r*r, g*g, b*b); // unsqrt
+				}
+				
+				// Single bounce: albedo * lightColor = reflected color
+				// This is what makes grass tint the cave green, dirt make it warm, etc.
+				vec3 bounceLight = blockAlbedo * lightColor * 1.0 * (1.0 - nightFactor * 0.9);
+				
+				if ((frameCounter & 1) == 0) {
+					imageStore(floodfill_img_copy, pos, vec4(bounceLight, 0.1));
+				} else {
+					imageStore(floodfill_img, pos, vec4(bounceLight, 0.1));
+				}
+				return;
+			}
+		#endif
+		
+		// Not in sunlight: write zero as before
+		if ((frameCounter & 1) == 0) {
+			imageStore(floodfill_img_copy, pos, vec4(0.0));
+		} else {
+			imageStore(floodfill_img, pos, vec4(0.0));
+		}
+		return;
 		
 	} else {
 		vec4 color = GetSpecialBlocklightColor(int(voxel));
 		color.rgb *= 4.0 * PT_EMISSIVE_I;
-		
 		
 		#if defined OVERWORLD
 			int solidBlocksAbove = 0;
@@ -243,8 +359,6 @@ void main() {
 			float skySuppress = 1.0 * pow2(eyeBrightnessSmooth.y / 255.0 * 0.75) * daytimeFactor;// * (1.0 - isEyeInCave);
 			color.rgb *= 1.0 - skySuppress;
 		#endif
-		
-		
 
 		light = vec4(pow2(color.rgb), color.a);
 	}
