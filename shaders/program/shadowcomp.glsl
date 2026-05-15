@@ -193,101 +193,44 @@ void main() {
 		}
 		
 		#if defined OVERWORLD
-			// --- Sky + Sun injection ---
-			// Trace upward to find sky exposure
-			bool canSeeSky = true;
-			vec3 accumulatedTint = vec3(1.0);
-			int maxTraceHeight = min(voxelVolumeSize.y - pos.y - 1, 64);
-			
-			for (int i = 1; i <= maxTraceHeight; i++) {
-				ivec3 checkPos = pos + ivec3(0, i, 0);
-				if (checkPos.y >= voxelVolumeSize.y) break;
-				
-				uint checkVoxel = texelFetch(voxel_sampler, checkPos, 0).x;
-				if (checkVoxel == 1u) { canSeeSky = false; break; }
-				if (checkVoxel >= 200u && checkVoxel < 254u) {
-					accumulatedTint *= specialTintColor[checkVoxel - 200u];
-				}
-			}
-			
-			if (canSeeSky) {
-				float heightFactor = float(pos.y) / float(voxelVolumeSize.y);
-				
-				// Sky ambient — use actual ambientColor uniform
-				// attenuated by height (deeper = less sky)
-				float skyStrength = 2.0 * (0.4 + 0.6 * heightFactor);
-				vec3 skyInject = ambientColor * skyStrength * accumulatedTint;
-				
-				// Sun injection — only if sun is up and this voxel faces it
-				// Use the shadowmap to check if this world position is lit
-				vec3 scenePos = VoxelToScene(vec3(pos));
-				vec3 worldPos = scenePos + cameraPosition;
-				vec3 shadowPos = GetShadowPos(worldPos - cameraPosition);
-				
-				bool inSunlight = false;
-				if (length(shadowPos.xy * 2.0 - 1.0) < 0.95) {
-					float shadowSample = texture(shadowtex1, shadowPos).x;
-					inSunlight = shadowSample > 0.5;
-				}
-				
-				if (inSunlight) {
-					// Inject direct sunlight — use lightColor uniform
-					// Scale by nightFactor so it fades at night
-					float sunStrength = 0.1 * (1.0 - nightFactor * 0.9);
-					skyInject += lightColor * sunStrength * accumulatedTint;
-				}
-				
-				light.rgb = max(light.rgb, skyInject);
-				light.a   = max(light.a, skyStrength * 0.2);
-			}
-			
-			// --- Horizontal sky injection ---
-			// Check 4 horizontal directions for open air leading outside
-			// This is what makes cave openings bleed light inward
-			ivec3 horizDirs[4] = ivec3[4](
-				ivec3(1, 0, 0), ivec3(-1, 0, 0),
-				ivec3(0, 0, 1), ivec3(0, 0, -1)
-			);
-			
-			for (int d = 0; d < 4; d++) {
-				bool horizOpenToSky = false;
-				int horizSteps = min(16, 
-					horizDirs[d].x > 0 ? voxelVolumeSize.x - pos.x - 1 :
-					horizDirs[d].x < 0 ? pos.x :
-					horizDirs[d].z > 0 ? voxelVolumeSize.z - pos.z - 1 : pos.z
-				);
-				
-				for (int s = 1; s <= horizSteps; s++) {
-					ivec3 checkPos = pos + horizDirs[d] * s;
-					uint checkVoxel = texelFetch(voxel_sampler, checkPos, 0).x;
-					if (checkVoxel == 1u) break; // hit solid wall, stop
-					
-					// Check if this horizontal position can see the sky
-					bool colCanSeeSky = true;
-					int upSteps = min(voxelVolumeSize.y - checkPos.y - 1, 32);
-					for (int u = 1; u <= upSteps; u++) {
-						ivec3 upPos = checkPos + ivec3(0, u, 0);
-						if (upPos.y >= voxelVolumeSize.y) break;
-						uint upVoxel = texelFetch(voxel_sampler, upPos, 0).x;
-						if (upVoxel == 1u) { colCanSeeSky = false; break; }
-					}
-					
-					if (colCanSeeSky) {
-						horizOpenToSky = true;
-						// Attenuate by horizontal distance
-						float horizFalloff = 1.0 - float(s) / float(horizSteps);
-						horizFalloff = horizFalloff * horizFalloff;
-						
-						vec3 horizSky = ambientColor * 1.0 * horizFalloff;
-						// Add some sun color for side-lit openings
-						horizSky += lightColor * 0.3 * horizFalloff * (1.0 - nightFactor);
-						
-						light.rgb = max(light.rgb, horizSky);
-						light.a   = max(light.a, horizFalloff * 0.1);
-						break;
-					}
-				}
-			}
+			// --- Optimized Sky + Sun injection ---
+            // Instead of expensive traces, we use the alpha channel of the floodfill
+            // as a 'sky exposure' map that propagates naturally.
+            
+            float heightFactor = float(pos.y) / float(voxelVolumeSize.y);
+            float baseSkyStrength = 2.0 * (0.4 + 0.6 * heightFactor);
+            vec3 skyInject = vec3(0.0);
+            float skyAlpha = 0.0;
+
+            // Direct sky check for top layers only
+            if (pos.y >= voxelVolumeSize.y - 2) {
+                skyInject = ambientColor * baseSkyStrength;
+                skyAlpha = baseSkyStrength * 0.2;
+            } else {
+                // Use the averaged alpha from neighbors (already in 'light.a')
+                // and apply a tiny bit of vertical bias towards the neighbor above
+                vec4 aboveLight;
+                if ((frameCounter & 1) == 0) aboveLight = GetLightSample(floodfill_sampler, previousPos + ivec3(0, 1, 0));
+                else aboveLight = GetLightSample(floodfill_sampler_copy, previousPos + ivec3(0, 1, 0));
+                
+                skyAlpha = max(light.a, aboveLight.a * 0.99);
+                skyInject = ambientColor * skyAlpha * 2.0;
+            }
+
+            // Sunlight check using shadowmap
+            vec3 scenePos = VoxelToScene(vec3(pos));
+            vec3 shadowPos = GetShadowPos(scenePos);
+            if (length(shadowPos.xy * 2.0 - 1.0) < 0.95) {
+                float shadowSample = texture(shadowtex1, shadowPos).x;
+                if (shadowSample > 0.5) {
+                    float sunStrength = 0.15 * (1.0 - nightFactor * 0.9);
+                    skyInject += lightColor * sunStrength;
+                    skyAlpha = max(skyAlpha, 0.4);
+                }
+            }
+
+			light.rgb = max(light.rgb, skyInject);
+			light.a   = max(light.a, skyAlpha);
 		#endif
 		
 	} else if (voxel == 1u) {
@@ -343,21 +286,9 @@ void main() {
 		color.rgb *= 4.0 * PT_EMISSIVE_I;
 		
 		#if defined OVERWORLD
-			int solidBlocksAbove = 0;
-			int maxTraceHeight = min(voxelVolumeSize.y - pos.y - 1, 32);
-			for (int i = 1; i <= maxTraceHeight; i++) {
-				ivec3 checkPos = pos + ivec3(0, i, 0);
-				if (checkPos.y >= voxelVolumeSize.y) break;
-				uint checkVoxel = texelFetch(voxel_sampler, checkPos, 0).x;
-				if (checkVoxel == 1u) {
-					solidBlocksAbove++;
-				}
-			}
-			
 			float daytimeFactor = 1.0 - nightFactor;
-			float coverFactor = clamp(float(solidBlocksAbove), 0.1, 1.0);
-			float skySuppress = 1.0 * pow2(eyeBrightnessSmooth.y / 255.0 * 0.75) * daytimeFactor;// * (1.0 - isEyeInCave);
-			color.rgb *= 1.0 - skySuppress;
+			float skySuppress = light.a * pow2(eyeBrightnessSmooth.y / 255.0 * 0.75) * daytimeFactor;
+			color.rgb *= 1.0 - clamp(skySuppress, 0.0, 1.0);
 		#endif
 
 		light = vec4(pow2(color.rgb), color.a);

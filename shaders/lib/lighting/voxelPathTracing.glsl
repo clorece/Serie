@@ -104,7 +104,7 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         float occlusion = 0.0;
         
-        const int VOXEL_AO_SAMPLES = 16;
+        const int VOXEL_AO_SAMPLES = 12;
         const float VOXEL_AO_RADIUS = 4.0;
         
         vec3 tangent, bitangent;
@@ -119,32 +119,26 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
             vec3 sampleDir = SampleHemisphereCosine(Xi);
             sampleDir = normalize(tangent * sampleDir.x + bitangent * sampleDir.y + normal * sampleDir.z);
             
-            // DDA ray march for accurate intersection
             float hitDist = VOXEL_AO_RADIUS;
             bool hitSolid = false;
             
-            for (float dist = 0.5; dist <= VOXEL_AO_RADIUS; dist += 0.75) {
-                vec3 samplePos = startPos + sampleDir * dist;
-                
-                if (any(lessThan(samplePos, vec3(0.5))) || any(greaterThanEqual(samplePos, volumeSize - 0.5))) {
-                    break;
-                }
-                
-                uint voxelData = texelFetch(voxel_sampler, ivec3(samplePos), 0).r;
-
-                // Any solid or emissive block causes occlusion
-                if (voxelData >= 1u && voxelData < 200u) {
-                    hitDist = dist;
-                    hitSolid = true;
-                    break;
+            // Fast loop with 3-4 steps for robustness against small voxels
+            for (float d = 0.6; d <= VOXEL_AO_RADIUS; d += 1.2) {
+                vec3 samplePos = startPos + sampleDir * d;
+                if (CheckInsideVoxelVolume(samplePos)) {
+                    uint voxel = texelFetch(voxel_sampler, ivec3(samplePos), 0).r;
+                    if (voxel >= 1u && voxel < 200u) {
+                        hitDist = d;
+                        hitSolid = true;
+                        break;
+                    }
                 }
             }
             
             if (hitSolid) {
-                // Stronger occlusion for closer hits, smooth falloff
                 float normalizedDist = hitDist / VOXEL_AO_RADIUS;
                 float aoContrib = 1.0 - normalizedDist;
-                aoContrib = aoContrib * aoContrib; // Quadratic falloff
+                aoContrib = aoContrib * aoContrib;
                 occlusion += aoContrib;
             }
         }
@@ -316,7 +310,7 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         
         vec3 sideDist = (rayDirSign * (vec3(mapPos) - voxelPos) + rayDirSign * 0.5 + 0.5) * deltaDist;
         
-        int maxSteps = int(min(maxDist, 256.0));
+        int maxSteps = int(min(maxDist, 128.0));
         vec3 mask = vec3(0.0);
         
         for (int i = 0; i < maxSteps; i++) {

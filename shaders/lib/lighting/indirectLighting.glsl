@@ -210,7 +210,7 @@ RayHit MarchRay(vec3 start, vec3 rayDir, sampler2D depthtex, vec2 screenEdge, fl
     
     float maxRayDistance = float(COLORED_LIGHTING_INTERNAL);
 
-    float baseStepSize = 0.05 * (0.5 + dither);
+    float baseStepSize = 0.12 * (0.5 + dither);
     float stepSize = baseStepSize;
     
     vec3 rayPos = start;
@@ -326,7 +326,7 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
     vec3 startWorldPos = mat3(gbufferModelViewInverse) * startPos;
     
     float distanceScale = clamp(1.0 - startPos.z / far, 0.1, 1.0);
-    int numPaths = int(PT_MAX_BOUNCES * distanceScale);
+    int numPaths = max(int(PT_MAX_BOUNCES * distanceScale), 1);
 
     vec3 receiverScenePos = (gbufferModelViewInverse * vec4(unscaledViewPos, 1.0)).xyz;
     vec3 receiverWorldPos = receiverScenePos + cameraPosition;
@@ -491,12 +491,11 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                 vec3 currentScenePos = (gbufferModelViewInverse * vec4(currentPos, 1.0)).xyz;
                 
                 #ifdef PT_USE_VOXEL_LIGHT
-                    // --- Volumetric floodfill sampling with occlusion ---
-                    // Sample the floodfill volume along the ray, stopping at solid geometry
+                    // --- Optimized Volumetric floodfill sampling ---
                     {
                         vec3 volSamplePos = currentScenePos;
-                        vec3 volStep = worldRayDir * 2.0; // Step every 2 blocks
-                        int volSteps = min(int(32.0 / 2.0), 16);
+                        vec3 volStep = worldRayDir * 4.0; // Step every 4 blocks
+                        int volSteps = 8;
                         vec3 volLight = vec3(0.0);
                         for (int vs = 0; vs < volSteps; vs++) {
                             volSamplePos += volStep;
@@ -508,10 +507,9 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                             if (volVoxel == 1u) break;
                             
                             vec3 normP = voxP / vec3(voxelVolumeSize);
-                            vec4 lSample = GetLightVolume(normP);
-                            volLight += lSample.rgb;
+                            volLight += GetLightVolume(normP).rgb;
                         }
-                        pathRadiance += pathThroughput * volLight * 0.1;
+                        pathRadiance += pathThroughput * volLight * 0.2;
                         #ifdef NETHER
                             pathRadiance *= 0.25;
                         #endif

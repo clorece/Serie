@@ -482,8 +482,11 @@ void main() {
             //vec4 packedEmissive = texture2D(colortex9, ScaleToViewport(texCoord));
             //vec3 emissiveColor = packedEmissive.rgb;
             
-            float ssao = DoAmbientOcclusion(z0, linearZ0, dither, playerPos);
-            //float ssao = 1.0;
+        #else
+            // Optimized AO: Use cheaper SSAO for near objects to complement voxel RTAO
+            // Range is linked to PT_RENDER_DISTANCE to ensure a consistent transition
+            float ssao = 1.0;
+            if (lViewPos < float(PT_RENDER_DISTANCE) * 0.1) ssao = DoAmbientOcclusion(z0, linearZ0, dither, playerPos);
             color *= ssao;
             
             vec4 packedGI = texture2D(colortex11, ScaleToViewport(texCoord));
@@ -523,7 +526,7 @@ void main() {
                 float pureAdditive = 0.3 * intensityRatio;
                 float albedoMod = 1.0 - pureAdditive;
 
-               vec3 colorAdd = mix(color, (gi * albedo * finalAO) * 1.0, 0.5) * 0.65;
+               vec3 colorAdd = mix(color, (gi * albedo * finalAO) * 1.0, 0.5) * 0.55;
                //vec3 colorAdd = (gi * albedo * finalAO) * 0.5 + color * 0.5;
                 //vec3 colorAdd = color * 0.5 + (gi * albedo * finalAO) + emissiveColor * PT_EMISSIVE_I;
                 
@@ -541,10 +544,9 @@ void main() {
 
                 vec2 prvRefCoord = Reprojection(vec3(scaledUV, z0), cameraOffset);
                         vec2 prvRefCoord2 = Reprojection(vec3(scaledUV, max(refPos.z, z0)), cameraOffset);
-                        // Use scaled view dimensions for proper Catmull-Rom sampling
-                        vec2 scaledView = vec2(viewWidth, viewHeight) * RENDER_SCALE;
-                        vec4 oldRef1 = vec4(textureCatmullRom(colortex7, prvRefCoord, scaledView), 1.0);
-                        vec4 oldRef2 = vec4(textureCatmullRom(colortex7, prvRefCoord2, scaledView), 1.0);
+                        // Optimized: use standard bilinear sampling instead of expensive Catmull-Rom
+                        vec4 oldRef1 = texture2D(colortex7, prvRefCoord);
+                        vec4 oldRef2 = texture2D(colortex7, prvRefCoord2);
                         vec3 dif1 = colorAdd - oldRef1.rgb;
                         vec3 dif2 = colorAdd - oldRef2.rgb;
                         float dotDif1 = dot(dif1, dif1);
