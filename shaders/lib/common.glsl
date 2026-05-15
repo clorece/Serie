@@ -422,7 +422,7 @@
     #if RP_MODE == 1
         #define IPBR
         #define IPBR_PARTICLE_FEATURES
-        #define GENERATED_NORMALS
+        //#define GENERATED_NORMALS
         //#define COATED_TEXTURES
         #define FANCY_GLASS
         //#define GREEN_SCREEN_LIME
