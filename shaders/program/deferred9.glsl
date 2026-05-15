@@ -486,8 +486,8 @@ void main() {
             // Optimized AO: Use cheaper SSAO for near objects to complement voxel RTAO
             // Range is linked to PT_RENDER_DISTANCE to ensure a consistent transition
             float ssao = 1.0;
-            if (lViewPos < float(PT_RENDER_DISTANCE) * 0.1) ssao = DoAmbientOcclusion(z0, linearZ0, dither, playerPos);
-            color *= ssao;
+            //if (lViewPos < float(PT_RENDER_DISTANCE) * 0.1) ssao = DoAmbientOcclusion(z0, linearZ0, dither, playerPos);
+            //color *= ssao;
             
             vec4 packedGI = texture2D(colortex11, ScaleToViewport(texCoord));
             vec3 gi = packedGI.rgb * 15.0 * GI_I;
