@@ -116,28 +116,42 @@ vec4 GetLightSample(sampler3D lightSampler, ivec3 pos) {
 }
 
 vec4 GetLightAverage(sampler3D lightSampler, ivec3 pos, ivec3 voxelVolumeSize, out vec4 light_py) {
-    // Branchless(ish) bounds check for performance - most voxels are not on the edge
+    vec4 light_old, light_px, light_py_local, light_pz, light_nx, light_ny, light_nz;
+
     if (all(greaterThan(pos, ivec3(0))) && all(lessThan(pos, voxelVolumeSize - 1))) {
-        vec4 light_old = GetLightSample(lightSampler, pos);
-        vec4 light_px  = GetLightSample(lightSampler, pos + face_offsets[0]);
-        light_py       = GetLightSample(lightSampler, pos + face_offsets[1]);
-        vec4 light_pz  = GetLightSample(lightSampler, pos + face_offsets[2]);
-        vec4 light_nx  = GetLightSample(lightSampler, pos + face_offsets[3]);
-        vec4 light_ny  = GetLightSample(lightSampler, pos + face_offsets[4]);
-        vec4 light_nz  = GetLightSample(lightSampler, pos + face_offsets[5]);
-
-        return (light_old + light_px + light_py + light_pz + light_nx + light_ny + light_nz) / 7.2;
+        light_old = GetLightSample(lightSampler, pos);
+        light_px  = GetLightSample(lightSampler, pos + face_offsets[0]);
+        light_py_local  = GetLightSample(lightSampler, pos + face_offsets[1]);
+        light_pz  = GetLightSample(lightSampler, pos + face_offsets[2]);
+        light_nx  = GetLightSample(lightSampler, pos + face_offsets[3]);
+        light_ny  = GetLightSample(lightSampler, pos + face_offsets[4]);
+        light_nz  = GetLightSample(lightSampler, pos + face_offsets[5]);
     } else {
-        vec4 light_old = GetLightSample(lightSampler, pos);
-        vec4 light_px  = GetLightSample(lightSampler, clamp(pos + face_offsets[0], ivec3(0), voxelVolumeSize - 1));
-        light_py       = GetLightSample(lightSampler, clamp(pos + face_offsets[1], ivec3(0), voxelVolumeSize - 1));
-        vec4 light_pz  = GetLightSample(lightSampler, clamp(pos + face_offsets[2], ivec3(0), voxelVolumeSize - 1));
-        vec4 light_nx  = GetLightSample(lightSampler, clamp(pos + face_offsets[3], ivec3(0), voxelVolumeSize - 1));
-        vec4 light_ny  = GetLightSample(lightSampler, clamp(pos + face_offsets[4], ivec3(0), voxelVolumeSize - 1));
-        vec4 light_nz  = GetLightSample(lightSampler, clamp(pos + face_offsets[5], ivec3(0), voxelVolumeSize - 1));
-
-        return (light_old + light_px + light_py + light_pz + light_nx + light_ny + light_nz) / 7.2;
+        light_old = GetLightSample(lightSampler, pos);
+        light_px  = GetLightSample(lightSampler, clamp(pos + face_offsets[0], ivec3(0), voxelVolumeSize - 1));
+        light_py_local  = GetLightSample(lightSampler, clamp(pos + face_offsets[1], ivec3(0), voxelVolumeSize - 1));
+        light_pz  = GetLightSample(lightSampler, clamp(pos + face_offsets[2], ivec3(0), voxelVolumeSize - 1));
+        light_nx  = GetLightSample(lightSampler, clamp(pos + face_offsets[3], ivec3(0), voxelVolumeSize - 1));
+        light_ny  = GetLightSample(lightSampler, clamp(pos + face_offsets[4], ivec3(0), voxelVolumeSize - 1));
+        light_nz  = GetLightSample(lightSampler, clamp(pos + face_offsets[5], ivec3(0), voxelVolumeSize - 1));
     }
+    
+    light_py = light_py_local;
+    vec4 sum = light_old + light_px + light_py_local + light_pz + light_nx + light_ny + light_nz;
+    
+    // Dynamic divisor: higher values mean more decay.
+    // 7.8-8.0 allows for very high contrast and deep shadows in rooms.
+    float lum = dot(sum.rgb, vec3(0.3333));
+    float divisor = mix(7.8, 8.2, clamp(lum * 0.1, 0.0, 1.0));
+    
+    vec4 avg = sum / divisor;
+
+    // Max-based alpha propagation for ambient/sky light filling.
+    // Reduced to 0.85 to ensure ambient light stays near the source.
+    float maxAlpha = max(max(max(light_px.a, light_nx.a), max(light_py_local.a, light_ny.a)), max(light_pz.a, light_nz.a));
+    avg.a = max(avg.a, maxAlpha * 0.85);
+
+    return avg;
 }
 
 //Includes//
@@ -234,7 +248,7 @@ void main() {
                 if (shadowSample > 0.5) {
                     float sunStrength = 0.15 * (1.0 - nightFactor * 0.9);
                     skyInject += lightColor * sunStrength;
-                    skyAlpha = max(skyAlpha, 0.4);
+                    skyAlpha = max(skyAlpha, 0.3);
                 }
             }
 
@@ -244,9 +258,6 @@ void main() {
 		
 	} else if (voxel == 1u) {
 		// voxel == 1u: solid block
-		// Instead of just zeroing, check if this surface is sunlit
-		// and inject a small amount of bounced light into the volume
-		
 		#if defined OVERWORLD
 			vec3 scenePos = VoxelToScene(vec3(pos));
 			vec3 worldPos = scenePos + cameraPosition;
@@ -258,28 +269,31 @@ void main() {
 				surfaceInSun = shadowSample > 0.5;
 			}
 			
+            // Sample albedo
+            uint packedColor = texelFetch(voxel_color_sampler, pos, 0).r;
+            vec3 blockAlbedo = vec3(0.5); 
+            if (packedColor != 0u) {
+                float r = float(packedColor & 0x3FFu) / 1023.0;
+                float g = float((packedColor >> 10) & 0x3FFu) / 1023.0;
+                float b = float((packedColor >> 20) & 0x3FFu) / 1023.0;
+                blockAlbedo = vec3(r*r, g*g, b*b);
+            }
+
+            vec3 reflectedLight = vec3(0.0);
 			if (surfaceInSun) {
-				// Approximate albedo of this block from voxel_color_sampler
-				uint packedColor = texelFetch(voxel_color_sampler, pos, 0).r;
-				vec3 blockAlbedo = vec3(0.5); // fallback
-				if (packedColor != 0u) {
-					float r = float(packedColor & 0x3FFu) / 1023.0;
-					float g = float((packedColor >> 10) & 0x3FFu) / 1023.0;
-					float b = float((packedColor >> 20) & 0x3FFu) / 1023.0;
-					blockAlbedo = vec3(r*r, g*g, b*b); // unsqrt
-				}
-				
-				// Single bounce: albedo * lightColor = reflected color
-				// This is what makes grass tint the cave green, dirt make it warm, etc.
-				vec3 bounceLight = blockAlbedo * lightColor * 1.0 * (1.0 - nightFactor * 0.9);
-				
-				if ((frameCounter & 1) == 0) {
-					imageStore(floodfill_img_copy, pos, vec4(bounceLight, 0.1));
-				} else {
-					imageStore(floodfill_img, pos, vec4(bounceLight, 0.1));
-				}
-				return;
+				reflectedLight = blockAlbedo * lightColor * 1.0 * (1.0 - nightFactor * 0.9);
 			}
+            
+            // Infinite Bounce: Reflect volume light from neighbors (light.rgb)
+            // Reduced to 3% to make GI extremely subtle and localized.
+            reflectedLight += light.rgb * blockAlbedo * 0.03 * GI_I;
+
+            if ((frameCounter & 1) == 0) {
+                imageStore(floodfill_img_copy, pos, vec4(reflectedLight, 0.1));
+            } else {
+                imageStore(floodfill_img, pos, vec4(reflectedLight, 0.1));
+            }
+            return;
 		#endif
 		
 		// Not in sunlight: write zero as before

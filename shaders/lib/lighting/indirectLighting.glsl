@@ -53,7 +53,7 @@ vec2 texelSize = 1.0 / vec2(viewWidth, viewHeight);
 
 #include "/lib/colors/blocklightColors.glsl"
 
-#define PT_USE_RUSSIAN_ROULETTE
+//#define PT_USE_RUSSIAN_ROULETTE
 //#define DEBUG_SHADOW_VIEW
 #if COLORED_LIGHTING_INTERNAL > 0
     #define PT_USE_VOXEL_LIGHT
@@ -496,20 +496,30 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                 vec3 currentScenePos = (gbufferModelViewInverse * vec4(currentPos, 1.0)).xyz;
                 
                 #ifdef PT_USE_VOXEL_LIGHT
+                    // --- Phase 1: Self-sufficient emissive discovery ---
+                    VoxelHitResult voxelHit = TraceVoxelHit(currentScenePos, worldRayDir, shadowDistance);
+                    
                     // --- Optimized Volumetric floodfill sampling ---
                     {
                         vec3 volSamplePos = currentScenePos;
                         vec3 volStep = worldRayDir * 4.0; // Step every 4 blocks
                         int volSteps = 8;
                         vec3 volLight = vec3(0.0);
+                        
+                        float maxVolDist = voxelHit.hit ? length(voxelHit.hitPos - currentScenePos) : shadowDistance;
+                        float currentVolDist = 0.0;
+                        
                         for (int vs = 0; vs < volSteps; vs++) {
+                            currentVolDist += 4.0;
+                            if (currentVolDist > maxVolDist) break;
+                            
                             volSamplePos += volStep;
                             vec3 voxP = SceneToVoxel(volSamplePos);
                             if (!CheckInsideVoxelVolume(voxP)) break;
                             
                             // Stop accumulating if we hit solid geometry
                             uint volVoxel = texelFetch(voxel_sampler, ivec3(voxP), 0).r;
-                            if (volVoxel == 1u) break;
+                            if (volVoxel >= 1u && volVoxel < 200u) break;
                             
                             vec3 normP = voxP / vec3(voxelVolumeSize);
                             volLight += GetLightVolume(normP).rgb;
@@ -519,9 +529,6 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                             pathRadiance *= 0.25;
                         #endif
                     }
-
-                    // --- Phase 1: Self-sufficient emissive discovery ---
-                    VoxelHitResult voxelHit = TraceVoxelHit(currentScenePos, worldRayDir, shadowDistance);
                     
                     if (voxelHit.hit) {
                         // === If we hit an emissive block, use its light directly ===
@@ -594,11 +601,11 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
                         
                         // Use the minimum of near and deep samples to reduce bleed
                         vec3 lpvFinal = min(lpvLight.rgb, lpvLightDeep.rgb);
-                        vec3 lpvAmbient = lpvFinal * voxelAlbedo * 1.0;
+                        vec3 lpvAmbient = lpvFinal * voxelAlbedo * 2.0;
 
                         // --- Sky ambient approximation ---
                         float skyExposure = max(lpvLight.a, lpvLightDeep.a);
-                        vec3 skyAmbient = ambientColor * 5.0 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
+                        vec3 skyAmbient = ambientColor * 7.5 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
 
                         // --- Combine ---
                         vec3 bounceColor = directLight 
