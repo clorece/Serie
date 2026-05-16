@@ -231,12 +231,12 @@ void main() {
 
             // Direct sky check for top layers only
             if (pos.y >= voxelVolumeSize.y - 2) {
-                skyInject = ambientColor * baseSkyStrength;
-                skyAlpha = baseSkyStrength * 0.2;
+                skyInject = ambientColor * baseSkyStrength * 0.5;
+                skyAlpha = baseSkyStrength * 0.1;
             } else {
                 // Use the averaged alpha from neighbors (already in 'light.a')
                 // and apply vertical bias towards neighbor above to favor top-down propagation
-                skyAlpha = max(light.a, lightAbove.a * 0.98);
+                skyAlpha = max(light.a, lightAbove.a * 0.9);
                 skyInject = ambientColor * skyAlpha * 2.0;
             }
 
