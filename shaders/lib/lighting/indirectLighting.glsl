@@ -1,60 +1,14 @@
 /*
-    --------------------------------------------PLEASE READ--------------------------------------------
-    The pathtracing implementation used here is derived from the Bliss Shaders by Xonk,
-    and has been heavily modified from Bliss's version of Chocapic13's original ray tracing code.
-
-    This ray tracing code was originally developed by Chocapic13.
-    --------------------------------------------PLEASE READ--------------------------------------------
-    LICENSE, AS STATED BY Chocapic13: SHARING A MODIFIED VERSION OF MY SHADERS:
-        You are not allowed to claim any of the code included in "Chocapic13' shaders" as your own
-
-        You can share a modified version of my shaders if you respect the following title scheme : " -Name of the shaderpack- (Chocapic13' Shaders edit) "
-
-        You cannot use any monetizing links (for example adfoc.us ; adf.ly)
-
-        The rules of modification and sharing have to be same as the one here (copy paste all these rules in your post and change depending if you allow modification or not), you cannot make your own rules, you can only choose if you allow redistribution.
-
-        I have to be clearly credited
-
-        You cannot use any version older than "Chocapic13' Shaders V4" as a base, however you can modify older versions for personal use
-    --------------------------------------------PLEASE READ--------------------------------------------
-    Special level of permission; with written permission from Chocapic13, on request if you think your shaderpack is an huge modification from the original:
-        Allows to use monetizing links
-
-        Allows to create your own sharing rules
-
-        Shaderpack name can be chosen
-
-        Listed on Chocapic13' shaders official thread
-
-        Chocapic13 still have to be clearly credited
-    --------------------------------------------PLEASE READ--------------------------------------------
-    Using this shaderpack in a video or a picture:
-        You are allowed to use this shaderpack for screenshots and videos if you give the shaderpack name in the description/message
-
-        You are allowed to use this shaderpack in monetized videos if you respect the rule above.
-
-    Minecraft websites:
-        The download link must redirect to the download link given in the shaderpack's official thread
-
-        There has to be a link to the shaderpack's official thread
-
-        You are not allowed to add any monetizing link to the shaderpack download
-    --------------------------------------------PLEASE READ--------------------------------------------
-*/
-
-/*
-    CREDITS:
-        Xonk
-        Chocapic13
+    Serie VX — Indirect Lighting
+    Voxel-primary path traced GI with Irradiance Cache (IRC) lookup.
+    DDA traversal: Amanatides & Woo (1987).
+    BRDF: cosine-weighted hemisphere importance sampling.
 */
 
 vec2 texelSize = 1.0 / vec2(viewWidth, viewHeight);
 
 #include "/lib/colors/blocklightColors.glsl"
 
-//#define PT_USE_RUSSIAN_ROULETTE
-//#define DEBUG_SHADOW_VIEW
 #if COLORED_LIGHTING_INTERNAL > 0
     #define PT_USE_VOXEL_LIGHT
 #endif
@@ -65,7 +19,6 @@ vec2 texelSize = 1.0 / vec2(viewWidth, viewHeight);
 #include "/lib/misc/voxelization.glsl"
 
 #if COLORED_LIGHTING_INTERNAL > 0
-    #include "/lib/misc/voxelization.glsl"
 
     const vec3[] specialTintColorPT = vec3[](
         vec3(1.0, 1.0, 1.0),       // 200 White
@@ -129,46 +82,35 @@ vec2 texelSize = 1.0 / vec2(viewWidth, viewHeight);
         vec3 tint = vec3(1.0);
 
         vec4 startWorld4 = gbufferModelViewInverse * vec4(startViewPos, 1.0);
-        vec4 endWorld4 = gbufferModelViewInverse * vec4(endViewPos, 1.0);
-        vec3 startWorld = startWorld4.xyz;
-        vec3 endWorld = endWorld4.xyz;
-        
-        vec3 startVoxel = SceneToVoxel(startWorld);
-        vec3 endVoxel = SceneToVoxel(endWorld);
+        vec4 endWorld4   = gbufferModelViewInverse * vec4(endViewPos,   1.0);
+        vec3 startVoxel = SceneToVoxel(startWorld4.xyz);
+        vec3 endVoxel   = SceneToVoxel(endWorld4.xyz);
         vec3 volumeSize = vec3(voxelVolumeSize);
 
-        vec3 dir = endVoxel - startVoxel;
+        vec3 dir  = endVoxel - startVoxel;
         float dist = length(dir);
         if (dist < 0.2) return tint;
-        
-        // Scale steps by distance to avoid redundant fetches for short segments
-        int steps = clamp(int(dist * 1.2), 2, 20); 
+
+        int steps = clamp(int(dist * 1.2), 2, 20);
         vec3 stepDir = dir / float(steps);
         vec3 pos = startVoxel;
 
-        for(int i = 0; i < steps; i++) {
+        for (int i = 0; i < steps; i++) {
             pos += stepDir;
-
             if (any(lessThan(pos, vec3(0.5))) || any(greaterThanEqual(pos, volumeSize - 0.5))) continue;
-
             uint id = texelFetch(voxel_sampler, ivec3(pos), 0).r;
-
             if (id <= 1u) continue;
-            
             if ((id >= 200u && id <= 218u) || id == 254u) {
                 int idx = int(id) - 200;
                 tint *= specialTintColorPT[idx];
             }
-
-            // Early exit if tint is near black
             if (dot(tint, tint) < 0.001) break;
         }
         return tint;
     }
+
 #else
-    vec3 CheckVoxelTint(vec3 startViewPos, vec3 endViewPos) {
-        return vec3(1.0);
-    }
+    vec3 CheckVoxelTint(vec3 startViewPos, vec3 endViewPos) { return vec3(1.0); }
 #endif
 
 #include "/lib/antialiasing/jitter.glsl"
@@ -184,109 +126,19 @@ vec3 GetShadowPosition(vec3 tracePos, vec3 cameraPos) {
 
 bool GetShadow(vec3 tracePos, vec3 cameraPos) {
     vec3 shadowPosition0 = GetShadowPosition(tracePos, cameraPos);
-
-    if (length(shadowPosition0.xy * 2.0 - 1.0) < 0.99) { 
+    if (length(shadowPosition0.xy * 2.0 - 1.0) < 0.99) {
         float shadowDepth = shadow2D(shadowtex0, shadowPosition0).x;
-        
         if (shadowDepth < 0.01) return true;
     }
     return false;
-}
-
-vec3 toClipSpace3(vec3 viewSpacePosition) {
-    vec4 clipSpace = gbufferProjection * vec4(viewSpacePosition, 1.0);
-    return clipSpace.xyz / clipSpace.w * 0.5 + 0.5;
-}
-
-struct RayHit {
-    bool hit;
-    vec3 screenPos;
-    vec3 worldPos;
-    float hitDist;
-    float border;
-};
-
-RayHit MarchRay(vec3 start, vec3 rayDir, sampler2D depthtex, vec2 screenEdge, float dither, vec2 jitterOffset) {
-    RayHit result;
-    result.hit = false;
-    result.hitDist = 0.0;
-    result.border = 0.0;
-    
-    float maxRayDistance = float(COLORED_LIGHTING_INTERNAL);
-
-    float baseStepSize = 0.12 * (0.5 + dither);
-    float stepSize = baseStepSize;
-    
-    vec3 rayPos = start;
-    
-    vec4 initialClip = gbufferProjection * vec4(rayPos, 1.0);
-    vec3 initialScreen = initialClip.xyz / initialClip.w * 0.5 + 0.5;
-    float minZ = initialScreen.z;
-    float maxZ = initialScreen.z;
-
-    for (int j = 0; j < int(PT_STEPS); j++) {
-        rayPos += rayDir * stepSize;
-        
-        vec4 rayClip = gbufferProjection * vec4(rayPos, 1.0);
-        vec3 rayScreen = rayClip.xyz / rayClip.w * 0.5 + 0.5;
-        
-        float rayDistance = length(rayPos - start);
-        
-        if (rayDistance > maxRayDistance) break;
-        if (rayScreen.x < 0.0 || rayScreen.x > 1.0 || 
-            rayScreen.y < 0.0 || rayScreen.y > 1.0 ||
-            rayScreen.z < 0.0 || rayScreen.z > 1.0) break;
-        
-        // ADD Jitter to sampling coordinates to match Jittered Depth Buffer
-        vec2 sampleUV = (rayScreen.xy + jitterOffset) * RENDER_SCALE;
-        float sampledDepth = texture2D(depthtex, sampleUV).r;
-        
-        float currZ = GetLinearDepth(rayScreen.z);
-        float nextZ = GetLinearDepth(sampledDepth);
-        
-        if (nextZ < currZ && (sampledDepth <= max(minZ, maxZ) && sampledDepth >= min(minZ, maxZ))) {
-            vec3 hitPos = rayPos - rayDir * stepSize * 0.5;
-            float hitDist = length(hitPos - start);
-            
-            // Reject hit if beyond max ray distance
-            if (hitDist > maxRayDistance) {
-                return result; // Return no hit
-            }
-            
-            vec4 hitClip = gbufferProjection * vec4(hitPos, 1.0);
-            vec3 hitScreen = hitClip.xyz / hitClip.w * 0.5 + 0.5;
-            
-            result.screenPos = hitScreen;
-            result.worldPos = hitPos;
-            result.hitDist = hitDist;
-            
-            vec2 absPos = abs(result.screenPos.xy - 0.5);
-            vec2 cdist = absPos / screenEdge;
-            result.border = clamp(1.0 - pow(max(cdist.x, cdist.y), 50.0), 0.0, 1.0);
-            
-            result.hit = true;
-            break;
-        }
-        
-        float biasamount = 0.00005;
-        minZ = maxZ - biasamount / currZ;
-        maxZ = rayScreen.z;
-
-        stepSize *= 1.4; // More stable growth than 2.5x jump
-        stepSize = min(stepSize, 0.4);
-    }
-    
-    return result;
 }
 
 #include "/lib/lighting/ggx.glsl"
 
 vec3 EvaluateBRDF(vec3 albedo, vec3 normal, vec3 wi, vec3 wo, float smoothness) {
     float NdotL = max(dot(normal, wi), 0.0);
-
     vec3 diffuse = albedo / 3.14159265;
     float ggxSpec = GGX(normal, -wo, wi, NdotL, smoothness);
-    
     return diffuse + albedo * ggxSpec;
 }
 
@@ -300,376 +152,168 @@ float CosinePDF(float NdotL) {
 
 vec3 giScreenPos = vec3(0.0);
 
-vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 viewPos, vec3 unscaledViewPos, vec3 nViewPos, sampler2D depthtex, 
-           float dither, float smoothness, float VdotU, float VdotS, bool entityOrHand, float skyLightFactor) {
-    vec2 screenEdge = vec2(0.6, 0.55);
-    vec3 normalMR = normalM;
+vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 viewPos,
+           vec3 unscaledViewPos, vec3 nViewPos, sampler2D depthtex,
+           float dither, float smoothness, float VdotU, float VdotS,
+           bool entityOrHand, float skyLightFactor) {
 
     vec4 gi = vec4(0.0);
-    vec3 totalRadiance = vec3(0.0);
-    vec3 emissiveRadiance = vec3(0.0);
-    
-    vec3 startPos = viewPos + normalMR * 0.01;
-    
-    if (length(viewPos) > float(PT_RENDER_DISTANCE) * 0.5) {
-         #if defined OVERWORLD && !defined NETHER
-            vec3 fallbackSky = ambientColor * 0.01;
 
-            fallbackSky += ambientColor * max(normalM.y, 0.0) * 0.5;
-            fallbackSky += lightColor * max(dot(normalM, lightVec), 0.5);
-            fallbackSky *= skyLightFactor;
-            fallbackSky *= 1.01;
-            
-            gi.rgb = fallbackSky;
-            gi.rgb = max(gi.rgb, vec3(0.0));
-            return gi;
-         #else
-            return vec4(0.0);
-         #endif
+    // Distance fallback — skip expensive voxel trace beyond render distance
+    if (length(viewPos) > float(PT_RENDER_DISTANCE) * 0.5) {
+        #if defined OVERWORLD && !defined NETHER
+            vec3 worldNorm = mat3(gbufferModelViewInverse) * normalM;
+            vec3 sunDir    = mat3(gbufferModelViewInverse) * lightVec;
+            gi.rgb  = ambientColor * (max(worldNorm.y, 0.0) * 0.5 + 0.5) * skyLightFactor;
+            gi.rgb += lightColor * max(dot(worldNorm, sunDir), 0.0) * skyLightFactor;
+            gi.rgb  = max(gi.rgb, vec3(0.0));
+        #endif
+        return gi;
     }
 
-    vec3 startWorldPos = mat3(gbufferModelViewInverse) * startPos;
-    
-    float distanceScale = clamp(1.0 - startPos.z / far, 0.1, 1.0);
+    // Convert receiver to world/scene space
+    vec3 receiverScenePos = (gbufferModelViewInverse * vec4(unscaledViewPos, 1.0)).xyz;
+    vec3 worldGeoNormal   = mat3(gbufferModelViewInverse) * normalM;
+    vec3 sunDirWorld      = mat3(gbufferModelViewInverse) * lightVec;
+
+    // Bias origin off surface to avoid self-intersection
+    vec3 startScenePos = receiverScenePos + worldGeoNormal * 0.08;
+
+    // Shadow at receiver
+    bool receiverInShadow = false;
+    #if defined OVERWORLD && !defined NETHER
+        vec3 receiverWorldPos = receiverScenePos + cameraPosition;
+        float distBias = pow(dot(receiverScenePos, receiverScenePos), 0.75);
+        distBias = 0.12 + 0.0008 * distBias;
+        float receiverNdotL = max(dot(worldGeoNormal, sunDirWorld), 0.0);
+        vec3 receiverBias = worldGeoNormal * distBias * (2.0 - 0.95 * receiverNdotL);
+        receiverInShadow = GetShadow(receiverWorldPos + receiverBias, cameraPosition);
+    #endif
+
+    // Direct sun at receiver surface
+    vec3 directSunLight = vec3(0.0);
+    #if defined OVERWORLD && !defined NETHER
+        float NdotSun = max(dot(worldGeoNormal, sunDirWorld), 0.0);
+        if (!receiverInShadow && NdotSun > 0.0) {
+            directSunLight = lightColor * NdotSun * (1.0 - rainFactor * 0.8);
+        }
+    #endif
+
+    float receiverShadowMask = receiverInShadow ? 0.5 : 0.25;
+
+    float distanceScale = clamp(1.0 - length(viewPos) / far, 0.1, 1.0);
     int numPaths = max(int(PT_MAX_BOUNCES * distanceScale), 1);
 
-    vec3 receiverScenePos = (gbufferModelViewInverse * vec4(unscaledViewPos, 1.0)).xyz;
-    vec3 receiverWorldPos = receiverScenePos + cameraPosition;
-
-    vec3 worldGeoNormal = mat3(gbufferModelViewInverse) * normalM;
-    float distanceBias = pow(dot(receiverScenePos, receiverScenePos), 0.75);
-    distanceBias = 0.12 + 0.0008 * distanceBias;
-    
-    vec3 sunDirBias = mat3(gbufferModelViewInverse) * lightVec;
-    float receiverNdotL = max(dot(worldGeoNormal, sunDirBias), 0.0);
-    
-    vec3 receiverBias = worldGeoNormal * distanceBias * (2.0 - 0.95 * receiverNdotL);
-    vec3 receiverWorldPosBiased = receiverWorldPos + receiverBias;
-
-    bool receiverInShadow = GetShadow(receiverWorldPosBiased, cameraPosition);
-    float receiverShadowMask = receiverInShadow ? 0.5 : 0.25;
-    float receiverShadowMask2 = receiverInShadow ? 0.1 : 0.1;
-    
-    vec3 receiverVoxelPos = SceneToVoxel(receiverScenePos);
-    bool outsideVolume = !CheckInsideVoxelVolume(receiverVoxelPos);
-
-    #ifdef DEBUG_SHADOW_VIEW
-        gi.rgb = receiverInShadow ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-        return gi;
-    #endif
-    
-    vec3 directSunLight = vec3(0.0);
-    vec3 indirectFill = vec3(0.0);
-    vec3 coloredLightContrib = vec3(0.0);
-    bool isDaytime = sunVisibility > 0.5;
-    float shadowStrength = receiverInShadow ? 1.0 : 0.0;
-    
-    vec3 receiverNormPos = receiverVoxelPos / vec3(voxelVolumeSize);
-    vec4 receiverLPV = vec4(0.0);
-
-    
-    #if defined OVERWORLD && !defined NETHER
-        vec3 worldNormal = mat3(gbufferModelViewInverse) * normalM;
-        vec3 sunDir = mat3(gbufferModelViewInverse) * lightVec;
-        float NdotSun = max(dot(worldNormal, sunDir), 0.0);
-        float ambientNdotU = max(dot(worldNormal, vec3(0.0, 1.0, 0.0)), 0.0) * 0.5 + 0.5;
-
-        if (!receiverInShadow && NdotSun > 0.0) {
-            
-            float directShadowMask = smoothstep(0.1, 0.3, NdotSun);
-
-            directSunLight = lightColor * NdotSun * 1.0 * (1.0 - rainFactor * 0.8);
-        }
-
-    #endif
-    
-    coloredLightContrib = receiverLPV.rgb;
+    vec3 totalRadiance = vec3(0.0);
 
     for (int i = 0; i < numPaths; i++) {
-        vec3 pathRadiance = vec3(0.0);
+        vec3 pathRadiance   = vec3(0.0);
         vec3 pathThroughput = vec3(1.0);
-        
-        vec3 currentPos = startPos;
-        vec3 currentNormal = normalMR;
-        int bounce = 0;
-        
-        for (bounce = 0; bounce < PT_MAX_BOUNCES; bounce++) {
-            int seed = i * PT_MAX_BOUNCES + bounce;
+
+        vec3 currentScenePos = startScenePos;
+        vec3 currentNormal   = worldGeoNormal;
+
+        for (int bounce = 0; bounce < PT_MAX_BOUNCES; bounce++) {
+            int seed    = i * PT_MAX_BOUNCES + bounce;
             vec3 rayDir = RayDirection(currentNormal, dither, seed);
             float NdotL = max(dot(currentNormal, rayDir), 0.0);
 
-            float rayDither = fract(dither + float(seed) * PHI_INV);
-
-            vec2 jitterOffset = (TAAJitter(vec2(0.5), 1.0) - 0.5);
-
-            RayHit hit = MarchRay(currentPos, rayDir, depthtex, screenEdge, rayDither, jitterOffset);
-            
-            bool useScreenspace = hit.hit && hit.screenPos.z < 0.99997 && hit.border > 0.001;
-            
             #ifdef PT_USE_VOXEL_LIGHT
-                if (useScreenspace) {
-                    vec3 hitScenePos = (gbufferModelViewInverse * vec4(hit.worldPos, 1.0)).xyz;
-                    vec3 voxelHitPos = SceneToVoxel(hitScenePos);
-                    if (CheckInsideVoxelVolume(voxelHitPos)) {
-                        uint voxelData = texelFetch(voxel_sampler, ivec3(voxelHitPos), 0).r;
+                // Use volume diagonal as maxDist so rays can always reach the sky.
+                // shadowDistance is too short for deep caves, causing false sky hits.
+                VoxelHitResult voxelHit = TraceVoxelHit(currentScenePos, rayDir, float(voxelVolumeSize.x));
 
-                        if (voxelData > 0u && voxelData != 225u) {
-                            useScreenspace = false;
-                        }
-                    }
-                }
-            #endif
-
-            
-            if (useScreenspace) {
-                vec2 edgeFactor = pow2(pow2(pow2(abs(hit.screenPos.xy - 0.5) / screenEdge)));
-                vec2 jitteredUV = hit.screenPos.xy + jitterOffset;
-                jitteredUV.y += (dither - 0.5) * (0.05 * (edgeFactor.x + edgeFactor.y));
-                
-                // Deferred texture sampling - sample once with appropriate LOD
-                float lod = max(log2(hit.hitDist * 0.5) * 0.5, 0.0);
-                vec2 sampleUV = jitteredUV * RENDER_SCALE;
-                
-                // Single albedo fetch at LOD (used for color + BRDF)
-                vec3 hitAlbedo = texture2DLod(colortex0, sampleUV, lod).rgb;
-                vec3 hitColor = hitAlbedo * (1.0 - nightFactor * 0.2);
-                
-                // Normal fetch at LOD 0 for accuracy
-                vec3 hitNormal = normalize(texture2DLod(colortex5, sampleUV, 0.0).rgb * 2.0 - 1.0);
-
-
-
-                vec3 voxelTint = CheckVoxelTint(currentPos, hit.worldPos);
-
-                vec3 brdf = EvaluateBRDF(hitAlbedo, currentNormal, rayDir, -normalize(currentPos));
-                float pdf = CosinePDF(NdotL);
-
-                vec3 throughputMult = brdf * NdotL / max(pdf, 0.0001);
-                pathThroughput *= sqrt(throughputMult + 0.01);
-
-                #if defined (PT_TRANSPARENT_TINTS) && defined (PT_USE_VOXEL_LIGHT)
-                    pathThroughput *= voxelTint;
-                #endif
-
-                float blockLightMask = 1.0;
-
-                #ifdef PT_USE_RUSSIAN_ROULETTE
-                if (bounce > 0) {
-                    float continueProbability = min(max(pathThroughput.x, max(pathThroughput.y, pathThroughput.z)), 0.95);
-                    if (randWithSeed(dither, seed + 1000) > continueProbability) {
+                if (voxelHit.hit) {
+                    if (voxelHit.isEmissive) {
+                        // Direct emissive discovery — inverse-square falloff
+                        float emissiveDist  = max(length(voxelHit.hitPos - currentScenePos), 0.5);
+                        float emissiveFalloff = 1.0 / (1.0 + emissiveDist * emissiveDist * 0.01);
+                        pathRadiance += pathThroughput * voxelHit.light * emissiveFalloff;
                         break;
                     }
-                    pathThroughput /= continueProbability;
-                }
-                #endif
 
-                currentPos = hit.worldPos + rayDir * 0.01;
-                currentNormal = hitNormal;
+                    // Non-emissive solid hit — sample IRC + direct sun
+                    vec3 hitAlbedo = GetVoxelAlbedo(voxelHit.hitPos - voxelHit.hitNormal * 0.05);
 
-                
-                #ifdef TEMPORAL_FILTER
-                    vec3 cameraOffset = cameraPosition - previousCameraPosition;
-                    vec2 prevHitUV = Reprojection(hit.screenPos, cameraOffset);
-                    
-                    if (prevHitUV.x > 0.0 && prevHitUV.x < 1.0 && prevHitUV.y > 0.0 && prevHitUV.y < 1.0) {
-                        float prevDepth = texture2D(colortex1, prevHitUV * RENDER_SCALE).r;
-                        float currDepth = texture2D(depthtex, prevHitUV * RENDER_SCALE).r; 
+                    // IRC lookup just off the hit surface
+                    vec3 ircSamplePos  = voxelHit.hitPos + voxelHit.hitNormal * 0.5;
+                    vec3 ircVoxelPos   = SceneToVoxel(ircSamplePos);
+                    vec3 ircNormPos    = ircVoxelPos / vec3(voxelVolumeSize);
+                    vec4 ircSample     = GetLightVolume(ircNormPos);
+                    vec3 ircAmbient    = ircSample.rgb * hitAlbedo * GI_I;
+                    float skyExposure  = ircSample.a;
+                    vec3 skyAmbient    = ambientColor * skyExposure
+                                        * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2);
 
-                        if (abs(GetLinearDepth(prevDepth) - GetLinearDepth(currDepth)) < 0.5) {
-                             vec3 historyRadiance = texture2D(colortex11, prevHitUV * RENDER_SCALE).rgb;
-                             pathRadiance += pathThroughput * historyRadiance * 0.9;
+                    // Direct sun at bounce point
+                    vec3 hitWorldPos = voxelHit.hitPos + cameraPosition;
+                    float hitDistBias = pow(dot(voxelHit.hitPos, voxelHit.hitPos), 0.75);
+                    hitDistBias = 0.25 + 0.002 * hitDistBias;
+                    float hitNdotLBias = max(dot(voxelHit.hitNormal, sunDirWorld), 0.0);
+                    vec3 hitBias = voxelHit.hitNormal * hitDistBias * (2.0 - 0.95 * hitNdotLBias);
+                    vec3 shadowPos = GetShadowPosition(hitWorldPos + hitBias, cameraPosition);
 
-                             break;
-                        }
-                    }
-                #endif
-                
-
-                pathRadiance += pathThroughput * hitColor * blockLightMask;
-                
-                //float giBoost = mix(0.2, 0.6, shadowStrength);
-                //pathRadiance *= giBoost;
-                
-            } else {
-            
-                vec3 worldRayDir = mat3(gbufferModelViewInverse) * rayDir;
-                vec3 currentScenePos = (gbufferModelViewInverse * vec4(currentPos, 1.0)).xyz;
-                
-                #ifdef PT_USE_VOXEL_LIGHT
-                    // --- Phase 1: Self-sufficient emissive discovery ---
-                    VoxelHitResult voxelHit = TraceVoxelHit(currentScenePos, worldRayDir, shadowDistance);
-                    
-                    // --- Optimized Volumetric floodfill sampling ---
-                    {
-                        vec3 volSamplePos = currentScenePos;
-                        vec3 volStep = worldRayDir * 4.0; // Step every 4 blocks
-                        int volSteps = 8;
-                        vec3 volLight = vec3(0.0);
-                        
-                        float maxVolDist = voxelHit.hit ? length(voxelHit.hitPos - currentScenePos) : shadowDistance;
-                        float currentVolDist = 0.0;
-                        
-                        for (int vs = 0; vs < volSteps; vs++) {
-                            currentVolDist += 4.0;
-                            if (currentVolDist > maxVolDist) break;
-                            
-                            volSamplePos += volStep;
-                            vec3 voxP = SceneToVoxel(volSamplePos);
-                            if (!CheckInsideVoxelVolume(voxP)) break;
-                            
-                            // Stop accumulating if we hit solid geometry
-                            uint volVoxel = texelFetch(voxel_sampler, ivec3(voxP), 0).r;
-                            if (volVoxel >= 1u && volVoxel < 200u) break;
-                            
-                            vec3 normP = voxP / vec3(voxelVolumeSize);
-                            volLight += GetLightVolume(normP).rgb;
-                        }
-                        pathRadiance += pathThroughput * volLight * 0.2;
-                        #ifdef NETHER
-                            pathRadiance *= 0.25;
-                        #endif
-                    }
-                    
-                    if (voxelHit.hit) {
-                        // === If we hit an emissive block, use its light directly ===
-                        if (voxelHit.isEmissive) {
-                            vec3 emissiveLight = voxelHit.light;
-                            float emissiveDist = max(length(voxelHit.hitPos - currentScenePos), 0.5);
-                            float emissiveFalloff = 1.0 / (1.0 + emissiveDist * emissiveDist * 0.02);
-                            pathRadiance += pathThroughput * emissiveLight * emissiveFalloff;
-                            break;
-                        }
-                        
-                        // === Non-emissive solid block hit — evaluate lighting at that surface ===
-                        vec3 hitWorldPos = voxelHit.hitPos + cameraPosition;
-
-                        float distanceBias = pow(dot(voxelHit.hitPos, voxelHit.hitPos), 0.75);
-                        distanceBias = 0.25 + 0.002 * distanceBias;
-                        
-                        vec3 sunDirBias = mat3(gbufferModelViewInverse) * lightVec;
-                        float hitNdotLBias = max(dot(voxelHit.hitNormal, sunDirBias), 0.0);
-                        
-                        vec3 bias = voxelHit.hitNormal * distanceBias * (2.0 - 0.95 * hitNdotLBias);
-                        hitWorldPos += bias;
-
-                        vec3 shadowPos = GetShadowPosition(hitWorldPos, cameraPosition);
-                        
-                        vec3 shadowTint = vec3(1.0);
-                        bool inShadow = true;
-                        
-                        if (length(shadowPos.xy * 2.0 - 1.0) < 0.99) {
-                            float shadow0 = shadow2D(shadowtex0, shadowPos).x;
-                            if (shadow0 > 0.01) {
-                                float shadow1 = shadow2D(shadowtex1, shadowPos).x;
-                                if (shadow1 > 0.01) {
-                                    inShadow = false;
-                                } else {
-                                    shadowTint = texture2D(shadowcolor0, shadowPos.xy).rgb;
-                                    inShadow = false;
-                                }
+                    vec3 directLight = vec3(0.0);
+                    if (length(shadowPos.xy * 2.0 - 1.0) < 0.99) {
+                        float shadow0 = shadow2D(shadowtex0, shadowPos).x;
+                        if (shadow0 > 0.01) {
+                            float shadow1 = shadow2D(shadowtex1, shadowPos).x;
+                            float hitNdotL = max(dot(voxelHit.hitNormal, sunDirWorld), 0.0);
+                            float sunFactor = hitNdotL * (1.0 - rainFactor * 0.8) * (1.0 - nightFactor * 0.5);
+                            if (shadow1 > 0.01) {
+                                directLight = lightColor * sunFactor;
+                            } else {
+                                vec3 shadowTint = texture2D(shadowcolor0, shadowPos.xy).rgb;
+                                directLight = lightColor * shadowTint * sunFactor;
                             }
                         }
-
-                        vec3 directLight = vec3(0.0);
-                        
-                        vec3 albedoPos = voxelHit.hitPos - voxelHit.hitNormal * 0.05;
-                        vec3 voxelAlbedo = GetVoxelAlbedo(albedoPos);
-                        
-                        // --- Direct sunlight at bounce hit ---
-                        if (!inShadow) {
-                            float hitNdotL = max(dot(voxelHit.hitNormal, sunDirBias), 0.0);
-                            vec3 sunAlbedo = voxelAlbedo * 20.0 * min(0.25, receiverShadowMask);
-                            directLight = (lightColor * 0.5 + sunAlbedo * 0.5) * 2.0 * hitNdotL * (1.0 - rainFactor * 0.8) * (1.0 - nightFactor * 0.5);
-                            directLight *= shadowTint;
-                        }
-
-                        vec3 discoveredEmissive = vec3(0.0);
-                        vec3 hitScenePos = voxelHit.hitPos + voxelHit.hitNormal * 0.1;
-                        
-                        // --- LPV for ambient fill with directional weighting ---
-                        vec3 samplePos = voxelHit.hitPos + voxelHit.hitNormal * 0.5;
-                        vec3 voxelPos = SceneToVoxel(samplePos);
-                        vec3 normPos = voxelPos / vec3(voxelVolumeSize);
-                        vec4 lpvLight = GetLightVolume(normPos);
-                        
-                        // Direction-aware LPV: sample from offset in normal direction
-                        // to reduce light bleeding through walls
-                        vec3 samplePosDeep = voxelHit.hitPos + voxelHit.hitNormal * 1.5;
-                        vec3 voxelPosDeep = SceneToVoxel(samplePosDeep);
-                        vec3 normPosDeep = voxelPosDeep / vec3(voxelVolumeSize);
-                        vec4 lpvLightDeep = GetLightVolume(normPosDeep);
-                        
-                        // Use the minimum of near and deep samples to reduce bleed
-                        vec3 lpvFinal = min(lpvLight.rgb, lpvLightDeep.rgb);
-                        vec3 lpvAmbient = lpvFinal * voxelAlbedo * 2.0;
-
-                        // --- Sky ambient approximation ---
-                        float skyExposure = max(lpvLight.a, lpvLightDeep.a);
-                        vec3 skyAmbient = ambientColor * 2.5 * max(voxelHit.hitNormal.y * 0.5 + 0.5, 0.2) * skyExposure;
-
-                        // --- Combine ---
-                        vec3 bounceColor = directLight 
-                                         + discoveredEmissive * voxelAlbedo
-                                         + lpvAmbient
-                                         + skyAmbient;
-                        
-                        pathRadiance += pathThroughput * bounceColor;
-                        
-                    } else {
-                        // Ray escaped — sky contribution
-                        float groundOcclusion = exp(-max(0.0, -worldRayDir.y) * 9.87);
-                        vec3 sampledSky = ambientColor * 0.01;
-                        vec3 skyContribution = sampledSky * max(worldRayDir.y, 0.0) * groundOcclusion;
-                        skyContribution -= nightFactor * 0.1;
-                        pathRadiance += pathThroughput * skyContribution;
-                        pathRadiance += pathThroughput * MINIMUM_AMBIENT * (groundOcclusion * 0.5 + 0.5);
                     }
-                    
-                #else
-                    float groundOcclusion = exp(-max(0.0, -worldRayDir.y) * 9.87);
-                    vec3 sampledSky = ambientColor * 0.01;
-                    vec3 skyContribution = sampledSky * max(worldRayDir.y, 0.0) * groundOcclusion;
-                    skyContribution -= nightFactor * 0.1;
-                    pathRadiance += pathThroughput * skyContribution;
-                    pathRadiance += pathThroughput * MINIMUM_AMBIENT * (groundOcclusion * 0.5 + 0.5);
-                #endif
-                
-                break;
-            }
-        } 
-        
-        totalRadiance += pathRadiance;
-        
-        float aoDither = fract(dither + float(i) * PHI_INV);
-        
-        /*float screenSpaceAO = 0.0;
-        RayHit firstHit = MarchRay(startPos, RayDirection(normalMR, dither, i), depthtex, screenEdge, aoDither);
-        if (firstHit.hit) {
-            float aoRadius = AO_RADIUS;
-            float curve = 1.0 - clamp(firstHit.hitDist / aoRadius, 0.0, 1.0);
-            curve = pow(curve, 2.0);
-            screenSpaceAO = curve * AO_I * 1.5 * max(skyLightFactor, 0.1) - (nightFactor * 1.5 + invNoonFactor * 1.0);
-        }
-        */
-        
-        #ifdef PT_USE_VOXEL_LIGHT
-            vec3 worldNormalAO = mat3(gbufferModelViewInverse) * normalMR;
-            float voxelAO = GetVoxelAO(startWorldPos, worldNormalAO, aoDither) * AO_I;// * max(skyLightFactor, 0.1);
 
+                    vec3 bounceColor = directLight
+                                     + ircAmbient * 2.0
+                                     + skyAmbient;
+                    pathRadiance += pathThroughput * bounceColor;
+
+                    // Update path state for next bounce
+                    pathThroughput *= hitAlbedo;
+                    currentScenePos  = voxelHit.hitPos + voxelHit.hitNormal * 0.01;
+                    currentNormal    = voxelHit.hitNormal;
+
+                } else {
+                    // Ray escaped to sky
+                    float groundOcclusion = exp(-max(0.0, -rayDir.y) * 9.87);
+                    vec3 skyContrib = ambientColor * max(rayDir.y, 0.0) * groundOcclusion;
+                    skyContrib = max(skyContrib - nightFactor * 0.05, vec3(0.0));
+                    pathRadiance += pathThroughput * skyContrib;
+                    pathRadiance += pathThroughput * MINIMUM_AMBIENT * (groundOcclusion * 0.5 + 0.5);
+                    break;
+                }
+            #else
+                // Fallback when voxel lighting disabled
+                float groundOcclusion = exp(-max(0.0, -rayDir.y) * 9.87);
+                vec3 skyContrib = ambientColor * 0.01 * max(rayDir.y, 0.0) * groundOcclusion;
+                skyContrib = max(skyContrib - nightFactor * 0.1, vec3(0.0));
+                pathRadiance += pathThroughput * skyContrib;
+                pathRadiance += pathThroughput * MINIMUM_AMBIENT * (groundOcclusion * 0.5 + 0.5);
+                break;
+            #endif
+        }
+
+        totalRadiance += pathRadiance;
+
+        #ifdef PT_USE_VOXEL_LIGHT
+            float aoDither = fract(dither + float(i) * PHI_INV);
+            float voxelAO = GetVoxelAO(startScenePos, worldGeoNormal, aoDither) * AO_I;
             occlusion += voxelAO;
-        #else
         #endif
     }
-    
+
     totalRadiance /= float(numPaths);
-    occlusion /= float(numPaths);
-    
-    #if defined DEFERRED1 && defined TEMPORAL_FILTER
-        giScreenPos = vec3(texCoord, 1.0);
-    #endif
-    
-    gi.rgb = directSunLight + indirectFill + coloredLightContrib + totalRadiance;
+    occlusion     /= float(numPaths);
+
+    // gi is purely indirect. directSunLight is already in the rasterized color that deferred9
+    // mixes with gi, so including it here would double-count the sun on outdoor surfaces.
+    gi.rgb = totalRadiance * 4.0;
     gi.rgb = max(gi.rgb, vec3(0.0));
-    //gi.rgb = clamp(gi.rgb, vec3(0.0), vec3(1.0));
     return gi;
 }
