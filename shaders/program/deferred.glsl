@@ -222,7 +222,7 @@ void main() {
 
             float currentLuma = dot(emissive, vec3(0.2126, 0.7152, 0.0722));
             
-            float blendFactor = 1.0 - clamp(BLEND_WEIGHT * 50.0, 0.01, 0.5);
+            float blendFactor = 1.0 - clamp(BLEND_WEIGHT * 50.0, 0.01, 0.15);
 
             // Reduce blending based on camera velocity
             float lViewPos = length(viewPos.xyz);

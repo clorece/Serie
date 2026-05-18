@@ -311,9 +311,9 @@ vec4 GetGI(inout vec3 occlusion, inout vec3 emissiveOut, vec3 normalM, vec3 view
     totalRadiance /= float(numPaths);
     occlusion     /= float(numPaths);
 
-    // gi is purely indirect. directSunLight is already in the rasterized color that deferred9
-    // mixes with gi, so including it here would double-count the sun on outdoor surfaces.
-    gi.rgb = totalRadiance * 4.0;
+    // Only totalRadiance is scaled — directSunLight is left at 1x so sunlit outdoor surfaces
+    // don't get doubly amplified. Scaling indirect separately lifts shaded/indoor areas.
+    gi.rgb = directSunLight + totalRadiance * 4.0;
     gi.rgb = max(gi.rgb, vec3(0.0));
     return gi;
 }

@@ -213,7 +213,7 @@ vec4 GetIRCProbe(ivec3 pos, vec3 voxelCenter) {
             vec4 prevIRC;
             if ((frameCounter & 1) == 0) prevIRC = texture(floodfill_sampler,      normSamplePos);
             else                          prevIRC = texture(floodfill_sampler_copy, normSamplePos);
-            accumulated += prevIRC.rgb * 0.7;
+            accumulated += prevIRC.rgb * 0.5;
 
             vec3  hitScenePos  = VoxelToScene(hitVoxelPos);
             vec3  shadowPos    = GetShadowPos(hitScenePos);

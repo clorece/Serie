@@ -299,7 +299,7 @@ vec3 RayDirection(vec3 normal, float dither, int i) {
         float exitDist = min(min(tExit.x, tExit.y), tExit.z);
         float maxDDA = min(maxDist, exitDist);
 
-        int maxSteps = int(min(maxDDA, 96.0));
+        int maxSteps = int(min(maxDDA, 192.0));
         vec3 mask = vec3(0.0);
         
         for (int i = 0; i < maxSteps; i++) {

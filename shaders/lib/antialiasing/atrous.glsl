@@ -29,7 +29,12 @@ vec4 AtrousFilter(vec2 texCoord, int stepSize) {
     float centerLum = GetLuminance_Atrous(centerGI);
 
     float stepScale = 1.0 / max(1.0, float(stepSize) * 0.5);
-    float phiColor = 0.95 * stepScale; 
+
+    // Variance-guided luminance threshold (Schied et al. 2017 SVGF eq. 9)
+    vec2 moments = texture2D(colortex13, texCoord).gb;
+    float variance = max(moments.y - moments.x * moments.x, 0.0);
+    float phiColor = 0.45 * stepScale * max(1.0, sqrt(variance));
+
     float phiNormal = 128.0;
     float phiDepth = 0.5;
     

@@ -12,7 +12,7 @@ const int colortex9Format = RGBA16F;        //physical sky buffer (raymarched at
 const int colortex10Format = RGBA16F; 
 const int colortex11Format = RGBA16F;       //global illumination
 const int colortex12Format = RGBA16F;       //cloud render (combined blur)
-const int colortex13Format = R32F;          //cloud depth
+const int colortex13Format = RGBA16F;        //cloud depth (R) + GI moments mean/mean2 + history length (GBA)
 const int colortex14Format = RGBA16F;       //blurred cloud data (from deferred6)
 const int colortex15Format = RGB16F;        //TAA neighborhood max bounds
 */
