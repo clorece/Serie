@@ -65,8 +65,8 @@ vec3 giRayRadiance(
     VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
     
     // Smooth the lightmap to avoid harsh transitions in the PT
-    float skyOcc = sqrt(max(skyLightmap, 0.0));
-    skyOcc = sqrt(skyOcc); 
+    float skyOcc = max(skyLightmap, 0.0);
+    //skyOcc = sqrt(skyOcc); 
 
     if (h.hit) {
         wasHit      = true;

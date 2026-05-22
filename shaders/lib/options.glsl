@@ -5,7 +5,7 @@
 #define DITHER_FILTER
 
 #define SHADOW_RESOLUTION 4096 //[512 1024 1563 2048 3072 4096 6144 8192]
-#define SHADOW_FILTER_QUALITY 16 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
+#define SHADOW_FILTER_QUALITY 8 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
 #define SHADOW_MAP_BIAS 0.85 //Increase this if you get shadow acne. Decrease this if you get peter panning. [0.000 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008 0.009 0.010 0.012 0.014 0.016 0.018 0.020 0.022 0.024 0.026 0.028 0.030 0.035 0.040 0.045 0.050]
 
 //#define FAKE_SSS  // WIP
@@ -26,11 +26,11 @@
 #define BLOOM_STRENGTH 0.015 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
-#define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
-#define AUTO_EXPOSURE_TARGET 0.20 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
+#define EXPOSURE 3.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
+#define AUTO_EXPOSURE_TARGET 0.035 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 1.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
-#define AUTO_EXPOSURE_MIN 0.01 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
+#define AUTO_EXPOSURE_MIN 0.1 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
 #define AUTO_EXPOSURE_MAX 128.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
@@ -109,21 +109,21 @@ const bool colortex15Clear = false;
 
 // ---- Voxel GI (single-bounce indirect light; subsumes AO) ----
 #define VOXEL_GI
-#define GI_SAMPLES 2    // [1 2 3 4] Rays per pixel per frame (higher = less noise, lower fps)
+#define GI_SAMPLES 1    // [1 2 3 4] Rays per pixel per frame (higher = less noise, lower fps)
 #define GI_RADIUS  24   // [12 16 24 32 48] Max ray distance in blocks
-#define GI_STRENGTH 100 // [25 50 75 100 150 200] Indirect light intensity (percent)
+#define GI_STRENGTH 200 // [25 50 75 100 150 200] Indirect light intensity (percent)
 #define GI_SKY_DIRECTIONAL    // Sample a real directional sky (octahedral LUT) for GI rays instead of a flat ambient tint
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0] Sky irradiance multiplier for GI rays (lower this when GI_SKY_DIRECTIONAL is on)
-#define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun colour (percent) for a warmer, less cold feel
+#define GI_SKY_WARMTH 30      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun colour (percent) for a warmer, less cold feel
 #define SKY_LUT_RES 256       // Octahedral sky-LUT side length in texels (sharper sky gradient = higher); kept <= screen size
 #define SKY_LUT_STEPS 4       // [4 6 8 12] Atmosphere primary-march steps for the sky LUT (quality vs cost)
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] Sky contribution weight at bounce surfaces (sky probe)
 #define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] Max blocks the sky-probe DDA ray travels from a bounce surface
 #define GI_FLOOR 100    // [0 50 100 150 200] Ambient floor (percent of ambientColor); gated by skylight
-#define GI_EMISSION 3   // [1 2 3 4 5 6 7 8] Emissive block glow strength
+#define GI_EMISSION 2   // [1 2 3 4 5 6 7 8] Emissive block glow strength
 #define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] Temporal frames to blend
 #define GI_FIREFLY 4.0  // [1.5 2.0 3.0 4.0 6.0 8.0] Relative firefly clamp (x temporal-mean luminance)
-#define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
+#define GI_TEMPORAL_REJECT 1.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
 #define GI_DENOISE      // SVGF variance-guided spatial filter to clean up GI noise
 
 
@@ -155,11 +155,11 @@ const bool colortex15Clear = false;
 
 // ---- ReSTIR GI (reservoir resampling; replaces plain temporal accumulation when enabled) ----
 #define RESTIR_GI               // Use ReSTIR reservoirs instead of simple GI accumulation
-#define RESTIR_INITIAL_SAMPLES 2 // [1 2 4 6] Candidate rays generated per frame
+#define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] Candidate rays generated per frame
 #define RESTIR_M_CAP 48         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
 #define RESTIR_JACOBIAN         // World-space reconnection Jacobian for spatial reuse (correct cross-geometry resampling; enables wider reuse)
 #define RESTIR_SPATIAL          // Enable spatial reservoir reuse from neighbours
-#define RESTIR_SPATIAL_SAMPLES 3 // [1 2 3 4 5] Neighbour reservoirs merged per pixel
+#define RESTIR_SPATIAL_SAMPLES 2 // [1 2 3 4 5] Neighbour reservoirs merged per pixel
 #define RESTIR_SPATIAL_RADIUS 16.0 // [4.0 8.0 16.0 24.0 32.0] Neighbour search radius (pixels)
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] Clamp on the unbiased reservoir weight W (anti-firefly)
 #define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] Absolute firefly clamp on the resolved GI
@@ -183,7 +183,7 @@ const bool colortex15Clear = false;
 
 // ---- Legacy voxel-DDA AO (only used when both VOXEL_GI and AO_GTAO are disabled) ----
 #define VOXEL_AO
-#define AO_SAMPLES 4   // [2 4 6 8] Rays per pixel (higher = less noise, lower fps)
+#define AO_SAMPLES 2   // [2 4 6 8] Rays per pixel (higher = less noise, lower fps)
 #define AO_RADIUS  8   // [4 6 8 10 12] Max occlusion search distance in blocks
 #define AO_STRENGTH 100 // [25 50 75 100] AO darkening intensity (percent)
 
