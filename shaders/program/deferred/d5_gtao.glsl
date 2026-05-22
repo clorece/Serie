@@ -59,13 +59,12 @@ void main() {
     vec3 viewNormal = normalize(texture(colortex1, uvUnjittered).rgb * 2.0 - 1.0);
     vec3 viewPos    = gtaoViewPosFromDepth(uvUnjittered, depth0);
 
-    // Spatiotemporal dither: IGN gives a good per-pixel pattern; the golden-ratio per-frame
-    // advance decorrelates successive frames so temporal accumulation + the d7 bilateral
-    // average the discrete horizon-march steps into a smooth result instead of banding.
-    float gold = fract(float(frameCounter) * 0.6180339887);
+    // Spatial dither: IGN gives a good per-pixel pattern. 
+    // Freezing the frame parameter prevents the GTAO from jittering, which removes the need 
+    // for aggressive temporal reprojection that causes ghosting.
     vec2 aoDither = vec2(
-        fract(interleavedGradientNoise(gl_FragCoord.xy,                 frameCounter) + gold),
-        fract(interleavedGradientNoise(gl_FragCoord.xy + vec2(97.0, 31.0), frameCounter) + gold * 0.382)
+        fract(interleavedGradientNoise(gl_FragCoord.xy,                 0)),
+        fract(interleavedGradientNoise(gl_FragCoord.xy + vec2(97.0, 31.0), 0))
     );
 
     vec3 bentView;
