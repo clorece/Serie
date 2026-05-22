@@ -10,6 +10,104 @@
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 #endif
 
+// YCoCg conversion (reversible, better for box-clamping than RGB)
+vec3 RGBtoYCoCg(vec3 c) {
+    return vec3(
+         0.25 * c.r + 0.5 * c.g + 0.25 * c.b,
+         0.5  * c.r - 0.5 * c.b,
+        -0.25 * c.r + 0.5 * c.g - 0.25 * c.b
+    );
+}
+vec3 YCoCgtoRGB(vec3 c) {
+    float tmp = c.x - c.z;
+    return vec3(tmp + c.y, c.x + c.z, tmp - c.y);
+}
+
+// Neighborhood clamping (box clamp) to kill ghosts at the temporal accumulation source.
+// This is more stable than pure variance-based rejection for path tracing.
+vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
+    vec3 m1 = vec3(0.0), m2 = vec3(0.0);
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            vec3 c = RGBtoYCoCg(textureLod(currentTex, uv + vec2(x, y) * texelSize, 0.0).rgb);
+            m1 += c; m2 += c * c;
+        }
+    }
+    m1 /= 9.0; m2 /= 9.0;
+    vec3 std = sqrt(max(m2 - m1 * m1, 0.0));
+    
+    // Box clamp history to [mean - k*std, mean + k*std]
+    vec3 h = RGBtoYCoCg(history);
+    vec3 aabbMin = m1 - std * 1.5;
+    vec3 aabbMax = m1 + std * 1.5;
+    
+    return YCoCgtoRGB(clamp(h, aabbMin, aabbMax));
+}
+
+// Custom 2x2 Bilateral History Fetch
+// Evaluates depth and normal similarity for each of the 4 neighboring texels in 
+// the history buffer and rejects those that belong to a different surface.
+bool fetchBilateralHistory(
+    vec2 uv, float expectedClipZ, vec3 expectedNormalWorld, 
+    sampler2D hist8, sampler2D hist9, sampler2D hist15, 
+    out vec4 outHistory8, out vec4 outHistory9
+) {
+    vec2 pos = uv * vec2(viewWidth, viewHeight) - 0.5;
+    vec2 pos00 = floor(pos);
+    vec2 f = pos - pos00;
+
+    ivec2 i00 = ivec2(pos00);
+    ivec2 i10 = i00 + ivec2(1, 0);
+    ivec2 i01 = i00 + ivec2(0, 1);
+    ivec2 i11 = i00 + ivec2(1, 1);
+
+    vec4 w = vec4(
+        (1.0 - f.x) * (1.0 - f.y),
+        f.x * (1.0 - f.y),
+        (1.0 - f.x) * f.y,
+        f.x * f.y
+    );
+
+    vec4 c9_00 = texelFetch(hist9, i00, 0);
+    vec4 c9_10 = texelFetch(hist9, i10, 0);
+    vec4 c9_01 = texelFetch(hist9, i01, 0);
+    vec4 c9_11 = texelFetch(hist9, i11, 0);
+
+    // Depth rejection: 0 if depth difference is too large (> 0.005 clip-space difference)
+    vec4 clipZ = vec4(c9_00.r, c9_10.r, c9_01.r, c9_11.r) * 2.0 - 1.0;
+    vec4 validW = step(abs(clipZ - expectedClipZ), vec4(0.005));
+    
+    // Normal rejection: use world-space normal similarity to identify surface boundaries.
+    vec3 n00 = octDecodeNormal(texelFetch(hist15, i00, 0).xy);
+    vec3 n10 = octDecodeNormal(texelFetch(hist15, i10, 0).xy);
+    vec3 n01 = octDecodeNormal(texelFetch(hist15, i01, 0).xy);
+    vec3 n11 = octDecodeNormal(texelFetch(hist15, i11, 0).xy);
+    
+    vec4 normalW = vec4(
+        max(dot(n00, expectedNormalWorld), 0.0),
+        max(dot(n10, expectedNormalWorld), 0.0),
+        max(dot(n01, expectedNormalWorld), 0.0),
+        max(dot(n11, expectedNormalWorld), 0.0)
+    );
+    // Pow 16.0 provides a good balance between edge sharpness and noise stability.
+    validW *= pow(normalW, vec4(16.0));
+    
+    w *= validW;
+
+    float wSum = dot(w, vec4(1.0));
+    if (wSum > 1e-5) {
+        vec4 c8_00 = texelFetch(hist8, i00, 0);
+        vec4 c8_10 = texelFetch(hist8, i10, 0);
+        vec4 c8_01 = texelFetch(hist8, i01, 0);
+        vec4 c8_11 = texelFetch(hist8, i11, 0);
+
+        outHistory8 = (c8_00 * w.x + c8_10 * w.y + c8_01 * w.z + c8_11 * w.w) / wSum;
+        outHistory9 = (c9_00 * w.x + c9_10 * w.y + c9_01 * w.z + c9_11 * w.w) / wSum;
+        return true;
+    }
+    return false;
+}
+
 // ============================================================================
 //  SVGF — Spatiotemporal Variance-Guided Filtering (Schied et al. 2017),
 //  re-implemented from the published algorithm.

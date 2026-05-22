@@ -1,6 +1,4 @@
 #version 430 compatibility
 #define FRAGMENT
 
-/* DRAWBUFFERS:0 */
-
-#include "/program/deferred/d8_fog_sky.glsl"
+#include "/program/deferred/d6_denoise.glsl"

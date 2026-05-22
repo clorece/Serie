@@ -5,6 +5,7 @@
 */
 
 // Helper checks
+uniform mat4 gbufferModelView;
 bool IsValid_Atrous(float x) { return !isnan(x); }
 bool IsValid_Atrous(vec3 v) { return !isnan(v.x) && !isnan(v.y) && !isnan(v.z); }
 bool IsValid_Atrous(vec2 v) { return !isnan(v.x) && !isnan(v.y); }

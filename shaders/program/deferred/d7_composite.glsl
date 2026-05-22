@@ -59,7 +59,7 @@ uniform vec3 cameraPosition;
 uniform sampler2D colortex0;   // raw albedo
 uniform sampler2D colortex1;   // view normals
 uniform sampler2D colortex2;   // lightmap
-uniform sampler2D colortex6;   // denoised indirect (.rgb)
+uniform sampler2D colortex3;   // denoised indirect (.rgb)
 #ifdef SSPT_DEBUG
 uniform sampler2D colortex5;   // prev-frame lit scene (radiance source for the SSPT debug view)
 #endif
@@ -299,7 +299,7 @@ void main() {
     // ---- Indirect (denoised) ----
     vec3 indirect;
     #if defined(VOXEL_GI)
-        vec3 gi = texture(colortex6, texCoord).rgb;
+        vec3 gi = texture(colortex3, texCoord).rgb;
         #ifdef AO_GTAO
             #ifdef LIGHTING_AO_FULL
                 gi *= aoTerm;                                       // ambient occlusion fully occludes the ambient term
@@ -319,7 +319,7 @@ void main() {
             indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
         #endif
     #elif defined(VOXEL_AO)
-        float ao = texture(colortex6, texCoord).r;
+        float ao = texture(colortex3, texCoord).r;
         float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoFactor;
     #else
@@ -368,7 +368,7 @@ void main() {
     }
     #endif
 
-    /* DRAWBUFFERS:0 */
+    /* RENDERTARGETS: 0 */
     gl_FragData[0] = vec4(color, 1.0);
 }
 

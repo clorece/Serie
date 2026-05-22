@@ -90,7 +90,7 @@ void main() {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
     }
 
-    /* DRAWBUFFERS:0 */
+    /* RENDERTARGETS: 0 */
     gl_FragData[0] = vec4(color, 1.0);
 }
 

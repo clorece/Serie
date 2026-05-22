@@ -3,7 +3,7 @@ float moonVisibility = pow(clamp(MdotU+0.1,0.0,0.1)/0.1,2.0);
 
 // Sunlight color
 float sunAngle = max(dot(sunVector, upVector), 0.0);
-vec3 sunColor = mix(vec3(1.0, 0.7, 0.2), vec3(1.0, 1.0, 1.1), sunAngle) * 1.25;
+vec3 sunColor = mix(vec3(1.0, 0.65, 0.1) * 0.5, vec3(1.0, 1.0, 1.1), sunAngle) * 1.25;
 
 // Moonlight color
 float moonAngle = max(dot(moonVector, upVector), 0.0);

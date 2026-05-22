@@ -1,6 +1,4 @@
 #version 430 compatibility
 #define FRAGMENT
 
-/* DRAWBUFFERS:3 */
-
-#include "/program/deferred/d1_denoise.glsl"
+#include "/program/deferred/d0_accum.glsl"

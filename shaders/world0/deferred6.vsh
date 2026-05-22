@@ -1,4 +1,3 @@
 #version 430 compatibility
 #define VERTEX
-
-#include "/program/deferred/d6_skylut.glsl"
+#include "/program/deferred/d4_denoise.glsl"

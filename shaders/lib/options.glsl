@@ -27,15 +27,15 @@
 
 #define AUTO_EXPOSURE
 #define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
-#define AUTO_EXPOSURE_TARGET 0.16 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
+#define AUTO_EXPOSURE_TARGET 0.20 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 1.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.01 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
 #define AUTO_EXPOSURE_MAX 128.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
-#define COLOR_CONTRAST 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
-#define COLOR_SATURATION 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_SATURATION 1.04 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 //#define VIGNETTE
 
@@ -126,14 +126,15 @@ const bool colortex15Clear = false;
 #define GI_TEMPORAL_REJECT 1.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
 #define GI_DENOISE      // SVGF variance-guided spatial filter to clean up GI noise
 
+
 // ---- SVGF denoiser (Schied et al. 2017, re-implemented from the paper) ----
-#define SVGF_SIGMA_Z 1.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
-#define SVGF_SIGMA_N 32.0 // [16.0 32.0 64.0 128.0 256.0] Normal edge-stopping sharpness
-#define SVGF_SIGMA_L 2.0  // [1.0 2.0 4.0 8.0 16.0] Luminance edge-stopping (variance-scaled)
-#define SVGF_VAR_BOOST 2  // [2 4 6 8] History length below which variance is estimated spatially
+#define SVGF_SIGMA_Z 4.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
+#define SVGF_SIGMA_N 64.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
+#define SVGF_SIGMA_L 10.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
+#define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] History length below which variance is estimated spatially
 #define PT_DETAIL_RECONSTRUCT // Reconstruct contact shadows / fine GI detail in the filter
 #define SVGF_WORLD_RADIUS // Bound the a-trous footprint in WORLD space so distant GI keeps detail (fixes far-away flatness)
-#define SVGF_SIGMA_WORLD 1.5 // [0.75 1.0 1.5 2.0 3.0 4.0 6.0] World-space blur radius in blocks; taps farther than this (e.g. across distant surfaces) are down-weighted
+#define SVGF_SIGMA_WORLD 2.0 // [0.75 1.0 1.5 2.0 3.0 4.0 6.0] World-space blur radius in blocks; taps farther than this (e.g. across distant surfaces) are down-weighted
 
 // Keep the TEMPORAL HISTORY raw/detailed instead of feeding the spatial blur back into it.
 // Feeding the a-trous output back makes the accumulation converge to the flattened signal
@@ -141,7 +142,7 @@ const bool colortex15Clear = false;
 // filters a detailed signal fresh each frame -> it still denoises noise but preserves
 // converged detail via its variance edge-stopping. Leave ON for this pack (heavy temporal
 // accumulation). Off = classic SVGF feedback (denoised result becomes the history).
-//#define SVGF_RAW_HISTORY
+#define SVGF_RAW_HISTORY
 
 // Optional extra: fade the spatial blur out as a pixel converges (mix the displayed result
 // toward the raw accumulated GI by history length). Trades denoising for detail; at high

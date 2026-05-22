@@ -10,7 +10,8 @@ https://github.com/saada2006/MinecraftShaderProgramming
 */
 
 out vec2 texCoord;
-out vec3 voxelWorldPos;
+flat out vec2 vMidTexCoord;
+flat out vec3 voxelCenter;
 flat out vec3 voxelNormal;
 flat out uint voxelBlockCategory;
 flat out int biomeTintedBlock;
@@ -31,6 +32,8 @@ uniform int entityId;
 uniform int blockEntityId;
 
 attribute vec4 mc_Entity;
+attribute vec3 at_midBlock;
+attribute vec2 mc_midTexCoord;
 
 vec3 wind(vec3 position) {
     position.xy += abs(sin(2.0 * PI * (frameTimeCounter * 0.7 + position.x /  11.0 + position.y / 5.0)) * 0.0015);
@@ -39,18 +42,19 @@ vec3 wind(vec3 position) {
 
 void main() {
     texCoord = gl_MultiTexCoord0.xy;
+    vMidTexCoord = (gl_TextureMatrix[0] * vec4(mc_midTexCoord, 0.0, 1.0)).st;
     gl_Position = ftransform();
 
+    // Use the projection inverse to recover world-space position.
+    // Adding at_midBlock/64.0 snaps the sample point to the exact block center.
     vec4 position = gl_Position;
-
 	position = shadowProjectionInverse * position;
 	position = shadowModelViewInverse * position;
 	position.xyz += cameraPosition.xyz;
 
-    // Capture absolute world position for voxelization before the round-trip
-    voxelWorldPos = position.xyz;
+    voxelCenter = position.xyz + at_midBlock / 64.0;
 
-    // World-space surface normal, used to push the voxel sample into the solid block
+    // World-space surface normal, used to identify faces
     voxelNormal = normalize(mat3(shadowModelViewInverse) * (gl_NormalMatrix * gl_Normal));
 
     // Classify block category from entity ID
@@ -91,7 +95,8 @@ https://github.com/saada2006/MinecraftShaderProgramming
 #include "/lib/pt/voxelData.glsl"
 
 in vec2 texCoord;
-in vec3 voxelWorldPos;
+flat in vec2 vMidTexCoord;
+flat in vec3 voxelCenter;
 flat in vec3 voxelNormal;
 flat in uint voxelBlockCategory;
 flat in int biomeTintedBlock;
@@ -104,15 +109,22 @@ uniform vec3 cameraPosition;
 layout(rgba8ui) uniform writeonly uimage2D colorimg7;
 
 void main() {
-    vec4 tex = texture(texture, texCoord);
-    if (tex.a < 0.1) {
+    // Check alpha for discard using per-fragment sampling (needed for leaves/foliage)
+    // to maintain the correct block shape in the voxel grid.
+    vec4 texFrag = texture(texture, texCoord);
+    if (texFrag.a < 0.1) {
         discard;
     }
 
-    // Rendered (sun-facing) faces sit exactly on a voxel boundary; floor() would round them
-    // into the AIR voxel on the sun side. Push the sample half a block along the inward normal
-    // so the SOLID voxel gets marked instead of the empty one above/in front of the surface.
-    vec3 voxelPos = voxelWorldPos - voxelNormal * 0.5;
+    // Sample at the middle of the texture tile for a stable, representative block color.
+    // This prevents the per-texel "rainbow" flicker and noise in the voxel grid.
+    // We use the stable color for EVERYTHING to ensure every fragment writes the same value.
+    vec4 tex = texture(texture, vMidTexCoord);
+    if (tex.a < 0.1) {
+        // If the tile center is transparent, use the fragment color as a fallback
+        // but this should be rare for solid blocks.
+        tex = texFrag;
+    }
 
     // Pack: .r = block category, .gba = block albedo color (for GI color bleed).
     // gl_Color carries biome/vertex tint, but some Iris shadow configs don't supply it
@@ -146,10 +158,11 @@ void main() {
 
     // Write this fragment into the voxel atlas.
     // The atlas is cleared to VOXEL_AIR (0) each frame by colortex7Clear.
-    // Race conditions between fragments sharing a voxel are benign (same value, last-write-wins).
+    // Using 'flat' voxelCenter and 'flat' vMidTexCoord ensures all fragments of a block
+    // write the EXACT same data to the EXACT same voxel coordinate.
     ivec3 voxelCoord;
     vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
-    if (!skipVoxelWrite && worldToVoxel(voxelPos, gridOrigin, voxelCoord)) {
+    if (!skipVoxelWrite && worldToVoxel(voxelCenter, gridOrigin, voxelCoord)) {
         imageStore(colorimg7, voxelCoordToAtlas(voxelCoord), voxelData);
     }
 

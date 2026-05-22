@@ -1,4 +1,3 @@
 #version 430 compatibility
 #define VERTEX
-
-#include "/program/deferred/d5_gtao.glsl"
+#include "/program/deferred/d3_denoise.glsl"
