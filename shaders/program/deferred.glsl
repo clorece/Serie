@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 /////////////////////////////////////
 // Complementary Shaders by EminGT //
 /////////////////////////////////////
@@ -307,3 +308,5 @@ void main() {
     #endif
 }
 #endif
+=======
+>>>>>>> Stashed changes

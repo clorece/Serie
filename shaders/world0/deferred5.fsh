@@ -1,7 +1,4 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define DEFERRED5
-
-#include "/program/deferred5.glsl"
+#include "/program/deferred/d5_gtao.glsl"

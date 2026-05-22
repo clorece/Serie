@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define DEFERRED8
+/* DRAWBUFFERS:0 */
 
-#include "/program/deferred8.glsl"
+#include "/program/deferred/d8_fog_sky.glsl"

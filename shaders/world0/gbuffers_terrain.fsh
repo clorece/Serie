@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define GBUFFERS_TERRAIN
+/* DRAWBUFFERS:0124 */
 
-#include "/program/gbuffers_terrain.glsl"
+#include "/program/gbuffers/terrain.glsl"

@@ -1,0 +1,159 @@
+#ifdef VERTEX
+
+#include "/lib/options.glsl"
+
+const float PI = 3.14159265359;
+
+/*
+Shadow Source Code By saada2006:
+https://github.com/saada2006/MinecraftShaderProgramming
+*/
+
+out vec2 texCoord;
+out vec3 voxelWorldPos;
+flat out vec3 voxelNormal;
+flat out uint voxelBlockCategory;
+flat out int biomeTintedBlock;
+
+uniform float far;
+uniform float frameTimeCounter;
+uniform vec3 cameraPosition;
+uniform mat4 gbufferProjection;
+uniform mat4 gbufferProjectionInverse;
+uniform mat4 gbufferModelView;
+uniform mat4 gbufferModelViewInverse;
+uniform mat4 shadowModelView;
+uniform mat4 shadowModelViewInverse;
+uniform mat4 shadowProjection;
+uniform mat4 shadowProjectionInverse;
+
+uniform int entityId;
+uniform int blockEntityId;
+
+attribute vec4 mc_Entity;
+
+vec3 wind(vec3 position) {
+    position.xy += abs(sin(2.0 * PI * (frameTimeCounter * 0.7 + position.x /  11.0 + position.y / 5.0)) * 0.0015);
+    return position;
+}
+
+void main() {
+    texCoord = gl_MultiTexCoord0.xy;
+    gl_Position = ftransform();
+
+    vec4 position = gl_Position;
+
+	position = shadowProjectionInverse * position;
+	position = shadowModelViewInverse * position;
+	position.xyz += cameraPosition.xyz;
+
+    // Capture absolute world position for voxelization before the round-trip
+    voxelWorldPos = position.xyz;
+
+    // World-space surface normal, used to push the voxel sample into the solid block
+    voxelNormal = normalize(mat3(shadowModelViewInverse) * (gl_NormalMatrix * gl_Normal));
+
+    // Classify block category from entity ID
+    float eid = mc_Entity.x;
+    if      (eid == 10000.0) voxelBlockCategory = 2u; // foliage 2 (leaves) - Voxelized
+    else if (eid == 10001.0) voxelBlockCategory = 3u; // emissive
+    else if (eid == 10002.0 || eid == 10004.0 || eid == 10005.0 || entityId == 10002 || blockEntityId == 10002) voxelBlockCategory = 0u; // excluded (entities, grass, flowers, transparents, etc.) -> VOXEL_AIR
+    else                     voxelBlockCategory = 1u; // opaque (default)
+
+    // Flag blocks that need special voxel coloring or face skipping.
+    // 1 = grass_block (10003), 2 = leaves (10000)
+    biomeTintedBlock = (eid == 10003.0) ? 1 : ((eid == 10000.0) ? 2 : 0);
+
+    position.xyz -= cameraPosition.xyz;
+	position = shadowModelView * position;
+	position = shadowProjection * position;
+
+	gl_Position = position;
+
+	float dist = sqrt(gl_Position.x * gl_Position.x + gl_Position.y * gl_Position.y);
+	float distortFactor = (1.0 - SHADOW_MAP_BIAS) + dist * SHADOW_MAP_BIAS;
+
+	gl_Position.xy *= 1.0 / distortFactor;
+
+    gl_FrontColor = gl_Color;
+}
+
+#endif
+
+#ifdef FRAGMENT
+
+/*
+Shadow Source Code By saada2006:
+https://github.com/saada2006/MinecraftShaderProgramming
+*/
+
+#include "/lib/options.glsl"
+#include "/lib/pt/voxelData.glsl"
+
+in vec2 texCoord;
+in vec3 voxelWorldPos;
+flat in vec3 voxelNormal;
+flat in uint voxelBlockCategory;
+flat in int biomeTintedBlock;
+
+uniform sampler2D texture;
+uniform vec3 cameraPosition;
+
+// Image binding for writes MUST use the colorimgN alias, not colortexN.
+// colortexN is the sampler (read) name; imageStore to colortexN is a silent no-op in Iris.
+layout(rgba8ui) uniform writeonly uimage2D colorimg7;
+
+void main() {
+    vec4 tex = texture(texture, texCoord);
+    if (tex.a < 0.1) {
+        discard;
+    }
+
+    // Rendered (sun-facing) faces sit exactly on a voxel boundary; floor() would round them
+    // into the AIR voxel on the sun side. Push the sample half a block along the inward normal
+    // so the SOLID voxel gets marked instead of the empty one above/in front of the surface.
+    vec3 voxelPos = voxelWorldPos - voxelNormal * 0.5;
+
+    // Pack: .r = block category, .gba = block albedo color (for GI color bleed).
+    // gl_Color carries biome/vertex tint, but some Iris shadow configs don't supply it
+    // (it comes back as 0, which would zero the whole albedo). Fall back to the untinted
+    // texture colour when no tint is present so the grid never stores black.
+    vec3 tint = gl_Color.rgb;
+    vec3 albedo = tex.rgb * (all(lessThan(tint, vec3(0.004))) ? vec3(1.0) : tint);
+
+    if (biomeTintedBlock == 1) {
+        // For grass blocks, use the biome tint directly as the albedo (averaged color).
+        // Fall back to a default grass green if the tint is missing.
+        albedo = all(lessThan(tint, vec3(0.004))) ? vec3(0.48, 0.61, 0.28) : tint;
+    } else if (biomeTintedBlock == 2) {
+        // For leaves, we use the texture color * biome tint.
+        // If tint is missing (black) or default (white) in the shadow pass, 
+        // use a fallback foliage green to ensure they aren't grey.
+        vec3 leafTint = (all(lessThan(tint, vec3(0.004))) || all(greaterThan(tint, vec3(0.999)))) ? vec3(0.38, 0.58, 0.18) : tint;
+        albedo = tex.rgb * leafTint;
+    }
+
+    uint finalCategory = voxelBlockCategory;
+
+    uvec4 voxelData = uvec4(finalCategory, uvec3(clamp(albedo, 0.0, 1.0) * 255.0 + 0.5));
+
+    // For biome-tinted ground (grass_block): skip untinted faces (dirt sides/bottom)
+    // so only the green-tinted top face writes its color to the voxel atlas.
+    // Use the world-space normal to identify the top face (upward pointing).
+    // Leaves (biomeTintedBlock == 2) should not skip faces.
+    bool isTopFace = voxelNormal.y > 0.5;
+    bool skipVoxelWrite = ((biomeTintedBlock == 1) && !isTopFace) || (finalCategory == 0u);
+
+    // Write this fragment into the voxel atlas.
+    // The atlas is cleared to VOXEL_AIR (0) each frame by colortex7Clear.
+    // Race conditions between fragments sharing a voxel are benign (same value, last-write-wins).
+    ivec3 voxelCoord;
+    vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
+    if (!skipVoxelWrite && worldToVoxel(voxelPos, gridOrigin, voxelCoord)) {
+        imageStore(colorimg7, voxelCoordToAtlas(voxelCoord), voxelData);
+    }
+
+    gl_FragData[0] = tex;
+}
+
+#endif

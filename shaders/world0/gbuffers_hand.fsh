@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define GBUFFERS_HAND
+/* DRAWBUFFERS:012 */
 
-#include "/program/gbuffers_hand.glsl"
+#include "/program/gbuffers/hand.glsl"

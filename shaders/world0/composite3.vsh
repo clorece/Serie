@@ -1,7 +1,3 @@
-#version 130
-
-#define VERTEX_SHADER
-#define OVERWORLD
-#define COMPOSITE3
-
-#include "/program/composite3.glsl"
+#version 430 compatibility
+#define VERTEX
+#include "/program/composite/c3_bloom_blur_v.glsl"

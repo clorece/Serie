@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define DEFERRED3
+/* DRAWBUFFERS:3 */
 
-#include "/program/deferred3.glsl"
+#include "/program/deferred/d3_denoise.glsl"

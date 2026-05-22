@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define DEFERRED7
+/* DRAWBUFFERS:0 */
 
-#include "/program/deferred7.glsl"
+#include "/program/deferred/d7_composite.glsl"

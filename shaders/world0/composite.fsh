@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define COMPOSITE
+/* DRAWBUFFERS:0 */
 
-#include "/program/composite.glsl"
+#include "/program/composite/c0_taa.glsl"

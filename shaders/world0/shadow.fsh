@@ -1,7 +1,3 @@
-#version 130
-
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define SHADOW
-
-#include "/program/shadow.glsl"
+#version 430 compatibility
+#define FRAGMENT
+#include "/program/gbuffers/shadow.glsl"

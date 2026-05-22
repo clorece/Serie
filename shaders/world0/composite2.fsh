@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define COMPOSITE2
+/* DRAWBUFFERS:6 */
 
-#include "/program/composite2.glsl"
+#include "/program/composite/c2_bloom_blur_h.glsl"

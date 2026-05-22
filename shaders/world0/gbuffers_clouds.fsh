@@ -1,7 +1,6 @@
-#version 130
+#version 430 compatibility
+#define FRAGMENT
 
-#define FRAGMENT_SHADER
-#define OVERWORLD
-#define GBUFFERS_CLOUDS
+/* DRAWBUFFERS:012 */
 
-#include "/program/gbuffers_clouds.glsl"
+#include "/program/gbuffers/clouds.glsl"

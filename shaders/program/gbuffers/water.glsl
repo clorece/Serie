@@ -1,0 +1,60 @@
+#include "/lib/options.glsl"
+
+#ifdef VERTEX
+
+#include "/lib/util/jitter.glsl"
+
+out vec2 texCoord;
+out vec2 lightmapCoord;
+out vec3 normal;
+out vec4 color;
+out vec4 position;
+
+vec3 mc_Entity;  
+
+void main() {
+    gl_Position = ftransform();
+    texCoord = gl_MultiTexCoord0.xy;
+
+    color = gl_Color;
+
+    /*
+    Normal and Lightmap Source Code By saada2006:
+    https://github.com/saada2006/MinecraftShaderProgramming
+    */
+    normal = normalize(gl_NormalMatrix * gl_Normal);
+    lightmapCoord = mat2(gl_TextureMatrix[1]) * gl_MultiTexCoord1.st;
+    position = gl_Position;
+
+    #ifdef TAA
+        gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);
+    #endif
+}
+
+#endif
+
+#ifdef FRAGMENT
+
+/*
+Normal and Lightmap Source Code By saada2006:
+https://github.com/saada2006/MinecraftShaderProgramming
+*/
+
+in vec2 texCoord;
+in vec2 lightmapCoord;
+in vec3 normal;
+in vec4 color;
+in vec4 position;
+
+uniform sampler2D texture; // gbuffers color channel 0
+uniform sampler2D shadowtex0;
+
+void main() {
+    vec4 albedo = texture(texture, texCoord) * color;
+    
+    /* DRAWBUFFERS:01 */
+    gl_FragData[0] = albedo;
+    gl_FragData[1] = vec4(normal * 0.5 + 0.5, 1.0);
+}
+
+#endif

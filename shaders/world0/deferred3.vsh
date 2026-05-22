@@ -1,7 +1,3 @@
-#version 130
-
-#define VERTEX_SHADER
-#define OVERWORLD
-#define DEFERRED3
-
-#include "/program/deferred3.glsl"
+#version 430 compatibility
+#define VERTEX
+#include "/program/deferred/d3_denoise.glsl"
