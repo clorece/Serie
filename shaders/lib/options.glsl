@@ -111,7 +111,7 @@ const bool colortex15Clear = false;
 #define VOXEL_GI
 #define GI_SAMPLES 2    // [1 2 3 4] Rays per pixel per frame (higher = less noise, lower fps)
 #define GI_RADIUS  24   // [12 16 24 32 48] Max ray distance in blocks
-#define GI_STRENGTH 200 // [25 50 75 100 150 200] Indirect light intensity (percent)
+#define GI_STRENGTH 100 // [25 50 75 100 150 200] Indirect light intensity (percent)
 #define GI_SKY_DIRECTIONAL    // Sample a real directional sky (octahedral LUT) for GI rays instead of a flat ambient tint
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0] Sky irradiance multiplier for GI rays (lower this when GI_SKY_DIRECTIONAL is on)
 #define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun colour (percent) for a warmer, less cold feel
@@ -123,7 +123,7 @@ const bool colortex15Clear = false;
 #define GI_EMISSION 3   // [1 2 3 4 5 6 7 8] Emissive block glow strength
 #define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] Temporal frames to blend
 #define GI_FIREFLY 4.0  // [1.5 2.0 3.0 4.0 6.0 8.0] Relative firefly clamp (x temporal-mean luminance)
-#define GI_TEMPORAL_REJECT 1.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
+#define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
 #define GI_DENOISE      // SVGF variance-guided spatial filter to clean up GI noise
 
 
@@ -164,20 +164,6 @@ const bool colortex15Clear = false;
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] Clamp on the unbiased reservoir weight W (anti-firefly)
 #define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] Absolute firefly clamp on the resolved GI
 
-// ---- Screen-space path tracing (hybrid: augments Voxel GI with on-screen detail) ----
-// Each GI ray marches the depth buffer FIRST. A hit reads radiance from the prev-frame lit
-// scene (colortex5), so on-screen geometry the voxel grid cannot represent contributes real
-// GI: entities, non-full blocks (slabs/stairs/fences/etc.), sub-voxel contact detail, and
-// anything PAST the +-64 voxel bounds that is still visible. Misses fall back to the voxel
-// DDA (off-screen / inside-bounds coverage). Cost scales with SSPT_STEPS x candidate rays.
-#define SSPT                  // Master toggle for screen-space path tracing
-#define SSPT_STEPS 24         // [12 16 20 24 32 40 48 64] Screen-march steps per ray (cost driver; lower = faster, coarser hits)
-#define SSPT_DIST 256.0       // [64.0 96.0 128.0 192.0 256.0 384.0 512.0] Max screen-ray distance in blocks (the march stops at the screen edge anyway, so large is ~free)
-#define SSPT_THICKNESS 1.0    // [0.5 1.0 1.5 2.0 3.0 4.0] Base surface thickness in blocks for the hit test (low = thin walls/more misses, high = more leaks); auto-grows with distance
-//#define SSPT_DEBUG          // DEBUG: show ONLY the screen-space trace (no voxel/ReSTIR/denoise/albedo)
-#define SSPT_DEBUG_MODE 0     // [0 1] 0 = gathered radiance (bright=light, black=miss/dark hit); 1 = coverage (GREEN=rays hit, RED=all missed)
-#define SSPT_DEBUG_SAMPLES 4  // [1 2 4 8 16] Rays per pixel for the SSPT debug view (TAA cleans up the noise over frames)
-
 // ---- Ambient Occlusion (screen-space GTAO; complements Voxel GI's macro occlusion) ----
 // GTAO adds the sub-voxel CONTACT darkening the 1-block voxel grid cannot resolve. It is
 // computed in d5_gtao -> colortex12 and applied in d7_composite. Keep the radius small so it
@@ -187,19 +173,19 @@ const bool colortex15Clear = false;
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
 #define GTAO_SLICES 2        // [1 2 3 4] Azimuthal slices per pixel (higher = smoother, slower)
 #define GTAO_HORIZON_STEPS 4 // [2 3 4 6 8] Horizon march steps per slice direction
-#define GTAO_RADIUS 1.0      // [1.0 1.5 2.0 3.0 4.0] Search radius (view-space units ~ blocks)
+#define GTAO_RADIUS 0.5      // [1.0 1.5 2.0 3.0 4.0] Search radius (view-space units ~ blocks)
 #define GTAO_FALLOFF 1.0    // [0.5 0.6 0.75 0.85] Fraction of radius where occlusion starts fading
 #define AO_MULTIBOUNCE       // Jimenez multibounce compensation (less over-darkening on bright albedo)
 #define AO_BENT_NORMAL       // Use the GTAO bent normal for directional skylight (GI-off / Voxel-AO mode)
 #define AO_ACCUM_FRAMES 128   // [8 16 32 48 64 128 192 256] Temporal frames to accumulate AO (higher = smoother, more ghosting)
 #define AO_DENOISE           // Depth-aware spatial bilateral filter on the AO (removes horizon-march stepping/noise)
-#define AO_DENOISE_RADIUS 2  // [1 2 3] Bilateral kernel radius in taps ((2R+1)^2 samples; higher = smoother, slower)
+#define AO_DENOISE_RADIUS 3  // [1 2 3] Bilateral kernel radius in taps ((2R+1)^2 samples; higher = smoother, slower)
 
 // ---- Legacy voxel-DDA AO (only used when both VOXEL_GI and AO_GTAO are disabled) ----
 #define VOXEL_AO
 #define AO_SAMPLES 4   // [2 4 6 8] Rays per pixel (higher = less noise, lower fps)
 #define AO_RADIUS  8   // [4 6 8 10 12] Max occlusion search distance in blocks
-#define AO_STRENGTH 2000 // [25 50 75 100] AO darkening intensity (percent)
+#define AO_STRENGTH 100 // [25 50 75 100] AO darkening intensity (percent)
 
 //#define PT_DEBUG_VOXELS  // Enable DDA debug overlay in deferred pass
 

@@ -23,7 +23,7 @@ float GetLinearDepth2(float depth) {
 
 
 #ifdef TEMPORAL_FILTER
-    // Previous frame reprojection from Chocapic13
+    //Previous frame reprojection
     vec2 Reprojection(vec3 pos, vec3 cameraOffset) {
         pos = pos * 2.0 - 1.0;
 

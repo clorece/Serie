@@ -58,13 +58,15 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 vec3 giRayRadiance(
     usampler2D atlas, vec3 camPos, vec3 gridOrigin,
     vec3 origin, vec3 dir, vec3 sunDir, vec3 sunColor, vec3 skyColor, sampler2D skyLut,
+    sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV,
     out vec3 hitPos, out vec3 hitNormal, out bool wasHit, out uint hitCategory,
     float skyLightmap
 ) {
     VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
     
     // Smooth the lightmap to avoid harsh transitions in the PT
-    float skyOcc = sqrt(skyLightmap); 
+    float skyOcc = sqrt(max(skyLightmap, 0.0));
+    skyOcc = sqrt(skyOcc); 
 
     if (h.hit) {
         wasHit      = true;
@@ -75,7 +77,7 @@ vec3 giRayRadiance(
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0) {
-            bool occluded = traceVoxelRay(atlas, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos);
+            bool occluded = traceVoxelRay(atlas, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV);
             if (!occluded) rad += h.albedo * sunColor * ndl * skyOcc;
         }
 
@@ -85,7 +87,7 @@ vec3 giRayRadiance(
         if (skyProbeLenSq > 1e-4) {
             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
             float lambertWeight = dot(h.normal, skyProbeDir);
-            bool  skyEscape     = !traceVoxelRay(atlas, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos);
+            bool  skyEscape     = !traceVoxelRay(atlas, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV);
             #ifdef GI_SKY_DIRECTIONAL
                 vec3 probeSky = sampleSkyLut(skyLut, skyProbeDir) * GI_SKY_BRIGHTNESS;
             #else
@@ -98,6 +100,26 @@ vec3 giRayRadiance(
         hitNormal = h.normal;
         return rad;
     }
+    
+    // --- Hybrid Screen-Space Fallback ---
+    // If the ray escapes the voxel bounds, seamlessly trace it against the screen-space
+    // depth buffer to pick up infinite-distance geometry (mountains, trees outside radius).
+    vec3 ssrtHitNormal;
+    if (screenSpaceRayTrace(origin + dir * float(GI_RADIUS), dir, 256.0, camPos, gbufferProj, gbufferMV, depthtex0, h.albedo, ssrtHitNormal, hitPos)) {
+        wasHit = true;
+        hitCategory = VOXEL_OPAQUE;
+        hitNormal = ssrtHitNormal;
+        
+        // Approximate the hit UV to sample the radiance buffer
+        vec4 clipEnd = gbufferProj * (gbufferMV * vec4(hitPos - camPos, 1.0));
+        vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
+        vec2 hitUV = ndcEnd.xy * 0.5 + 0.5;
+        
+        // Sample previous frame's lit scene for multi-bounce GI
+        vec3 rad = textureLod(colortex5, hitUV, 0.0).rgb;
+        return rad;
+    }
+
     wasHit      = false;
     hitCategory = VOXEL_AIR;
     hitPos      = origin + dir * float(GI_RADIUS);
@@ -112,7 +134,8 @@ vec3 giRayRadiance(
 // Multi-sample diffuse GI for the non-ReSTIR path.
 vec3 computeGI(
     usampler2D atlas, vec3 worldPos, vec3 normal, inout uint seed, vec3 camPos,
-    vec3 sunDir, vec3 sunColor, vec3 skyColor, sampler2D skyLut, float skyLightmap
+    vec3 sunDir, vec3 sunColor, vec3 skyColor, sampler2D skyLut, float skyLightmap,
+    sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV
 ) {
     vec3 gridOrigin = floor(camPos) - vec3(VOXEL_RADIUS);
     vec3 origin = worldPos + normal * 0.1;
@@ -121,7 +144,7 @@ vec3 computeGI(
     for (int i = 0; i < GI_SAMPLES; i++) {
         vec3 dir = cosHemisphereDir(normal, randFloat(seed), randFloat(seed));
         vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat;
-        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
+        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
     }
     return acc / float(GI_SAMPLES);
 }

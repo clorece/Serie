@@ -34,7 +34,10 @@ float computeAO(
     vec3        normalWorld,
     inout uint  seed,
     vec3        camPos,
-    float       skyLightmap
+    float       skyLightmap,
+    sampler2D   depthtex0,
+    mat4        gbufferProj,
+    mat4        gbufferMV
 ) {
     // Offset slightly off the surface so the first voxel is the air above it
     vec3 origin = worldPos + normalWorld * 0.1;
@@ -44,7 +47,7 @@ float computeAO(
         float r1  = randFloat(seed);
         float r2  = randFloat(seed);
         vec3  dir = cosHemisphereDir(normalWorld, r1, r2);
-        if (!traceVoxelRay(atlas, origin, dir, float(AO_RADIUS), camPos)) {
+        if (!traceVoxelRay(atlas, origin, dir, float(AO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV)) {
             unoccluded += 1.0;
         }
     }

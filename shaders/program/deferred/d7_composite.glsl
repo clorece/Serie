@@ -60,9 +60,6 @@ uniform sampler2D colortex0;   // raw albedo
 uniform sampler2D colortex1;   // view normals
 uniform sampler2D colortex2;   // lightmap
 uniform sampler2D colortex3;   // denoised indirect (.rgb)
-#ifdef SSPT_DEBUG
-uniform sampler2D colortex5;   // prev-frame lit scene (radiance source for the SSPT debug view)
-#endif
 uniform sampler2D colortex9;   // linear depth (.r) + luminance moments (.g, .b) + SSCS (.a)
 uniform sampler2D colortex12;  // GTAO: bent normal (.xy oct) + linear depth (.z) + AO (.w)
 uniform sampler2D colortex4;   // material
@@ -83,23 +80,6 @@ vec3 clipSpace;
 
 #include "/lib/util/dither.glsl"
 #include "/lib/util/positions.glsl"
-
-#ifdef SSPT_DEBUG
-#include "/lib/pt/rand.glsl"
-#include "/lib/pt/screenTrace.glsl"
-
-// Local cosine-weighted hemisphere sampler (kept self-contained so the debug view
-// doesn't pull the voxel trace headers into the composite pass).
-vec3 sspt_dbgHemisphere(vec3 n, float r1, float r2) {
-    vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    vec3 t  = normalize(cross(up, n));
-    vec3 b  = cross(n, t);
-    float phi      = 6.2831853 * r1;
-    float sinTheta = sqrt(r2);
-    float cosTheta = sqrt(1.0 - r2);
-    return normalize(t * (sinTheta * cos(phi)) + b * (sinTheta * sin(phi)) + n * cosTheta);
-}
-#endif
 
 vec3 getLightmap(vec3 l) {
     l.x = 1.0 * pow(l.x, 5.06);
@@ -133,18 +113,24 @@ float getNdotL(vec3 n, vec3 l) {
     return max(dotNL, 0.0) * lightScatter * viewScatter;
 }
 
-float getSSCS(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView) {
+float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView) {
     float viewDist = length(viewPos);
-    if (viewDist > 64.0) return 1.0;
-    float distanceFade = smoothstep(64.0, 48.0, viewDist);
-
-    int steps = 10;
-    float rayLength = 0.6;
+    
+    // Adaptive Ray March settings:
+    // Near objects get short, precise steps (contact shadows).
+    // Distant objects get long, coarse steps (mountain shadows).
+    // We scale the ray up to 128 blocks for distant mountains.
+    float rayLength = mix(0.8, 128.0, clamp(viewDist / 512.0, 0.0, 1.0));
+    int steps = int(mix(12.0, 48.0, clamp(viewDist / 512.0, 0.0, 1.0)));
+    
     vec3 stepVec = lightDir * (rayLength / float(steps));
-    vec3 rayPos = viewPos + normalView * 0.05 + stepVec * dither;
+    // Added a larger normal bias for distant fragments to prevent precision-based shadow acne.
+    float nBias = mix(0.05, 0.5, clamp(viewDist / 512.0, 0.0, 1.0));
+    vec3 rayPos = viewPos + normalView * nBias + stepVec * dither;
 
     float sscs = 1.0;
-    float thickness = 0.15;
+    // Thickness scales with distance to ensure rays don't "slip through" distant geometry
+    float thickness = mix(0.15, 8.0, clamp(viewDist / 512.0, 0.0, 1.0));
 
     for (int i = 0; i < steps; i++) {
         rayPos += stepVec;
@@ -153,27 +139,32 @@ float getSSCS(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView) {
         vec3 ndcPos = clipPos.xyz / clipPos.w;
         vec2 uv = ndcPos.xy * 0.5 + 0.5;
 
+        // If the ray goes off-screen, we can no longer calculate shadows.
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
 
-        float depth = texture(depthtex0, uv).r;
-        if (depth == 1.0) continue;
+        float depth = textureLod(depthtex0, uv, 0.0).r;
+        if (depth >= 1.0) break;
 
         vec4 sampleClip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
         vec4 sampleView = gbufferProjectionInverse * sampleClip;
         float sampleZ = sampleView.z / sampleView.w;
 
+        // Depth test with adaptive thickness
         float zDiff = sampleZ - rayPos.z;
-        if (zDiff > 0.01 && zDiff < thickness) {
-            sscs = smoothstep(0.8, 1.0, float(i) / float(steps));
+        if (zDiff > 0.02 && zDiff < thickness) {
+            // Smooth the shadow edge based on how many steps it took to hit.
+            // Distant shadows are naturally softer.
+            sscs = smoothstep(0.6, 1.0, float(i) / float(steps));
             break;
         }
     }
 
+    // Fade the effect out near the screen edges to prevent "shadow pop-in"
     vec4 startClip = gbufferProjection * vec4(viewPos, 1.0);
     vec2 startUV = (startClip.xy / startClip.w) * 0.5 + 0.5;
     float edgeFade = smoothstep(0.0, 0.1, min(min(startUV.x, 1.0 - startUV.x), min(startUV.y, 1.0 - startUV.y)));
 
-    return mix(1.0, sscs, edgeFade * distanceFade);
+    return mix(1.0, sscs, edgeFade);
 }
 
 #include "/lib/fragment/shadows.glsl"
@@ -266,15 +257,17 @@ void main() {
 
     // ---- Direct sunlight ----
     float diffuse = getNdotL(normal, lightVector);
-    float sscs = 1.0;
     float skyOcc = sqrt(lightmap.y); // Loosened modulation: allows leakage until nearly 0 lightmap
     
+    vec3 directShadow = getShadow();
     if (depth0 < 1.0) {
         float ditherVal = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
         vec3 viewPos = getFragPosition().xyz;
-        sscs = getSSCS(viewPos, lightVector, ditherVal, normal);
+        // Combine standard shadow map with infinite screen-space shadows.
+        // This provides micro-contact detail and infinite-distance mountain shadows.
+        directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal);
     }
-    vec3 direct = diffuse * lightColor * getShadow() * sscs * (1.0 - (rainStrength * 0.75)) * skyOcc;
+    vec3 direct = diffuse * lightColor * directShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
 
     // ---- Screen-space contact AO (GTAO, from d5_gtao) ----
     // The voxel GI already captures macro occlusion; this adds the sub-voxel contact

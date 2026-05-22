@@ -24,7 +24,9 @@ vec3 YCoCgtoRGB(vec3 c) {
 }
 
 // Neighborhood clamping (box clamp) to kill ghosts at the temporal accumulation source.
-// This is more stable than pure variance-based rejection for path tracing.
+// We use a variance-based box clamp (mean +/- std * gamma).
+// This is more relaxed than a strict min/max bound, allowing the temporal
+// accumulation to actually build up a smooth signal from 1spp noise.
 vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     for (int x = -1; x <= 1; x++) {
@@ -35,6 +37,10 @@ vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
     }
     m1 /= 9.0; m2 /= 9.0;
     vec3 std = sqrt(max(m2 - m1 * m1, 0.0));
+    
+    // SAFETY CLAMP: Prevent standard deviation from exploding due to 1spp fireflies.
+    // If std is infinite, the AABB is infinite, and stale history (ghosts) will never be rejected.
+    std = min(std, m1 * 2.0);
     
     // Box clamp history to [mean - k*std, mean + k*std]
     vec3 h = RGBtoYCoCg(history);
@@ -177,20 +183,22 @@ vec4 svgfAtrousFirst(
         cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
     }
     
-    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) + 1e-3);
-    float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.05 + 1e-2);
-
-    // Break up banding with noise-based tap jitter
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    float ang = noise * 6.2831853;
-    vec2  jitter = vec2(cos(ang), sin(ang)) * 0.25;
+    // Increased epsilon (0.05 instead of 1e-3) prevents the denoiser from "freezing"
+    // when variance drops, which causes the painterly/blotchy artifacts.
+    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) + 0.05);
+    
+    // Relaxed depth edge-stopping to allow angled surfaces to blur properly
+    float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
+    
+    // Relaxed normal map stopping (caps at 16.0 instead of 64.0)
+    float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
 
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
-            vec2 off = vec2(x, y) * stepSize + jitter;
+            vec2 off = vec2(x, y) * stepSize;
             vec2 nUV = uv + off * texelSize;
             if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
 
@@ -207,20 +215,15 @@ vec4 svgfAtrousFirst(
             } else {
                 float expectedD = centerDepth + dot(depthGrad, off);
                 float wz = exp(-abs(nDepth - expectedD) * invSigmaZ);
-                float wn = pow(max(dot(nN, centerN), 0.0), SVGF_SIGMA_N);
+                float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
-                #ifdef PT_DETAIL_RECONSTRUCT
-                    float planeDelta = nDepth - expectedD;
-                    float contact = step(nLuma, cLuma)
-                                  * smoothstep(0.0, abs(centerDepth) * 0.03 + 1e-3, planeDelta)
-                                  * (1.0 - smoothstep(0.0, 4.0, length(off)));
-                    w = hw * mix(wz * wn * wl, 1.0, contact);
-                #else
-                    w = hw * wz * wn * wl;
-                #endif
+                
+                w = hw * wz * wn * wl;
+
                 #ifdef SVGF_WORLD_RADIUS
                     // Convert this tap's pixel offset to a world-space distance and
-                    // fall off past SVGF_SIGMA_WORLD blocks.
+                    // fall off past SVGF_SIGMA_WORLD blocks. This prevents dark halos
+                    // ("refractions") from bleeding across distant disjoint surfaces.
                     float tangential = length(off) * pxWorld * abs(centerDepth);
                     float worldDist  = sqrt(tangential * tangential
                                           + (nDepth - expectedD) * (nDepth - expectedD));
@@ -245,20 +248,16 @@ vec4 svgfAtrous(
     float cLuma  = luma(c.rgb);
     float varG   = gauss3Var(src, uv);
     
-    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(varG, 0.0)) + 1e-3);
-    float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.05 + 1e-2);
-
-    // Break up banding with noise-based tap jitter
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    float ang = noise * 6.2831853;
-    vec2  jitter = vec2(cos(ang), sin(ang)) * 0.25;
+    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(varG, 0.0)) + 0.05);
+    float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
+    float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
 
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
-            vec2 off = vec2(x, y) * stepSize + jitter;
+            vec2 off = vec2(x, y) * stepSize;
             vec2 nUV = uv + off * texelSize;
             if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
 
@@ -274,18 +273,15 @@ vec4 svgfAtrous(
             } else {
                 float expectedD = centerDepth + dot(depthGrad, off);
                 float wz = exp(-abs(nDepth - expectedD) * invSigmaZ);
-                float wn = pow(max(dot(nN, centerN), 0.0), SVGF_SIGMA_N);
+                float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
-                #ifdef PT_DETAIL_RECONSTRUCT
-                    float planeDelta = nDepth - expectedD;
-                    float contact = step(nLuma, cLuma)
-                                  * smoothstep(0.0, abs(centerDepth) * 0.03 + 1e-3, planeDelta)
-                                  * (1.0 - smoothstep(0.0, 4.0, length(off)));
-                    w = hw * mix(wz * wn * wl, 1.0, contact);
-                #else
-                    w = hw * wz * wn * wl;
-                #endif
+
+                w = hw * wz * wn * wl;
+
                 #ifdef SVGF_WORLD_RADIUS
+                    // Convert this tap's pixel offset to a world-space distance and
+                    // fall off past SVGF_SIGMA_WORLD blocks. This prevents dark halos
+                    // ("refractions") from bleeding across distant disjoint surfaces.
                     float tangential = length(off) * pxWorld * abs(centerDepth);
                     float worldDist  = sqrt(tangential * tangential
                                           + (nDepth - expectedD) * (nDepth - expectedD));

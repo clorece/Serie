@@ -47,19 +47,21 @@ void main() {
     float cVar = varFromMoments(cm.g, cm.b);
     
     // 2. Bootstrap variance spatially if history is short
+    // This is CRITICAL for the denoiser to function properly when moving the camera.
     if (histLen < float(SVGF_VAR_BOOST)) {
         float sv = spatialLumaVariance(colortex8, texCoord);
         cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
     }
 
-    // 3. Lightweight Firefly Prefilter & Variance Stabilization (3x3)
-    // We use a small weighted blur to suppress outliers and stabilize the variance
-    // channel before it enters the a-trous chain.
+    // 3. Lightweight Prefilter & Variance Stabilization (3x3)
     vec3 sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
     
     vec3 centerColor = c8.rgb;
     float centerLuma = luma(centerColor);
+    float centerDepthRaw = texture(depthtex0, texCoord).r;
+    float centerDepth = getDepth(centerDepthRaw);
+    vec3 centerN = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
     
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
@@ -68,11 +70,29 @@ void main() {
             vec4 nm_sample = textureLod(colortex9, nUV, 0.0);
             
             float nLuma = luma(n8.rgb);
-            float nVar  = varFromMoments(nm_sample.g, nm_sample.b);
             
-            // Firefly suppression: down-weight samples that are much brighter than the center
-            float fw = 1.0 / (1.0 + max(nLuma - centerLuma * 2.0, 0.0));
-            float w = fw * ((x == 0 && y == 0) ? 4.0 : (x == 0 || y == 0) ? 2.0 : 1.0);
+            // To properly bootstrap the neighborhood variance, we fall back to the 
+            // center's bootstrapped variance if the neighbor is also young.
+            float nVar = varFromMoments(nm_sample.g, nm_sample.b);
+            if (n8.a < float(SVGF_VAR_BOOST)) {
+                nVar = max(nVar, cVar);
+            }
+            
+            // Geometry-aware edge stopping to prevent bleeding
+            float nDepthRaw = textureLod(depthtex0, nUV, 0.0).r;
+            float nDepth = getDepth(nDepthRaw);
+            vec3 nN = normalize(textureLod(colortex1, nUV, 0.0).rgb * 2.0 - 1.0);
+            
+            float wDepth = exp(-abs(centerDepth - nDepth) * 10.0 / max(centerDepth, 0.01));
+            float wNormal = pow(max(dot(centerN, nN), 0.0), 32.0);
+            
+            // Smooth based on luminance difference and local variance
+            float lumaDiff = abs(nLuma - centerLuma);
+            float wLuma = exp(-lumaDiff / (sqrt(max(cVar, 1e-4)) + 0.01));
+            
+            // Gaussian spatial weights
+            float wSpatial = ((x == 0 && y == 0) ? 4.0 : (x == 0 || y == 0) ? 2.0 : 1.0);
+            float w = wLuma * wSpatial * wDepth * wNormal;
             
             sumC += n8.rgb * w;
             sumV += nVar * w;
@@ -80,8 +100,8 @@ void main() {
         }
     }
     
-    vec3 filteredGI = sumC / wsum;
-    float filteredVar = sumV / wsum;
+    vec3 filteredGI = sumC / max(wsum, 1e-5);
+    float filteredVar = sumV / max(wsum, 1e-5);
 
     /* RENDERTARGETS: 3 */
     gl_FragData[0] = vec4(filteredGI, filteredVar);

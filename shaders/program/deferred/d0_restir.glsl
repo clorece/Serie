@@ -63,7 +63,6 @@ vec3 clipSpace;
 #include "/lib/pt/voxelData.glsl"
 #include "/lib/pt/ao.glsl"
 #include "/lib/pt/gi.glsl"
-#include "/lib/pt/screenTrace.glsl"
 #include "/lib/pt/restir.glsl"
 #include "/lib/pt/denoise.glsl"
 
@@ -78,6 +77,7 @@ uniform sampler2D colortex9;   // linear-depth history (.r)
 uniform sampler2D colortex10;  // ReSTIR reservoir: radiance.rgb + M
 uniform sampler2D colortex11;  // ReSTIR reservoir: samplePos.xyz + W
 uniform mat4 gbufferProjection;
+uniform mat4 gbufferModelView;
 uniform mat4 gbufferPreviousModelView;
 uniform mat4 gbufferPreviousProjection;
 uniform vec3 previousCameraPosition;
@@ -120,17 +120,26 @@ void main() {
 
             // Reproject into previous frame (avoid precision loss by staying relative)
             vec3 worldPrevRel = worldRel;
-            if (depth0 >= 0.7) {
-                worldPrevRel += (cameraPosition - previousCameraPosition);
+            bool isHand = depth0 < 0.56;
+            
+            vec2 uvPrev;
+            float expectedClipZ;
+            if (isHand) {
+                uvPrev = texCoord;
+                expectedClipZ = clipSpace.z;
+            } else {
+                if (depth0 >= 0.7) {
+                    worldPrevRel += (cameraPosition - previousCameraPosition);
+                }
+                vec4 viewPrev = gbufferPreviousModelView * vec4(worldPrevRel, 1.0);
+                vec4 clipPrev = gbufferPreviousProjection * viewPrev;
+                uvPrev   = (clipPrev.xy / clipPrev.w) * 0.5 + 0.5;
+                uvPrev += prevJitter;
+                expectedClipZ = clipPrev.z / clipPrev.w;
             }
             
-            vec4 viewPrev = gbufferPreviousModelView * vec4(worldPrevRel, 1.0);
-            vec4 clipPrev = gbufferPreviousProjection * viewPrev;
-            vec2 uvPrev   = (clipPrev.xy / clipPrev.w) * 0.5 + 0.5;
-            uvPrev += prevJitter;
-            
-            float expectedClipZ = clipPrev.z / clipPrev.w;
-            bool validReproj = all(greaterThanEqual(uvPrev, vec2(0.0))) && all(lessThan(uvPrev, vec2(1.0)));
+            vec2 padding = 1.5 * texelSize;
+            bool validReproj = all(greaterThanEqual(uvPrev, padding)) && all(lessThan(uvPrev, 1.0 - padding));
 
           #ifdef RESTIR_GI
             // ---- ReSTIR GI: spatio-temporal reservoir resampling ----
@@ -142,7 +151,13 @@ void main() {
             for (int i = 0; i < RESTIR_INITIAL_SAMPLES; i++) {
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory;
-                vec3 rad = giRayRadiance(colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky, colortex13, hitPos, hitNormal, wasHit, hitCategory, skyLightmap);
+                
+                // Hybrid Voxel/SSRT Raytrace
+                vec3 rad = giRayRadiance(
+                    colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky, 
+                    colortex13, depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView, 
+                    hitPos, hitNormal, wasHit, hitCategory, skyLightmap
+                );
 
                 // Infinite multi-bounce logic (optimized lookup)
                 if (wasHit && hitCategory != VOXEL_EMISSIVE) {
@@ -181,14 +196,13 @@ void main() {
                 if (abs(expectedClipZ - actualClipZ) < 0.002 && normalSim > 0.5) {
                     Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev);
 
-                    // Anti-ghosting for reservoirs: discard history on significant luminance change
-                    float lr_initial = luma(res.radiance);
-                    float prevStd = sqrt(max(p9.b - p9.g * p9.g, 0.0));
-                    float tol     = prevStd * GI_TEMPORAL_REJECT + 0.05 * p9.g + 0.01;
-                    float reject  = clamp((abs(lr_initial - p9.g) - tol) / (tol + 1e-3), 0.0, 1.0);
+                    // Geometry and Motion-based rejection for reservoirs.
+                    // We DO NOT use luminance rejection here because 1spp path tracing
+                    // noise makes luminance highly volatile. We rely on the AABB clamp
+                    // in d0_accum to handle lighting changes, and geometry to handle occlusions.
 
                     // Aggressive normal-based rejection for reservoirs
-                    reject = max(reject, 1.0 - pow(normalSim, 8.0));
+                    float reject = 1.0 - pow(normalSim, 8.0);
                     
                     // Motion-aware reservoir rejection
                     float motion = length(cameraPosition - previousCameraPosition);
@@ -201,39 +215,23 @@ void main() {
                 }
             }
             finalizeReservoir(res);
+            
+            // Hard clamp the temporal reservoir's unbiased contribution before it goes into history.
+            // This prevents a single massive firefly from permanently poisoning the spatial 
+            // reuse passes in subsequent frames (which causes the "cloudy blotches").
+            float unbiasedLuma = luma(res.radiance * res.W);
+            if (unbiasedLuma > float(RESTIR_CLAMP)) {
+                res.W *= float(RESTIR_CLAMP) / unbiasedLuma;
+            }
 
             // Store the temporal reservoir (pre-spatial) for next frame
             resv10Out = vec4(res.radiance, res.M);
             resv11Out = vec4(res.samplePos, res.W);
             resv14Out = vec4(octEncodeNormal(res.sampleNormal), 0.0, 0.0);
 
-            // 3. Spatial reuse
+            // 3. Spatial reuse moved to d0_accum to prevent buffer read/write conflicts.
             Reservoir shade = res;
-            #ifdef RESTIR_SPATIAL
-            const float spDepthGate  = 0.10;
-            const float spNormalGate = 0.8;
             
-            for (int i = 0; i < RESTIR_SPATIAL_SAMPLES; i++) {
-                float ang = randFloat(seed) * 6.2831853;
-                float dist = sqrt(randFloat(seed)) * RESTIR_SPATIAL_RADIUS;
-                vec2 nUV = texCoord + vec2(cos(ang), sin(ang)) * dist * texelSize;
-                if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
-
-                float nDepthRaw = texture(depthtex0, nUV).r;
-                float actualNDepth = getDepth(nDepthRaw);
-                if (abs(actualNDepth - linDepth) / max(linDepth, 0.001) > spDepthGate) continue;
-
-                vec3 nNormal = normalize(texture(colortex1, nUV).rgb * 2.0 - 1.0);
-                if (dot(normal, nNormal) < spNormalGate) continue;
-
-                Reservoir n = readReservoir(colortex10, colortex11, colortex14, nUV);
-                n.M = min(n.M, float(RESTIR_M_CAP));
-
-                mergeReservoir(shade, n, 1.0, seed);
-            }
-            finalizeReservoir(shade);
-            #endif
-
             // 4. Resolve GI estimate
             rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);
             lr    = luma(rawGI);
@@ -246,8 +244,11 @@ void main() {
             }
           #else
             // ---- Plain single-bounce GI ----
-            rawGI = computeGI(colortex7, worldAbs, normalWorld, seed, cameraPosition,
-                               sunDirWorld, lightColor, giSky, colortex13, skyLightmap) * (float(GI_STRENGTH) / 100.0);
+            rawGI = computeGI(
+                colortex7, worldAbs, normalWorld, seed, cameraPosition,
+                sunDirWorld, lightColor, giSky, colortex13, skyLightmap,
+                depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView
+            ) * (float(GI_STRENGTH) / 100.0);
             lr    = luma(rawGI);
           #endif
         }
@@ -262,7 +263,10 @@ void main() {
             vec3 worldRel = getWorldPosition().xyz;
             vec3 worldAbs = worldRel + cameraPosition;
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
-            rawAO = computeAO(colortex7, worldAbs, normalWorld, seed, cameraPosition, skyLightmap);
+            rawAO = computeAO(
+                colortex7, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
+                depthtex0, gbufferProjection, gbufferModelView
+            );
         }
         hist8Out = vec4(vec3(rawAO), 1.0);
         hist9Out = vec4(depth0, rawAO, rawAO * rawAO, 1.0);

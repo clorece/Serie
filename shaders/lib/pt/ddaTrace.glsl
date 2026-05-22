@@ -3,6 +3,56 @@
 
 #include "/lib/pt/voxelData.glsl"
 
+// Screen-Space Ray Tracing Fallback (Optimized 2D Line March)
+bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, vec3 camPos, mat4 gbufferProj, mat4 gbufferMV, sampler2D depthtex0, out vec3 hitAlbedo, out vec3 hitNormal, out vec3 hitPos) {
+    vec3 viewOrigin = (gbufferMV * vec4(worldRayOrigin - camPos, 1.0)).xyz;
+    vec3 viewDir = mat3(gbufferMV) * worldRayDir;
+    
+    vec4 clipOrigin = gbufferProj * vec4(viewOrigin, 1.0);
+    vec3 ndcOrigin = clipOrigin.xyz / clipOrigin.w;
+    
+    vec3 viewEnd = viewOrigin + viewDir * maxDist;
+    vec4 clipEnd = gbufferProj * vec4(viewEnd, 1.0);
+    if (clipEnd.w <= 0.0) return false; // Behind camera
+    
+    vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
+    
+    vec3 uvOrigin = ndcOrigin * 0.5 + 0.5;
+    vec3 uvEnd = ndcEnd * 0.5 + 0.5;
+    
+    vec3 rayDelta = uvEnd - uvOrigin;
+    
+    // Scale steps by screen distance, max 24 steps
+    float screenDist = max(abs(rayDelta.x), abs(rayDelta.y));
+    if (screenDist < 0.01) return false;
+    
+    float steps = clamp(screenDist * 100.0, 4.0, 24.0);
+    vec3 stepDelta = rayDelta / steps;
+    vec3 currentUV = uvOrigin + stepDelta;
+    
+    float thickness = 0.05; // 5% thickness tolerance
+    
+    for (int i = 0; i < int(steps); i++) {
+        if (currentUV.x < 0.0 || currentUV.x > 1.0 || currentUV.y < 0.0 || currentUV.y > 1.0) return false;
+        
+        float depthBuffer = textureLod(depthtex0, currentUV.xy, 0.0).r;
+        if (depthBuffer >= 1.0) {
+            currentUV += stepDelta;
+            continue;
+        }
+        
+        vec4 sampleClip = vec4(currentUV.xy * 2.0 - 1.0, depthBuffer * 2.0 - 1.0, 1.0);
+        // We only really need to check Z depth difference
+        if (currentUV.z > sampleClip.z && currentUV.z - sampleClip.z < thickness) {
+            hitPos = worldRayOrigin + worldRayDir * maxDist * (float(i) / steps); // approximate
+            hitNormal = vec3(0.0, 1.0, 0.0); // Default normal
+            return true;
+        }
+        currentUV += stepDelta;
+    }
+    return false;
+}
+
 // Amanatides-Woo DDA traversal through the voxel grid.
 //
 // atlas:    voxel atlas sampler (colortex7, bound as usampler2D)
@@ -17,14 +67,20 @@ bool traceVoxelRay(
     vec3 worldPos,
     vec3 rayDir,
     float maxDist,
-    vec3 camPos
+    vec3 camPos,
+    sampler2D depthtex0,
+    mat4 gbufferProj,
+    mat4 gbufferMV
 ) {
     vec3 gridOrigin = floor(camPos) - vec3(VOXEL_RADIUS);
     vec3 localPos   = worldPos - gridOrigin;
 
     // Fast check: if the origin is far outside the grid, skip the trace entirely.
-    // The grid is centered on camera, so localPos should be within [0, VOXEL_GRID_SIZE].
-    if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) return false;
+    if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) {
+        // Fallback to screen-space for rays starting outside voxel volume
+        vec3 dummyA, dummyN, dummyP;
+        return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);
+    }
 
     ivec3 vox     = ivec3(floor(localPos));
     ivec3 stepDir = ivec3(sign(rayDir));
@@ -41,7 +97,11 @@ bool traceVoxelRay(
     for (int i = 0; i < 80; i++) {
         // Exit if we exceed the requested distance or leave the active grid volume
         if (tEntry >= maxDist) break;
-        if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, ivec3(VOXEL_GRID_SIZE)))) break;
+        if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, ivec3(VOXEL_GRID_SIZE)))) {
+            // Escape to screen-space fallback
+            vec3 dummyA, dummyN, dummyP;
+            return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);
+        }
 
         uint vt = sampleVoxel(atlas, vox);
         if (vt != VOXEL_AIR && i > 0) return true;
