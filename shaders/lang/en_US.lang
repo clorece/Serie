@@ -60,3 +60,7 @@ option.COLOR_TEMP.comment=Shifts color temperature. Negative values introduce co
 
 option.VIGNETTE=Cinematic Vignette
 option.VIGNETTE.comment=Applies a subtle darkening around the edges of the viewport to create a professional photographic lens effect.
+
+option.GI_DEBUG_VIEW=GI Debug View
+option.GI_DEBUG_VIEW.comment=Outputs the raw/denoised GI buffer directly to the screen to visualize the indirect light reaching the surfaces.
+

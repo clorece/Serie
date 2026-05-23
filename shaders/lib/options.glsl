@@ -188,5 +188,6 @@ const bool colortex15Clear = false;
 #define AO_STRENGTH 100 // [25 50 75 100] AO darkening intensity (percent)
 
 //#define PT_DEBUG_VOXELS  // Enable DDA debug overlay in deferred pass
+//#define GI_DEBUG_VIEW    // Enable raw GI debug overlay in deferred pass (skylight illumination)
 
 #endif

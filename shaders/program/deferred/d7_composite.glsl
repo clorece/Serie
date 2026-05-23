@@ -69,6 +69,7 @@ uniform sampler2D shadowtex1;
 uniform sampler2D shadowcolor0;
 uniform mat4 gbufferProjection;
 uniform mat4 gbufferProjectionInverse;
+uniform mat4 gbufferModelView;
 uniform mat4 gbufferModelViewInverse;
 
 float depth0 = texture(depthtex0, texCoord).r;
@@ -206,8 +207,12 @@ vec4 sampleAOFiltered(vec2 uv) {
 
 #ifdef PT_DEBUG_VOXELS
 #include "/lib/pt/voxelData.glsl"
-uniform usampler2D colortex7;
 #endif
+uniform usampler2D colortex7;
+
+
+#include "/lib/util/positions.glsl"
+#include "/lib/pt/ddaTrace.glsl"
 
 void main() {
     vec2 unjitteredTexCoord = texCoord;
@@ -361,8 +366,17 @@ void main() {
     }
     #endif
 
-    /* RENDERTARGETS: 0 */
-    gl_FragData[0] = vec4(color, 1.0);
+    // DEBUG VIEW: Skylight Illumination
+    // We output the raw/denoised GI buffer (colortex3) directly to the screen.
+    // This allows you to see exactly the indirect light reaching the surface!
+    #ifdef GI_DEBUG_VIEW
+        vec3 debugIllum = texture(colortex3, texCoord).rgb;
+        /* RENDERTARGETS: 0 */
+        gl_FragData[0] = vec4(debugIllum, 1.0);
+    #else
+        /* RENDERTARGETS: 0 */
+        gl_FragData[0] = vec4(color, 1.0);
+    #endif
 }
 
 #endif

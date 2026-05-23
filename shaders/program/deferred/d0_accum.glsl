@@ -81,6 +81,7 @@ void main() {
     #if defined(VOXEL_GI) && defined(RESTIR_GI) && defined(RESTIR_SPATIAL)
         uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter + 1);
         Reservoir shade = readReservoir(colortex10, colortex11, colortex14, texCoord);
+        shade.wSum = luma(shade.radiance) * shade.W * shade.M;
         
         const float spDepthGate  = 0.10;
         const float spNormalGate = 0.8;
@@ -206,9 +207,9 @@ void main() {
                 float a = 1.0 / giHist;
 
                 blendedGI = mix(clampedHistory, rawGI, a);
-                // Moments should track the clean neighborhood mean, otherwise variance boils.
-                giM1 = mix(p9_tmp.g, neighborLuma, a);
-                giM2 = mix(p9_tmp.b, neighborLuma * neighborLuma, a);
+                // Track the raw variance so the GI_TEMPORAL_REJECT macro works properly
+                giM1 = mix(p9_tmp.g, lr, a);
+                giM2 = mix(p9_tmp.b, lr * lr, a);
             }
         }
     }
