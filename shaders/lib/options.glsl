@@ -4,7 +4,7 @@
 #define SHADOW_FILTER
 #define DITHER_FILTER
 
-#define SHADOW_RESOLUTION 4096 //[512 1024 1563 2048 3072 4096 6144 8192]
+#define SHADOW_RESOLUTION 2048 //[512 1024 1563 2048 3072 4096 6144 8192]
 #define SHADOW_FILTER_QUALITY 8 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
 #define SHADOW_MAP_BIAS 0.85 //Increase this if you get shadow acne. Decrease this if you get peter panning. [0.000 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008 0.009 0.010 0.012 0.014 0.016 0.018 0.020 0.022 0.024 0.026 0.028 0.030 0.035 0.040 0.045 0.050]
 
@@ -34,7 +34,7 @@
 #define AUTO_EXPOSURE_MAX 128.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
-#define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_CONTRAST 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_SATURATION 1.04 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 //#define VIGNETTE
@@ -114,7 +114,7 @@ const bool colortex15Clear = false;
 #define GI_STRENGTH 200 // [25 50 75 100 150 200] Indirect light intensity (percent)
 #define GI_SKY_DIRECTIONAL    // Sample a real directional sky (octahedral LUT) for GI rays instead of a flat ambient tint
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0] Sky irradiance multiplier for GI rays (lower this when GI_SKY_DIRECTIONAL is on)
-#define GI_SKY_WARMTH 30      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun colour (percent) for a warmer, less cold feel
+#define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun colour (percent) for a warmer, less cold feel
 #define SKY_LUT_RES 256       // Octahedral sky-LUT side length in texels (sharper sky gradient = higher); kept <= screen size
 #define SKY_LUT_STEPS 4       // [4 6 8 12] Atmosphere primary-march steps for the sky LUT (quality vs cost)
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] Sky contribution weight at bounce surfaces (sky probe)

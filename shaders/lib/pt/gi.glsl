@@ -51,8 +51,13 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
         tMax    += vec3(mask) * tDelta;
         vox     += stepDir * ivec3(mask);
     }
+    r.pos = worldPos + rayDir * tEntry;
     return r;
 }
+
+uniform mat4 gbufferPreviousModelView;
+uniform mat4 gbufferPreviousProjection;
+uniform vec3 previousCameraPosition;
 
 // Trace ONE GI ray and return the incoming radiance from that direction.
 vec3 giRayRadiance(
@@ -105,30 +110,30 @@ vec3 giRayRadiance(
     // If the ray escapes the voxel bounds, seamlessly trace it against the screen-space
     // depth buffer to pick up infinite-distance geometry (mountains, trees outside radius).
     vec3 ssrtHitNormal;
-    if (screenSpaceRayTrace(origin + dir * float(GI_RADIUS), dir, 256.0, camPos, gbufferProj, gbufferMV, depthtex0, h.albedo, ssrtHitNormal, hitPos)) {
+    if (screenSpaceRayTrace(h.pos, dir, 256.0, camPos, gbufferProj, gbufferMV, depthtex0, h.albedo, ssrtHitNormal, hitPos)) {
         wasHit = true;
         hitCategory = VOXEL_OPAQUE;
         hitNormal = ssrtHitNormal;
         
-        // Approximate the hit UV to sample the radiance buffer
-        vec4 clipEnd = gbufferProj * (gbufferMV * vec4(hitPos - camPos, 1.0));
-        vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
-        vec2 hitUV = ndcEnd.xy * 0.5 + 0.5;
-        
-        // Sample previous frame's lit scene for multi-bounce GI
-        vec3 rad = textureLod(colortex5, hitUV, 0.0).rgb;
-        return rad;
+        // We return 0.0 here because ReSTIR and computeGI handle the multi-bounce 
+        // temporal reprojection for all hits (including SSRT). If we were to sample 
+        // colortex5 here without a depth check, it would cause ghosting at disocclusions.
+        // ReSTIR's strict depth check safely manages the colortex5 lookup.
+        return vec3(0.0);
     }
 
     wasHit      = false;
     hitCategory = VOXEL_AIR;
-    hitPos      = origin + dir * float(GI_RADIUS);
+    hitPos      = h.pos;
     hitNormal   = -dir; 
     #ifdef GI_SKY_DIRECTIONAL
-        return sampleSkyLut(skyLut, dir) * GI_SKY_BRIGHTNESS * skyOcc;
+        vec3 skyRad = sampleSkyLut(skyLut, dir) * GI_SKY_BRIGHTNESS * skyOcc;
     #else
-        return skyColor * skyOcc;
+        vec3 skyRad = skyColor * skyOcc;
     #endif
+    // Modulate the escaped sky light so downward rays return dark (simulating ground) 
+    // rather than glowing brightly, keeping NdotL consistent outside the voxel grid.
+    return skyRad * smoothstep(-0.2, 0.4, dir.y);
 }
 
 // Multi-sample diffuse GI for the non-ReSTIR path.
@@ -141,10 +146,27 @@ vec3 computeGI(
     vec3 origin = worldPos + normal * 0.1;
     vec3 acc    = vec3(0.0);
 
+    vec2 prevJitter = getTaaJitter(frameCounter - 1) * texelSize;
+
     for (int i = 0; i < GI_SAMPLES; i++) {
         vec3 dir = cosHemisphereDir(normal, randFloat(seed), randFloat(seed));
         vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat;
-        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
+        vec3 rad = giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
+
+        // Voxel path multi-bounce (SSRT handles its own fallback inside giRayRadiance now)
+        if (wasHit && hitCat != VOXEL_EMISSIVE && hitCat != VOXEL_OPAQUE) {
+            vec3 hitRelPrev = hitPos - previousCameraPosition;
+            vec4 viewHit = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
+            vec4 clipHit = gbufferPreviousProjection * viewHit;
+            if (clipHit.w > 0.0) {
+                vec2 uvHit = clipHit.xy / clipHit.w * 0.5 + 0.5;
+                uvHit += prevJitter;
+                if (all(greaterThanEqual(uvHit, vec2(0.0))) && all(lessThan(uvHit, vec2(1.0)))) {
+                    rad = textureLod(colortex5, uvHit, 0.0).rgb;
+                }
+            }
+        }
+        acc += rad;
     }
     return acc / float(GI_SAMPLES);
 }

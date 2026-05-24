@@ -94,10 +94,10 @@ float getNdotL(vec3 n, vec3 l) {
 
     // Foliage (1.0: leaves, 1.1: grass, flowers, crops, vines)
     // Disables directional shading for a flat, translucent look.
-    if (material.x > 0.9 && material.x < 1.2) {
+    //if (material.x > 0.9 && material.x < 1.2) {
         //return max(dotNL, 0.0) * lightScatter * viewScatter;
-        return 0.1;
-    }
+    //    return 0.1;
+    //}
 
     // Opaque Disney (Burley) Diffuse
     // Adds a retro-reflective peak and smoother falloff based on surface roughness.
@@ -118,21 +118,24 @@ float getNdotL(vec3 n, vec3 l) {
 float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView) {
     float viewDist = length(viewPos);
     
-    // Adaptive Ray March settings:
-    // Near objects get short, precise steps (contact shadows).
-    // Distant objects get long, coarse steps (mountain shadows).
-    // We scale the ray up to 128 blocks for distant mountains.
+    // Adaptive Ray March settings
     float rayLength = mix(0.8, 128.0, clamp(viewDist / 512.0, 0.0, 1.0));
-    int steps = int(mix(12.0, 48.0, clamp(viewDist / 512.0, 0.0, 1.0)));
+    int steps = int(mix(16.0, 48.0, clamp(viewDist / 512.0, 0.0, 1.0))); // Increased min steps to 16
     
     vec3 stepVec = lightDir * (rayLength / float(steps));
-    // Added a larger normal bias for distant fragments to prevent precision-based shadow acne.
-    float nBias = mix(0.05, 0.5, clamp(viewDist / 512.0, 0.0, 1.0));
+    float stepLen = length(stepVec);
+
+    // Drastically reduced normal bias so the ray starts closer to the surface
+    float nBias = mix(0.005, 0.2, clamp(viewDist / 512.0, 0.0, 1.0));
     vec3 rayPos = viewPos + normalView * nBias + stepVec * dither;
 
     float sscs = 1.0;
-    // Thickness scales with distance to ensure rays don't "slip through" distant geometry
-    float thickness = mix(0.15, 8.0, clamp(viewDist / 512.0, 0.0, 1.0));
+    
+    // Dynamic thickness scales with the step length to prevent missing thin objects
+    float thickness = max(stepLen * 2.0, mix(0.15, 8.0, clamp(viewDist / 512.0, 0.0, 1.0)));
+    
+    // Adaptive depth tolerance prevents grazing rays from failing intersection
+    float distTolerance = 0.002 + abs(viewPos.z) * 0.001;
 
     for (int i = 0; i < steps; i++) {
         rayPos += stepVec;
@@ -141,7 +144,6 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
         vec3 ndcPos = clipPos.xyz / clipPos.w;
         vec2 uv = ndcPos.xy * 0.5 + 0.5;
 
-        // If the ray goes off-screen, we can no longer calculate shadows.
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
 
         float depth = textureLod(depthtex0, uv, 0.0).r;
@@ -151,11 +153,9 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
         vec4 sampleView = gbufferProjectionInverse * sampleClip;
         float sampleZ = sampleView.z / sampleView.w;
 
-        // Depth test with adaptive thickness
+        // Depth test with adaptive tolerance and thickness
         float zDiff = sampleZ - rayPos.z;
-        if (zDiff > 0.02 && zDiff < thickness) {
-            // Smooth the shadow edge based on how many steps it took to hit.
-            // Distant shadows are naturally softer.
+        if (zDiff > distTolerance && zDiff < thickness) {
             sscs = smoothstep(0.6, 1.0, float(i) / float(steps));
             break;
         }

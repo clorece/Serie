@@ -78,9 +78,6 @@ uniform sampler2D colortex10;  // ReSTIR reservoir: radiance.rgb + M
 uniform sampler2D colortex11;  // ReSTIR reservoir: samplePos.xyz + W
 uniform mat4 gbufferProjection;
 uniform mat4 gbufferModelView;
-uniform mat4 gbufferPreviousModelView;
-uniform mat4 gbufferPreviousProjection;
-uniform vec3 previousCameraPosition;
 
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
@@ -168,12 +165,13 @@ void main() {
                         vec2 uvHit = clipHit.xy / clipHit.w * 0.5 + 0.5;
                         uvHit += prevJitter;
                         if (all(greaterThanEqual(uvHit, vec2(0.0))) && all(lessThan(uvHit, vec2(1.0)))) {
-                            float prevDepthRaw   = texture(colortex9, uvHit).r;
+                            float prevLinD       = texture(colortex9, uvHit).r;
                             float expectedRawD   = clamp(clipHit.z / clipHit.w * 0.5 + 0.5, 0.0, 1.0);
                             float expectedLinD   = getDepth(expectedRawD);
-                            float actualLinD     = getDepth(prevDepthRaw);
-                            float relErr         = abs(expectedLinD - actualLinD) / max(expectedLinD, 0.1);
-                            if (prevDepthRaw < 0.9999 && relErr < 0.05) {
+                            float relErr         = abs(expectedLinD - prevLinD) / max(expectedLinD, 0.1);
+                            
+                            // ReSTIR multi-bounce: overwrite radiance with previous frame if depth matches
+                            if (prevLinD < getDepth(1.0) * 0.999 && relErr < 0.05) {
                                 rad = texture(colortex5, uvHit).rgb;
                             }
                         }
@@ -186,14 +184,15 @@ void main() {
             // 2. Temporal reuse from the reprojected reservoir (M-capped)
             if (validReproj) {
                 vec4  p9 = texture(colortex9, uvPrev);
-                float prevDepthRaw = p9.r;
-                float actualClipZ = prevDepthRaw * 2.0 - 1.0;
-                
+                float prevLinD = p9.r;
+                float expectedLinD = getDepth(clamp(expectedClipZ * 0.5 + 0.5, 0.0, 1.0));
+                float tempRelErr = abs(expectedLinD - prevLinD) / max(expectedLinD, 0.1);
+
                 // Normal similarity check for reservoir reuse
                 vec3 prevNormalWorld = octDecodeNormal(texture(colortex15, uvPrev).xy);
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
 
-                if (abs(expectedClipZ - actualClipZ) < 0.002 && normalSim > 0.5) {
+                if (tempRelErr < 0.05 && normalSim > 0.5) {
                     Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev);
 
                     // Geometry and Motion-based rejection for reservoirs.

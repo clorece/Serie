@@ -76,12 +76,18 @@ vec3 getShadow() {
         const float cosGold = -0.7373688220971415; // cos(2.399963229728653)
         const float sinGold = 0.6754902942615236;  // sin(2.399963229728653)
 
-        // 4. Blocker Search Loop using 8 Vogel spiral taps with textureGather (total 32 depth checks!)
-        int blockerSearchSteps = 8;
+        // A physically accurate solar angular diameter is ~0.53 degrees, which gives a tangent of ~0.0092
+        float penumbraScale = 0.0092; 
+        float minFilterRadius = 0.375 / (float(shadowMapResolution) * max(distortFactor, 0.001)); 
+        float maxFilterRadius = 0.0015 / max(distortFactor, 0.001); 
+
+        // 4. Blocker Search
+        // Blocker search radius MUST match maxFilterRadius to prevent sharp cutoffs at the edge 
+        // of wide penumbrae, otherwise the filter snaps to minimum radius when the search misses.
+        int blockerSearchSteps = 16; // Increased to 16 (64 taps) to prevent missing thin objects in the wide search area
         float blockerSum = 0.0;
         int numBlockers = 0;
-        // Tighter search radius for sharper contact shadows
-        float searchRadius = 0.0006 / max(distortFactor, 0.001); 
+        float searchRadius = maxFilterRadius; 
 
         vec2 bDir = vec2(cos(phi), sin(phi));
         float rcpSqrtBlocker = 1.0 / sqrt(float(blockerSearchSteps));
@@ -91,7 +97,7 @@ vec3 getShadow() {
             vec2 offset = bDir * r * searchRadius;
             vec4 gatheredDepths = textureGather(shadowtex0, shadowPos.xy + offset);
             
-            // Check all 4 gathered depths per tap (total 32 samples)
+            // Check all 4 gathered depths per tap (total 64 samples)
             if (gatheredDepths.x < receiverDepth) { blockerSum += gatheredDepths.x; numBlockers++; }
             if (gatheredDepths.y < receiverDepth) { blockerSum += gatheredDepths.y; numBlockers++; }
             if (gatheredDepths.z < receiverDepth) { blockerSum += gatheredDepths.z; numBlockers++; }
@@ -101,10 +107,6 @@ vec3 getShadow() {
         }
 
         // 5. Penumbra Estimation & PCF Filtering
-        float penumbraScale = 0.015; // Significantly reduced scale for much sharper shadows over distance
-        float minFilterRadius = 1.2 / (float(shadowMapResolution) * max(distortFactor, 0.001)); 
-        float maxFilterRadius = 0.0015 / max(distortFactor, 0.001); // Halved max radius
-        
         float filterRadius = minFilterRadius;
         
         if (numBlockers > 0) {

@@ -52,6 +52,7 @@ void main() {
     #endif
 
     // Write outputs
+    /* DRAWBUFFERS:35 */
     // gl_FragData[0] -> colortex3 (bright-pass extraction)
     gl_FragData[0] = vec4(bloomColor, 1.0);
     

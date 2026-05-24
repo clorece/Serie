@@ -73,13 +73,10 @@ void main() {
     vec3 sky = getSkyNoDisc(dir, worldSunDir, worldMoonDir, eyeAltitude);
 
     #if GI_SKY_WARMTH > 0
-        // Mix the warm sun/light colour into the skylight so the ambient isn't too cold.
-        // Normalise the sun colour to unit LUMINANCE so we shift the sky's hue toward warm
-        // without changing its brightness, then blend in by the warmth amount.
-        const vec3 lumaW = vec3(0.2126, 0.7152, 0.0722);
-        float sunLuma = max(dot(lightColor, lumaW), 1e-4);
-        vec3  warmSky = sky * (lightColor / sunLuma);   // sky re-tinted to the sun's hue, same luminance
-        sky = mix(sky, warmSky, float(GI_SKY_WARMTH) / 100.0);
+        // Instead of multiplying by lightColor (which gets extremely saturated at sunset),
+        // we add a fixed warm offset to make the sky comfortably warm without blowing out.
+        vec3 warmOffset = vec3(0.1, 0.03, 0.0);
+        sky += warmOffset * (float(GI_SKY_WARMTH) / 100.0);
     #endif
 
     /* RENDERTARGETS: 13 */
