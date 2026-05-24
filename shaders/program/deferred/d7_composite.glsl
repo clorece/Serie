@@ -94,9 +94,10 @@ float getNdotL(vec3 n, vec3 l) {
 
     // Foliage (1.0: leaves, 1.1: grass, flowers, crops, vines)
     // Disables directional shading for a flat, translucent look.
-    //if (material.x > 0.9 && material.x < 1.2) {
-    //    return 1.0;
-    //}
+    if (material.x > 0.9 && material.x < 1.2) {
+        //return max(dotNL, 0.0) * lightScatter * viewScatter;
+        return 0.1;
+    }
 
     // Opaque Disney (Burley) Diffuse
     // Adds a retro-reflective peak and smoother falloff based on surface roughness.
@@ -305,6 +306,10 @@ void main() {
                 gi *= mix(1.0, aoTerm, float(AO_GI_STRENGTH) / 100.0);
             #endif
         #endif
+        
+        // Prevent skylight illumination from the path tracer from illuminating sunlit terrain
+        gi *= vec3(1.0) - (directShadow * max(dot(normal, lightVector), 0.0));
+
         indirect = gi;
     #elif defined(AO_GTAO)
         // GI off, GTAO on: ambient from lightmap, occluded by contact AO.
