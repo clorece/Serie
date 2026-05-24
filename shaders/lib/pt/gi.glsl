@@ -27,7 +27,12 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     ivec3 stepDir  = ivec3(sign(rayDir));
     vec3  tDelta   = 1.0 / max(abs(rayDir), vec3(1e-8));
 
-    vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * (1.0 / (rayDir + 1e-8));
+    vec3 tMax;
+    for(int i=0; i<3; ++i) {
+        if (rayDir[i] > 0.0) tMax[i] = (floor(localPos[i]) + 1.0 - localPos[i]) * tDelta[i];
+        else if (rayDir[i] < 0.0) tMax[i] = (localPos[i] - floor(localPos[i])) * tDelta[i];
+        else tMax[i] = 1e38;
+    }
 
     vec3  lastMask = vec3(0.0);
     float tEntry   = 0.0;
@@ -68,7 +73,7 @@ vec3 giRayRadiance(
     float skyLightmap
 ) {
     VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
-    
+
     // Smooth the lightmap to avoid harsh transitions in the PT
     float skyOcc = max(skyLightmap, 0.0);
     //skyOcc = sqrt(skyOcc); 
@@ -78,7 +83,11 @@ vec3 giRayRadiance(
         hitCategory = h.category;
         vec3 rad = vec3(0.0);
 
-        if (h.category == VOXEL_EMISSIVE) rad += h.albedo * float(GI_EMISSION);
+        if (h.category == VOXEL_EMISSIVE) {
+            hitPos    = h.pos;
+            hitNormal = h.normal;
+            return h.albedo * float(GI_EMISSION);
+        }
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0) {
@@ -115,11 +124,14 @@ vec3 giRayRadiance(
         hitCategory = VOXEL_OPAQUE;
         hitNormal = ssrtHitNormal;
         
-        // We return 0.0 here because ReSTIR and computeGI handle the multi-bounce 
-        // temporal reprojection for all hits (including SSRT). If we were to sample 
-        // colortex5 here without a depth check, it would cause ghosting at disocclusions.
-        // ReSTIR's strict depth check safely manages the colortex5 lookup.
-        return vec3(0.0);
+        // Approximate the hit UV to sample the radiance buffer
+        vec4 clipEnd = gbufferProj * (gbufferMV * vec4(hitPos - camPos, 1.0));
+        vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
+        vec2 hitUV = ndcEnd.xy * 0.5 + 0.5;
+        
+        // Sample previous frame's lit scene for multi-bounce GI
+        vec3 rad = textureLod(colortex5, hitUV, 0.0).rgb;
+        return rad;
     }
 
     wasHit      = false;
@@ -146,27 +158,10 @@ vec3 computeGI(
     vec3 origin = worldPos + normal * 0.1;
     vec3 acc    = vec3(0.0);
 
-    vec2 prevJitter = getTaaJitter(frameCounter - 1) * texelSize;
-
     for (int i = 0; i < GI_SAMPLES; i++) {
         vec3 dir = cosHemisphereDir(normal, randFloat(seed), randFloat(seed));
         vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat;
-        vec3 rad = giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
-
-        // Voxel path multi-bounce (SSRT handles its own fallback inside giRayRadiance now)
-        if (wasHit && hitCat != VOXEL_EMISSIVE && hitCat != VOXEL_OPAQUE) {
-            vec3 hitRelPrev = hitPos - previousCameraPosition;
-            vec4 viewHit = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
-            vec4 clipHit = gbufferPreviousProjection * viewHit;
-            if (clipHit.w > 0.0) {
-                vec2 uvHit = clipHit.xy / clipHit.w * 0.5 + 0.5;
-                uvHit += prevJitter;
-                if (all(greaterThanEqual(uvHit, vec2(0.0))) && all(lessThan(uvHit, vec2(1.0)))) {
-                    rad = textureLod(colortex5, uvHit, 0.0).rgb;
-                }
-            }
-        }
-        acc += rad;
+        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
     }
     return acc / float(GI_SAMPLES);
 }

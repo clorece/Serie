@@ -40,13 +40,10 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
             currentUV += stepDelta;
             continue;
         }
-        
-        vec4 sampleClip = vec4(currentUV.xy * 2.0 - 1.0, depthBuffer * 2.0 - 1.0, 1.0);
+
         // We only really need to check Z depth difference
-        if (currentUV.z > sampleClip.z && currentUV.z - sampleClip.z < thickness) {
-            vec4 hitView = gbufferProjectionInverse * sampleClip;
-            hitView.xyz /= hitView.w;
-            hitPos = (gbufferModelViewInverse * vec4(hitView.xyz, 1.0)).xyz + camPos;
+        if (currentUV.z > depthBuffer && currentUV.z - depthBuffer < thickness) {
+            hitPos = worldRayOrigin + worldRayDir * maxDist * (float(i) / steps); // approximate
             hitNormal = vec3(0.0, 1.0, 0.0); // Default normal
             return true;
         }
