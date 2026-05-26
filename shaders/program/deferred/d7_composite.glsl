@@ -60,6 +60,7 @@ uniform sampler2D colortex0;   // raw albedo
 uniform sampler2D colortex1;   // view normals
 uniform sampler2D colortex2;   // lightmap
 uniform sampler2D colortex3;   // denoised indirect (.rgb)
+uniform sampler2D colortex8;   // accumulated indirect (.rgb) + history length (.a) [debug inspector]
 uniform sampler2D colortex9;   // linear depth (.r) + luminance moments (.g, .b) + SSCS (.a)
 uniform sampler2D colortex12;  // GTAO: bent normal (.xy oct) + linear depth (.z) + AO (.w)
 uniform sampler2D colortex4;   // material
@@ -369,6 +370,34 @@ void main() {
         }
         if (hit) color = hitAlbedo;
     }
+    #endif
+
+    // ---- Buffer inspector (DEBUG_VIEW in options.glsl) ----
+    // Localises artifacts by drawing one intermediate buffer straight to the screen.
+    #if DEBUG_VIEW > 0
+        vec3 dbg = color;
+        if (depth0 < 1.0) {
+            #if DEBUG_VIEW == 1
+                dbg = texture(colortex3, texCoord).rgb;                       // denoised GI
+            #elif DEBUG_VIEW == 2
+                dbg = texture(colortex8, texCoord).rgb;                       // accumulated GI (pre-a-trous)
+            #elif DEBUG_VIEW == 3
+                float fr = texture(colortex8, texCoord).a / float(DENOISE_MAX_FRAMES);
+                dbg = vec3(clamp(fr, 0.0, 1.0));                              // history length (black=fresh, white=converged)
+            #elif DEBUG_VIEW == 4
+                dbg = normal * 0.5 + 0.5;                                     // view normals
+            #elif DEBUG_VIEW == 5
+                float ld = getDepth(depth0) / far;
+                dbg = vec3(fract(ld * 16.0));                                 // linear depth (banded for visibility)
+            #elif DEBUG_VIEW == 6
+                dbg = vec3(aoTerm);                                           // GTAO
+            #endif
+        } else {
+            dbg = vec3(0.0);
+        }
+        /* RENDERTARGETS: 0 */
+        gl_FragData[0] = vec4(dbg, 1.0);
+        return;
     #endif
 
     // DEBUG VIEW: Skylight Illumination

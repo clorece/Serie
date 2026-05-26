@@ -53,7 +53,10 @@ uniform vec3 cameraPosition;
 uniform sampler2D colortex1;
 uniform sampler2D colortex2;
 uniform sampler2D depthtex0;
+#ifndef GBUFFER_PROJECTION_INVERSE_DECLARED
+#define GBUFFER_PROJECTION_INVERSE_DECLARED
 uniform mat4 gbufferProjectionInverse;
+#endif
 uniform mat4 gbufferModelViewInverse;
 
 vec3 clipSpace;
@@ -76,6 +79,12 @@ uniform sampler2D colortex8;   // indirect history (.rgb + histLen .a)
 uniform sampler2D colortex9;   // linear-depth history (.r)
 uniform sampler2D colortex10;  // ReSTIR reservoir: radiance.rgb + M
 uniform sampler2D colortex11;  // ReSTIR reservoir: samplePos.xyz + W
+
+#ifdef RESTIR_GI
+uniform sampler3D irradianceCache3D;
+uniform sampler3D irradianceCache3D_Alt;
+#endif
+
 uniform mat4 gbufferProjection;
 uniform mat4 gbufferModelView;
 
@@ -83,11 +92,17 @@ void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
     vec2 prevJitter    = getTaaJitter(frameCounter - 1) * texelSize;
 
+    // Sample the gbuffer at the ACTUAL pixel (texCoord); the TAA jitter is baked into the
+    // gbuffer projection, so we only remove it from the NDC we use to reconstruct world
+    // position. This matches d7_composite exactly, so the GI we store is perfectly aligned
+    // with the albedo/normal/depth the denoiser and composite read back. (Previously the
+    // gbuffer was sampled at texCoord-jitter, offsetting the GI from the geometry by the
+    // jitter -> the a-trous then smeared that misalignment, drifting edges.)
     vec2 uvUnjittered = texCoord - currentJitter;
-    float depth0 = texture(depthtex0, uvUnjittered).r;
-    vec3  normal = normalize(texture(colortex1, uvUnjittered).rgb * 2.0 - 1.0);
+    float depth0 = texture(depthtex0, texCoord).r;
+    vec3  normal = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
     vec3 normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
-    
+
     clipSpace = vec3(uvUnjittered, depth0) * 2.0 - 1.0;
     float linDepth = getDepth(depth0);
 
@@ -125,13 +140,15 @@ void main() {
                 uvPrev = texCoord;
                 expectedClipZ = clipSpace.z;
             } else {
-                if (depth0 >= 0.7) {
-                    worldPrevRel += (cameraPosition - previousCameraPosition);
-                }
+                // Always apply camera translation for world-space reprojection (matches
+                // d0_accum). The previous gate skipped it for near surfaces (depth0 < 0.7),
+                // which misaligned their reservoir history during movement -> ghosting on
+                // nearby blocks.
+                worldPrevRel += (cameraPosition - previousCameraPosition);
                 vec4 viewPrev = gbufferPreviousModelView * vec4(worldPrevRel, 1.0);
                 vec4 clipPrev = gbufferPreviousProjection * viewPrev;
                 uvPrev   = (clipPrev.xy / clipPrev.w) * 0.5 + 0.5;
-                uvPrev += prevJitter;
+                uvPrev  -= prevJitter;
                 expectedClipZ = clipPrev.z / clipPrev.w;
             }
             
@@ -151,12 +168,13 @@ void main() {
                 
                 // Hybrid Voxel/SSRT Raytrace
                 vec3 rad = giRayRadiance(
-                    colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky, 
-                    colortex13, depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView, 
+                    colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
+                    colortex13, depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView,
                     hitPos, hitNormal, wasHit, hitCategory, skyLightmap
                 );
 
-                // Infinite multi-bounce logic (optimized lookup)
+                // Infinite multi-bounce logic (ReSTIR-only; the resolved scene from last
+                // frame becomes the bounce radiance when the hit projects to a visible pixel).
                 if (wasHit && hitCategory != VOXEL_EMISSIVE) {
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
                     vec4  viewHit    = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
@@ -165,17 +183,28 @@ void main() {
                         vec2 uvHit = clipHit.xy / clipHit.w * 0.5 + 0.5;
                         uvHit += prevJitter;
                         if (all(greaterThanEqual(uvHit, vec2(0.0))) && all(lessThan(uvHit, vec2(1.0)))) {
-                            float prevDepthRaw   = texture(colortex9, uvHit).r;
-                            float expectedRawD   = clamp(clipHit.z / clipHit.w * 0.5 + 0.5, 0.0, 1.0);
-                            float expectedLinD   = getDepth(expectedRawD);
-                            float actualLinD     = getDepth(prevDepthRaw);
-                            float relErr         = abs(expectedLinD - actualLinD) / max(expectedLinD, 0.1);
-                            
-                            // ReSTIR multi-bounce: overwrite radiance with previous frame if depth matches
-                            if (prevDepthRaw < 0.9999 && relErr < 0.05) {
+                            float prevLinD     = texture(colortex9, uvHit).r;
+                            float expectedLinD = getDepth(clamp(clipHit.z / clipHit.w * 0.5 + 0.5, 0.0, 1.0));
+                            float relErr       = abs(expectedLinD - prevLinD) / max(expectedLinD, 0.1);
+                            if (prevLinD < far * 0.999 && relErr < 0.05) {
                                 rad = texture(colortex5, uvHit).rgb;
+                            } else {
+                                vec3 edgeBleed = textureLod(colortex5, clamp(uvHit, 0.0, 1.0), 5.0).rgb;
+                                vec2 primaryLM = texture(colortex2, texCoord).rg;
+                                vec3 fakeAmbient = min(edgeBleed, vec3(0.1)) * 0.1 + primaryLM.x * vec3(1.0, 0.85, 0.6) * 0.02;
+                                rad += fakeAmbient;
                             }
+                        } else {
+                            vec3 edgeBleed = textureLod(colortex5, clamp(uvHit, 0.0, 1.0), 5.0).rgb;
+                            vec2 primaryLM = texture(colortex2, texCoord).rg;
+                            vec3 fakeAmbient = min(edgeBleed, vec3(0.1)) * 0.1 + primaryLM.x * vec3(1.0, 0.85, 0.6) * 0.02;
+                            rad += fakeAmbient;
                         }
+                    } else {
+                        vec3 edgeBleed = textureLod(colortex5, texCoord, 5.0).rgb;
+                        vec2 primaryLM = texture(colortex2, texCoord).rg;
+                        vec3 fakeAmbient = min(edgeBleed, vec3(0.1)) * 0.1 + primaryLM.x * vec3(1.0, 0.85, 0.6) * 0.02;
+                        rad += fakeAmbient;
                     }
                 }
 
@@ -185,14 +214,17 @@ void main() {
             // 2. Temporal reuse from the reprojected reservoir (M-capped)
             if (validReproj) {
                 vec4  p9 = texture(colortex9, uvPrev);
-                float prevDepthRaw = p9.r;
-                float actualClipZ = prevDepthRaw * 2.0 - 1.0;
-                
+                float prevLinD = p9.r;                                 // colortex9.r = LINEAR depth
+                float expectedLinD = getDepth(expectedClipZ * 0.5 + 0.5);
+                float depthRelErr = abs(expectedLinD - prevLinD) / max(expectedLinD, 0.1);
+
                 // Normal similarity check for reservoir reuse
                 vec3 prevNormalWorld = octDecodeNormal(texture(colortex15, uvPrev).xy);
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
 
-                if (abs(expectedClipZ - actualClipZ) < 0.002 && normalSim > 0.5) {
+                // Relative linear-depth test (was a 0.002 clip-Z test: far too tight near the
+                // far plane, and itself a source of depth-banded reservoir reuse).
+                if (depthRelErr < 0.05 && normalSim > 0.5) {
                     Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev);
 
                     // Geometry and Motion-based rejection for reservoirs.

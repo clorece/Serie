@@ -89,7 +89,7 @@ void main() {
 
     vec4 clipPrev     = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(worldPrevRel, 1.0));
     vec2 uvPrev       = (clipPrev.xy / clipPrev.w) * 0.5 + 0.5;
-    uvPrev += getTaaJitter(frameCounter - 1) * texelSize;
+    uvPrev -= getTaaJitter(frameCounter - 1) * texelSize;
 
     if (all(greaterThanEqual(uvPrev, vec2(0.0))) && all(lessThan(uvPrev, vec2(1.0)))) {
         vec4 hist = texture(colortex12, uvPrev);

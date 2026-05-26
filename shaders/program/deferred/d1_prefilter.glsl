@@ -1,11 +1,8 @@
 // ============================================================================
-//  d1_prefilter : firefly suppression and variance estimation
-// ----------------------------------------------------------------------------
-//  Reads the accumulated GI (colortex8) and moments (colortex9).
-//  Suppresses fireflies with a 3x3 filter and bootstraps the variance channel
-//  for the SVGF a-trous chain.
-//
-//  Output: colortex3 = filtered GI (.rgb) + variance (.a)
+//  d1_prefilter : seed the a-trous chain.
+//  Reads the temporally-accumulated GI (colortex8.rgb) + history length (.a) and
+//  the luminance moments (colortex9.gb), estimates per-pixel variance, and writes
+//  colortex3 = (accumulated GI, variance) for the spatial passes.
 // ============================================================================
 
 #ifdef VERTEX
@@ -27,9 +24,8 @@ void main() {
 
 in vec2 texCoord;
 
-uniform sampler2D colortex1;   // normals
 uniform sampler2D colortex8;   // accumulated GI (.rgb) + history length (.a)
-uniform sampler2D colortex9;   // linear depth (.r) + luminance moments (.g, .b)
+uniform sampler2D colortex9;   // LINEAR depth (.r) + luminance moments (.g = E[L], .b = E[L^2])
 uniform sampler2D depthtex0;
 
 void main() {
@@ -39,72 +35,12 @@ void main() {
         return;
     }
 
-    vec4  c8      = texture(colortex8, texCoord);
-    float histLen = c8.a;
-    vec4  cm      = texture(colortex9, texCoord);
-    
-    // 1. Initial variance estimate from temporal moments
-    float cVar = varFromMoments(cm.g, cm.b);
-    
-    // 2. Bootstrap variance spatially if history is short
-    // This is CRITICAL for the denoiser to function properly when moving the camera.
-    if (histLen < float(SVGF_VAR_BOOST)) {
-        float sv = spatialLumaVariance(colortex8, texCoord);
-        cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
-    }
-
-    // 3. Lightweight Prefilter & Variance Stabilization (3x3)
-    vec3 sumC = vec3(0.0);
-    float sumV = 0.0, wsum = 0.0;
-    
-    vec3 centerColor = c8.rgb;
-    float centerLuma = luma(centerColor);
-    float centerDepthRaw = texture(depthtex0, texCoord).r;
-    float centerDepth = getDepth(centerDepthRaw);
-    vec3 centerN = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
-    
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            vec2 nUV = texCoord + vec2(x, y) * texelSize;
-            vec4 n8  = textureLod(colortex8, nUV, 0.0);
-            vec4 nm_sample = textureLod(colortex9, nUV, 0.0);
-            
-            float nLuma = luma(n8.rgb);
-            
-            // To properly bootstrap the neighborhood variance, we fall back to the 
-            // center's bootstrapped variance if the neighbor is also young.
-            float nVar = varFromMoments(nm_sample.g, nm_sample.b);
-            if (n8.a < float(SVGF_VAR_BOOST)) {
-                nVar = max(nVar, cVar);
-            }
-            
-            // Geometry-aware edge stopping to prevent bleeding
-            float nDepthRaw = textureLod(depthtex0, nUV, 0.0).r;
-            float nDepth = getDepth(nDepthRaw);
-            vec3 nN = normalize(textureLod(colortex1, nUV, 0.0).rgb * 2.0 - 1.0);
-            
-            float wDepth = exp(-abs(centerDepth - nDepth) * 10.0 / max(centerDepth, 0.01));
-            float wNormal = pow(max(dot(centerN, nN), 0.0), 32.0);
-            
-            // Smooth based on luminance difference and local variance
-            float lumaDiff = abs(nLuma - centerLuma);
-            float wLuma = exp(-lumaDiff / (sqrt(max(cVar, 1e-4)) + 0.01));
-            
-            // Gaussian spatial weights
-            float wSpatial = ((x == 0 && y == 0) ? 4.0 : (x == 0 || y == 0) ? 2.0 : 1.0);
-            float w = wLuma * wSpatial * wDepth * wNormal;
-            
-            sumC += n8.rgb * w;
-            sumV += nVar * w;
-            wsum += w;
-        }
-    }
-    
-    vec3 filteredGI = sumC / max(wsum, 1e-5);
-    float filteredVar = sumV / max(wsum, 1e-5);
+    vec4  c8     = texture(colortex8, texCoord);
+    float frames = c8.a;
+    float var    = estimateVariance(colortex8, colortex9, texCoord, frames);
 
     /* RENDERTARGETS: 3 */
-    gl_FragData[0] = vec4(filteredGI, filteredVar);
+    gl_FragData[0] = vec4(c8.rgb, var);
 }
 
 #endif

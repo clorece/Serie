@@ -76,7 +76,7 @@ vec3 giRayRadiance(
 
     // Smooth the lightmap to avoid harsh transitions in the PT
     float skyOcc = max(skyLightmap, 0.0);
-    //skyOcc = sqrt(skyOcc); 
+    //skyOcc = sqrt(skyOcc);
 
     if (h.hit) {
         wasHit      = true;

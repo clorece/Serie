@@ -64,3 +64,31 @@ option.VIGNETTE.comment=Applies a subtle darkening around the edges of the viewp
 option.GI_DEBUG_VIEW=GI Debug View
 option.GI_DEBUG_VIEW.comment=Outputs the raw/denoised GI buffer directly to the screen to visualize the indirect light reaching the surfaces.
 
+option.DEBUG_VIEW=Buffer Inspector
+option.DEBUG_VIEW.comment=Draws one intermediate buffer straight to the screen to localise artifacts. 0=Off, 1=Denoised GI, 2=Accumulated GI (before the a-trous denoiser), 3=History length (black=fresh, white=converged; if near-black everywhere the temporal accumulation is broken), 4=View normals, 5=Linear depth, 6=GTAO.
+value.DEBUG_VIEW.0=Off
+value.DEBUG_VIEW.1=1: Denoised GI
+value.DEBUG_VIEW.2=2: Accumulated GI (pre-denoise)
+value.DEBUG_VIEW.3=3: History length
+value.DEBUG_VIEW.4=4: View normals
+value.DEBUG_VIEW.5=5: Linear depth
+value.DEBUG_VIEW.6=6: GTAO
+
+option.GI_DENOISE=GI Denoiser
+option.GI_DENOISE.comment=Master toggle for the GI temporal accumulation + variance-guided a-trous denoiser.
+
+option.DENOISE_MAX_FRAMES=Accumulation Cap
+option.DENOISE_MAX_FRAMES.comment=Maximum number of frames the temporal stage blends. Higher = smoother and less noise, but reacts slower to change (more ghosting). Lower = more responsive, slightly noisier.
+option.DENOISE_HAND_FRAMES=Hand/Near Cap
+option.DENOISE_HAND_FRAMES.comment=Lower accumulation cap for the hand and very near surfaces. The hand has no world reprojection, so capping its history low is what stops it ghosting as you move between light levels.
+option.DENOISE_FAST_LIGHT=Lighting Response
+option.DENOISE_FAST_LIGHT.comment=How aggressively a sudden brightening (e.g. a sea lantern placed in a dark room) resets the history so the new light snaps in instead of trailing. 0 = off. Higher = faster light response / less ghosting on lighting changes, slightly noisier during the transition.
+option.DENOISE_PHI_LUMA=Luma Edge-Stop
+option.DENOISE_PHI_LUMA.comment=Luminance edge-stop for the spatial filter (scaled by variance, tightened as a pixel converges). Higher = smoother; lower = preserves more GI contrast / path-traced shadow detail.
+option.DENOISE_PHI_NORMAL=Normal Edge-Stop
+option.DENOISE_PHI_NORMAL.comment=Normal edge-stop sharpness (power). Higher = sharper transitions across angled/curved faces; lower = smoother.
+option.DENOISE_PHI_DEPTH=Depth Edge-Stop
+option.DENOISE_PHI_DEPTH.comment=Plane-distance edge-stop tolerance (in pixel footprints). Lower = sharper silhouettes and less light bleed across edges; higher = more bleed. Uses plane distance so it is robust at grazing angles and never bands.
+option.DENOISE_DETAIL=Detail Preservation
+option.DENOISE_DETAIL.comment=How strongly converged (settled) pixels keep their un-blurred detail. Higher keeps path-traced GI shadows and contact detail sharper once a pixel has accumulated; lower lets the filter keep smoothing.
+

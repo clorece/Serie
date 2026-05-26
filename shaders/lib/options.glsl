@@ -107,7 +107,6 @@ const bool colortex14Clear = false;
 const int colortex15Format = RGBA16F;
 const bool colortex15Clear = false;
 
-// ---- Voxel GI (single-bounce indirect light; subsumes AO) ----
 #define VOXEL_GI
 #define GI_SAMPLES 1    // [1 2 3 4] Rays per pixel per frame (higher = less noise, lower fps)
 #define GI_RADIUS  24   // [12 16 24 32 48] Max ray distance in blocks
@@ -121,42 +120,21 @@ const bool colortex15Clear = false;
 #define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] Max blocks the sky-probe DDA ray travels from a bounce surface
 #define GI_FLOOR 100    // [0 50 100 150 200] Ambient floor (percent of ambientColor); gated by skylight
 #define GI_EMISSION 2   // [1 2 3 4 5 6 7 8] Emissive block glow strength
-#define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] Temporal frames to blend
-#define GI_FIREFLY 4.0  // [1.5 2.0 3.0 4.0 6.0 8.0] Relative firefly clamp (x temporal-mean luminance)
-#define GI_TEMPORAL_REJECT 1.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
-#define GI_DENOISE      // SVGF variance-guided spatial filter to clean up GI noise
+#define GI_FIREFLY 4.0  // [1.5 2.0 3.0 4.0 6.0 8.0] Relative firefly clamp (x temporal-mean luminance) on the raw estimate
+
+#define GI_DENOISE              // Master toggle for the GI temporal + spatial denoiser
+#define DENOISE_MAX_FRAMES 64   // [16 24 32 48 64 96 128] Temporal accumulation cap (higher = smoother but slower to react)
+#define DENOISE_HAND_FRAMES 16  // [8 12 16 24 32] Lower cap for hand & very near surfaces (stops hand ghosting)
+#define DENOISE_FAST_LIGHT 60   // [0 30 45 60 80 120] Sudden-brightening history reset strength (0 = off); fixes light trailing in (sea lanterns)
+#define DENOISE_PHI_LUMA 4.0    // [1.0 2.0 3.0 4.0 6.0 8.0 12.0] Luminance edge-stop (variance-scaled); higher = smoother
+#define DENOISE_PHI_NORMAL 64.0 // [8.0 16.0 32.0 64.0 128.0] Normal edge-stop power; higher = sharper across angled faces
+#define DENOISE_PHI_DEPTH 1.0   // [0.25 0.5 1.0 2.0 4.0] Plane-distance edge-stop tolerance (x pixel footprint); lower = sharper silhouettes
+#define DENOISE_DETAIL 100       // [0 25 50 70 85 100] Detail preservation on converged pixels (%); higher keeps path-traced GI shadows sharper
 
 
-// ---- SVGF denoiser (Schied et al. 2017, re-implemented from the paper) ----
-#define SVGF_SIGMA_Z 4.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
-#define SVGF_SIGMA_N 64.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
-#define SVGF_SIGMA_L 10.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
-#define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] History length below which variance is estimated spatially
-#define PT_DETAIL_RECONSTRUCT // Reconstruct contact shadows / fine GI detail in the filter
-#define SVGF_WORLD_RADIUS // Bound the a-trous footprint in WORLD space so distant GI keeps detail (fixes far-away flatness)
-#define SVGF_SIGMA_WORLD 2.0 // [0.75 1.0 1.5 2.0 3.0 4.0 6.0] World-space blur radius in blocks; taps farther than this (e.g. across distant surfaces) are down-weighted
-
-// Keep the TEMPORAL HISTORY raw/detailed instead of feeding the spatial blur back into it.
-// Feeding the a-trous output back makes the accumulation converge to the flattened signal
-// over frames (the real cause of the distance/contrast flatness). With this on, the a-trous
-// filters a detailed signal fresh each frame -> it still denoises noise but preserves
-// converged detail via its variance edge-stopping. Leave ON for this pack (heavy temporal
-// accumulation). Off = classic SVGF feedback (denoised result becomes the history).
-#define SVGF_RAW_HISTORY
-
-// Optional extra: fade the spatial blur out as a pixel converges (mix the displayed result
-// toward the raw accumulated GI by history length). Trades denoising for detail; at high
-// PRESERVE_MAX converged areas look ~like the denoiser is OFF (it isn't — it's just showing
-// the raw history). OFF by default: SVGF_RAW_HISTORY already lets the normal a-trous keep
-// converged detail. Enable only if converged areas still look over-smoothed.
-//#define SVGF_DETAIL_PRESERVE   // Re-inject raw detail on temporally-converged pixels
-#define SVGF_PRESERVE_MAX 85     // [0 25 50 70 85 95 100] Max % of raw (un-blurred) GI kept once a pixel is fully converged
-#define SVGF_PRESERVE_FRAMES 16  // [8 16 24 32 48 64] History length (frames) at which max preservation is reached
-
-// ---- ReSTIR GI (reservoir resampling; replaces plain temporal accumulation when enabled) ----
 #define RESTIR_GI               // Use ReSTIR reservoirs instead of simple GI accumulation
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] Candidate rays generated per frame
-#define RESTIR_M_CAP 48         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
+#define RESTIR_M_CAP 32         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
 #define RESTIR_JACOBIAN         // World-space reconnection Jacobian for spatial reuse (correct cross-geometry resampling; enables wider reuse)
 #define RESTIR_SPATIAL          // Enable spatial reservoir reuse from neighbours
 #define RESTIR_SPATIAL_SAMPLES 2 // [1 2 3 4 5] Neighbour reservoirs merged per pixel
@@ -164,10 +142,6 @@ const bool colortex15Clear = false;
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] Clamp on the unbiased reservoir weight W (anti-firefly)
 #define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] Absolute firefly clamp on the resolved GI
 
-// ---- Ambient Occlusion (screen-space GTAO; complements Voxel GI's macro occlusion) ----
-// GTAO adds the sub-voxel CONTACT darkening the 1-block voxel grid cannot resolve. It is
-// computed in d5_gtao -> colortex12 and applied in d7_composite. Keep the radius small so it
-// only adds contact detail and does NOT re-darken occlusion the Voxel GI already captures.
 #define AO_GTAO              // Master toggle for screen-space GTAO
 #define AO_GI_STRENGTH 70    // [0 25 50 70 100] Contact-AO strength applied on top of Voxel GI (percent)
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
@@ -181,7 +155,6 @@ const bool colortex15Clear = false;
 #define AO_DENOISE           // Depth-aware spatial bilateral filter on the AO (removes horizon-march stepping/noise)
 #define AO_DENOISE_RADIUS 3  // [1 2 3] Bilateral kernel radius in taps ((2R+1)^2 samples; higher = smoother, slower)
 
-// ---- Legacy voxel-DDA AO (only used when both VOXEL_GI and AO_GTAO are disabled) ----
 #define VOXEL_AO
 #define AO_SAMPLES 2   // [2 4 6 8] Rays per pixel (higher = less noise, lower fps)
 #define AO_RADIUS  8   // [4 6 8 10 12] Max occlusion search distance in blocks
@@ -189,5 +162,13 @@ const bool colortex15Clear = false;
 
 //#define PT_DEBUG_VOXELS  // Enable DDA debug overlay in deferred pass
 //#define GI_DEBUG_VIEW    // Enable raw GI debug overlay in deferred pass (skylight illumination)
+
+//   1 = denoised GI (colortex3, what lights the scene)
+//   2 = accumulated GI BEFORE the a-trous (colortex8.rgb) -> if the artifact is already here
+//       it's the estimator/temporal stage, NOT the denoiser
+//   3 = history length / frames (colortex8.a, black=1 .. white=DENOISE_MAX_FRAMES) -> if this is
+//       near-black everywhere, temporal accumulation is broken (the real bug)
+//   4 = view normals (colortex1)        5 = linear depth        6 = GTAO (colortex12.w)
+#define DEBUG_VIEW 0 // [0 1 2 3 4 5 6]
 
 #endif
