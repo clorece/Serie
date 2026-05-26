@@ -121,9 +121,11 @@ void main() {
             
             vec2 uvPrev;
             float expectedClipZ;
+            float expectedLinDepth;
             if (isHand) {
                 uvPrev = texCoord;
                 expectedClipZ = clipSpace.z;
+                expectedLinDepth = linDepth;
             } else {
                 if (depth0 >= 0.7) {
                     worldPrevRel += (cameraPosition - previousCameraPosition);
@@ -133,6 +135,7 @@ void main() {
                 uvPrev   = (clipPrev.xy / clipPrev.w) * 0.5 + 0.5;
                 uvPrev += prevJitter;
                 expectedClipZ = clipPrev.z / clipPrev.w;
+                expectedLinDepth = -viewPrev.z;
             }
             
             vec2 padding = 1.5 * texelSize;
@@ -187,12 +190,21 @@ void main() {
                 vec4  p9 = texture(colortex9, uvPrev);
                 float prevDepthRaw = p9.r;
                 float actualClipZ = prevDepthRaw * 2.0 - 1.0;
+                float actualLinDepth = getDepth(prevDepthRaw);
+                
+                bool depthValid = false;
+                if (isHand) {
+                    float relDepthErr = abs(actualLinDepth - expectedLinDepth) / max(expectedLinDepth, 1e-3);
+                    depthValid = (relDepthErr < 0.15);
+                } else {
+                    depthValid = (abs(expectedClipZ - actualClipZ) < 0.002);
+                }
                 
                 // Normal similarity check for reservoir reuse
                 vec3 prevNormalWorld = octDecodeNormal(texture(colortex15, uvPrev).xy);
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
 
-                if (abs(expectedClipZ - actualClipZ) < 0.002 && normalSim > 0.5) {
+                if (depthValid && normalSim > 0.5) {
                     Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev);
 
                     // Geometry and Motion-based rejection for reservoirs.

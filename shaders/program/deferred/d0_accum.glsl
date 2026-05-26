@@ -53,6 +53,51 @@ vec3 clipSpace;
 #include "/lib/util/positions.glsl"
 #include "/lib/pt/restir.glsl"
 
+vec3 getNeighborWorldPosition(vec2 nUV, float nDepthRaw) {
+    vec3 viewPos = convertScreenSpaceToWorldSpace(nUV, nDepthRaw);
+    return (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
+}
+
+float calculateJacobian(vec3 shadingPos, vec3 neighborShadingPos, vec3 samplePos, vec3 sampleNormal) {
+    vec3 vOriginal = samplePos - neighborShadingPos;
+    vec3 vNew      = samplePos - shadingPos;
+    
+    float dOriginal2 = dot(vOriginal, vOriginal);
+    float dNew2      = dot(vNew, vNew);
+    
+    // Footprint-based threshold: if the sample is extremely close to either shading point,
+    // the shift mapping is unstable. Reject by returning 0.0.
+    if (dOriginal2 < 0.01 || dNew2 < 0.01) return 0.0;
+    
+    float dOriginal = sqrt(dOriginal2);
+    float dNew      = sqrt(dNew2);
+    
+    float cosOriginal = abs(dot(sampleNormal, vOriginal)) / dOriginal;
+    float cosNew      = abs(dot(sampleNormal, vNew)) / dNew;
+    
+    // Footprint-based threshold: if the path is almost parallel to the surface (grazing),
+    // reconnection is extremely unstable. Reject.
+    if (cosOriginal < 0.05 || cosNew < 0.05) return 0.0;
+    
+    float jacobian = (cosNew * dOriginal2) / (cosOriginal * dNew2);
+    
+    // Clamp Jacobian to a safe range to prevent fireflies/spikes
+    return clamp(jacobian, 0.1, 10.0);
+}
+
+vec2 getUniformOffset(int sampleIdx, int frame) {
+    uint seedX = pcgHash(uint(frame) * 7U + uint(sampleIdx) * 101U);
+    uint seedY = pcgHash(uint(frame) * 13U + uint(sampleIdx) * 197U);
+    
+    float randX = float(seedX >> 8u) * (1.0 / float(1u << 24u));
+    float randY = float(seedY >> 8u) * (1.0 / float(1u << 24u));
+    
+    float ang = randX * 6.2831853;
+    float dist = sqrt(randY) * RESTIR_SPATIAL_RADIUS;
+    
+    return vec2(cos(ang), sin(ang)) * dist;
+}
+
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
     vec2 prevJitter    = getTaaJitter(frameCounter - 1) * texelSize;
@@ -75,7 +120,7 @@ void main() {
     
     vec3  rawGI = texture(colortex3, texCoord).rgb;
     
-    // --- ReSTIR Spatial Reuse (Current Frame) ---
+    // --- ReSTIR Spatial Reuse (Current Frame) with Stochastic Pairwise MIS (SPMIS) ---
     // By doing spatial reuse in this pass, we can read the reservoirs written
     // by d0_restir.glsl on the CURRENT frame, fixing the geometric misalignment bug.
     #if defined(VOXEL_GI) && defined(RESTIR_GI) && defined(RESTIR_SPATIAL)
@@ -86,23 +131,81 @@ void main() {
         const float spDepthGate  = 0.10;
         const float spNormalGate = 0.8;
         
+        // Large-kernel parameters for Stochastic Pairwise MIS
+        float M_total = 3.14159265 * RESTIR_SPATIAL_RADIUS * RESTIR_SPATIAL_RADIUS;
+        float N_tilde = float(RESTIR_SPATIAL_SAMPLES);
+        
+        // Defensive Canonical Weighting: scale initial weight sum of the canonical reservoir
+        shade.wSum *= (M_total - 1.0) / M_total;
+        shade.M    *= (M_total - 1.0) / M_total;
+        
+        // Adaptive view-aligned depth gate: widens the gate on grazing surfaces
+        // where depth changes rapidly, preventing false spatial rejection.
+        float cosView = abs(dot(normalWorld, normalize(worldRel)));
+        float adaptiveDepthGate = spDepthGate * (1.0 + 2.0 * (1.0 - cosView));
+        
         for (int i = 0; i < RESTIR_SPATIAL_SAMPLES; i++) {
-            float ang = randFloat(seed) * 6.2831853;
-            float dist = sqrt(randFloat(seed)) * RESTIR_SPATIAL_RADIUS;
-            vec2 nUV = texCoord + vec2(cos(ang), sin(ang)) * dist * texelSize;
+            // Reciprocal Neighbor Selection: generate a screen-uniform random offset
+            vec2 uniformOffset = getUniformOffset(i, frameCounter);
+            ivec2 delta = ivec2(round(uniformOffset));
+            
+            // Avoid choosing ourselves
+            if (delta.x == 0 && delta.y == 0) {
+                delta.x = 1;
+            }
+            
+            // XOR-based reciprocal neighbor selection
+            ivec2 p = ivec2(gl_FragCoord.xy);
+            ivec2 q = p ^ delta;
+            vec2 nUV = (vec2(q) + 0.5) * texelSize;
+            
             if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
 
             float nDepthRaw = texture(depthtex0, nUV).r;
             float actualNDepth = getDepth(nDepthRaw);
-            if (abs(actualNDepth - linDepth) / max(linDepth, 0.001) > spDepthGate) continue;
+            if (abs(actualNDepth - linDepth) / max(linDepth, 0.001) > adaptiveDepthGate) continue;
 
             vec3 nNormal = normalize(texture(colortex1, nUV).rgb * 2.0 - 1.0);
             if (dot(normal, nNormal) < spNormalGate) continue;
 
             Reservoir n = readReservoir(colortex10, colortex11, colortex14, nUV);
+            
+            // De-duplication: if the neighbor holds the exact same sample,
+            // we down-weight its confidence to 0 to prevent artificial inflation and correlation noise.
+            if (distance(n.samplePos, shade.samplePos) < 0.01) {
+                n.M = 0.0;
+            }
+            
             n.M = min(n.M, float(RESTIR_M_CAP));
 
-            mergeReservoir(shade, n, 1.0, seed);
+            float jacobian = 1.0;
+            #ifdef RESTIR_JACOBIAN
+                // Reconstruct neighbor's camera-relative world position
+                vec3 nWorldRel = getNeighborWorldPosition(nUV, nDepthRaw);
+                jacobian = calculateJacobian(worldRel, nWorldRel, n.samplePos, n.sampleNormal);
+            #endif
+
+            // --- Stochastic Pairwise MIS weighting ---
+            float p_hat_i = luma(n.radiance);
+            float p_hat_c = luma(n.radiance) * jacobian;
+            
+            // Pairwise MIS weight
+            float m_i = p_hat_c / (p_hat_c + p_hat_i / (M_total - 1.0) + 1e-5);
+            
+            // Stochastic factor scaling
+            float stochastic_factor = (M_total / N_tilde) * m_i;
+            
+            // Scale both the neighbor sample contribution and confidence M
+            float weight = p_hat_c * n.W * n.M * stochastic_factor;
+            
+            shade.wSum += weight;
+            shade.M    += n.M * m_i;
+            
+            if (randFloat(seed) * shade.wSum < weight) {
+                shade.radiance     = n.radiance;
+                shade.samplePos    = n.samplePos;
+                shade.sampleNormal = n.sampleNormal;
+            }
         }
         finalizeReservoir(shade);
         rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);

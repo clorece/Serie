@@ -4,7 +4,7 @@
 #define SHADOW_FILTER
 #define DITHER_FILTER
 
-#define SHADOW_RESOLUTION 2048 //[512 1024 1563 2048 3072 4096 6144 8192]
+#define SHADOW_RESOLUTION 3072 //[512 1024 1563 2048 3072 4096 6144 8192]
 #define SHADOW_FILTER_QUALITY 8 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
 #define SHADOW_MAP_BIAS 0.85 //Increase this if you get shadow acne. Decrease this if you get peter panning. [0.000 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008 0.009 0.010 0.012 0.014 0.016 0.018 0.020 0.022 0.024 0.026 0.028 0.030 0.035 0.040 0.045 0.050]
 
@@ -123,7 +123,7 @@ const bool colortex15Clear = false;
 #define GI_EMISSION 2   // [1 2 3 4 5 6 7 8] Emissive block glow strength
 #define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] Temporal frames to blend
 #define GI_FIREFLY 4.0  // [1.5 2.0 3.0 4.0 6.0 8.0] Relative firefly clamp (x temporal-mean luminance)
-#define GI_TEMPORAL_REJECT 1.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
+#define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
 #define GI_DENOISE      // SVGF variance-guided spatial filter to clean up GI noise
 
 
@@ -156,7 +156,7 @@ const bool colortex15Clear = false;
 // ---- ReSTIR GI (reservoir resampling; replaces plain temporal accumulation when enabled) ----
 #define RESTIR_GI               // Use ReSTIR reservoirs instead of simple GI accumulation
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] Candidate rays generated per frame
-#define RESTIR_M_CAP 48         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
+#define RESTIR_M_CAP 32         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
 #define RESTIR_JACOBIAN         // World-space reconnection Jacobian for spatial reuse (correct cross-geometry resampling; enables wider reuse)
 #define RESTIR_SPATIAL          // Enable spatial reservoir reuse from neighbours
 #define RESTIR_SPATIAL_SAMPLES 2 // [1 2 3 4 5] Neighbour reservoirs merged per pixel

@@ -79,9 +79,26 @@ bool fetchBilateralHistory(
     vec4 c9_01 = texelFetch(hist9, i01, 0);
     vec4 c9_11 = texelFetch(hist9, i11, 0);
 
-    // Depth rejection: 0 if depth difference is too large (> 0.005 clip-space difference)
-    vec4 clipZ = vec4(c9_00.r, c9_10.r, c9_01.r, c9_11.r) * 2.0 - 1.0;
-    vec4 validW = step(abs(clipZ - expectedClipZ), vec4(0.005));
+    // Hybrid depth validation
+    float expectedLinDepth = getDepth(expectedClipZ * 0.5 + 0.5);
+    bool isHand = (expectedLinDepth < 0.76); // Hand depth threshold
+    
+    vec4 validW;
+    if (isHand) {
+        // For the hand, use relative linear depth check to accommodate bobbing/sway
+        vec4 linDepths = vec4(
+            getDepth(c9_00.r),
+            getDepth(c9_10.r),
+            getDepth(c9_01.r),
+            getDepth(c9_11.r)
+        );
+        vec4 relErr = abs(linDepths - vec4(expectedLinDepth)) / max(vec4(expectedLinDepth), vec4(1e-3));
+        validW = step(relErr, vec4(0.15)); // Robust 15% relative threshold for the hand
+    } else {
+        // For terrain, use the original high-precision clip-space check to avoid quantization stripes
+        vec4 clipZ = vec4(c9_00.r, c9_10.r, c9_01.r, c9_11.r) * 2.0 - 1.0;
+        validW = step(abs(clipZ - expectedClipZ), vec4(0.005));
+    }
     
     // Normal rejection: use world-space normal similarity to identify surface boundaries.
     vec3 n00 = octDecodeNormal(texelFetch(hist15, i00, 0).xy);
