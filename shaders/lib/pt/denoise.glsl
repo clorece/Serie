@@ -1,6 +1,11 @@
 #ifndef DENOISE_GLSL
 #define DENOISE_GLSL
 
+#ifndef FRAME_COUNTER_DECLARE
+#define FRAME_COUNTER_DECLARE
+uniform int frameCounter;
+#endif
+
 // common.glsl provides texelSize and getDepth; options.glsl provides the SVGF sigmas.
 #include "/lib/util/common.glsl"
 #include "/lib/options.glsl"
@@ -182,6 +187,16 @@ float gauss3Var(sampler2D src, vec2 uv) {
     return v / wsum;
 }
 
+// ---- Jitter Helper (Cache-Friendly Tile Rotation) --------------------------
+// By rounding the screen coordinate to 8x8 tiles, all pixels within a GPU warp
+// will share the exact same rotation matrix. This preserves texture cache coherency 
+// and keeps performance high, while still breaking the A-Trous ringing artifact.
+float getJitterRotation(vec2 uv, int frame) {
+    vec2 p = floor(uv * vec2(viewWidth, viewHeight) / 8.0);
+    p += float(frame % 64) * vec2(5.588238, 5.588238);
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+}
+
 // ---- First a-trous iteration -------------------------------------------------
 // Colour comes from giTex (.rgb); variance is derived here from momentTex
 // (.g = m1, .b = m2) or estimated spatially while the history is short.
@@ -203,26 +218,39 @@ vec4 svgfAtrousFirst(
     // Increased epsilon (0.05 instead of 1e-3) prevents the denoiser from "freezing"
     // when variance drops, which causes the painterly/blotchy artifacts.
     float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) + 0.05);
-    
-    // Relaxed depth edge-stopping to allow angled surfaces to blur properly
     float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
-    
-    // Relaxed normal map stopping (caps at 16.0 instead of 64.0)
     float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
+    
+    // Accurately reconstruct the center pixel's view-space position for planar rejection
+    float centerDepthRaw = textureLod(depthTex, uv, 0.0).r;
+    vec4 centerClip = vec4(uv * 2.0 - 1.0, centerDepthRaw * 2.0 - 1.0, 1.0);
+    vec4 centerView = gbufferProjectionInverse * centerClip;
+    vec3 centerPos = centerView.xyz / centerView.w;
 
-    for (int x = -2; x <= 2; x++) {
-        for (int y = -2; y <= 2; y++) {
-            vec2 off = vec2(x, y) * stepSize;
+    mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
+    int tapRange = 2; // Default 5x5 kernel
+
+    if (stepSize > 2.0) {
+        float rotAngle = getJitterRotation(uv, frameCounter);
+        rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
+        // Optimization: Use a 3x3 kernel for very large dilation steps to save performance
+        tapRange = 1; 
+    }
+
+    for (int x = -tapRange; x <= tapRange; x++) {
+        for (int y = -tapRange; y <= tapRange; y++) {
+            vec2 off = rot * (vec2(x, y) * stepSize);
             vec2 nUV = uv + off * texelSize;
             if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
 
             vec3  nColor = textureLod(giTex, nUV, 0.0).rgb;
             vec4  nm     = textureLod(momentTex, nUV, 0.0);
             float nLuma  = luma(nColor);
-            float nDepth = getDepth(textureLod(depthTex, nUV, 0.0).r);
+            float nDepthRaw = textureLod(depthTex, nUV, 0.0).r;
+            float nDepth = getDepth(nDepthRaw);
             vec3  nN     = normalize(textureLod(normalTex, nUV, 0.0).rgb * 2.0 - 1.0);
 
             float hw = atrousW(abs(x)) * atrousW(abs(y));
@@ -234,13 +262,20 @@ vec4 svgfAtrousFirst(
                 float wz = exp(-abs(nDepth - expectedD) * invSigmaZ);
                 float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
-                
-                w = hw * wz * wn * wl;
+
+                // Strict Planar Rejection: Calculate the true distance from the neighbor's 3D position 
+                // to the mathematical plane defined by the center pixel's normal and position.
+                // This cleanly rejects disjoint surfaces (like a wall behind a floating block) 
+                // even if their depth gradients and normals match perfectly.
+                vec4 nClip = vec4(nUV * 2.0 - 1.0, nDepthRaw * 2.0 - 1.0, 1.0);
+                vec4 nView = gbufferProjectionInverse * nClip;
+                vec3 nPos = nView.xyz / nView.w;
+                float planeDist = abs(dot(nPos - centerPos, centerN));
+                float wPlane = exp(-planeDist * 10.0);
+
+                w = hw * wz * wn * wl * wPlane;
 
                 #ifdef SVGF_WORLD_RADIUS
-                    // Convert this tap's pixel offset to a world-space distance and
-                    // fall off past SVGF_SIGMA_WORLD blocks. This prevents dark halos
-                    // ("refractions") from bleeding across distant disjoint surfaces.
                     float tangential = length(off) * pxWorld * abs(centerDepth);
                     float worldDist  = sqrt(tangential * tangential
                                           + (nDepth - expectedD) * (nDepth - expectedD));
@@ -271,16 +306,33 @@ vec4 svgfAtrous(
 
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
+    
+    // Accurately reconstruct the center pixel's view-space position for planar rejection
+    float centerDepthRaw = textureLod(depthTex, uv, 0.0).r;
+    vec4 centerClip = vec4(uv * 2.0 - 1.0, centerDepthRaw * 2.0 - 1.0, 1.0);
+    vec4 centerView = gbufferProjectionInverse * centerClip;
+    vec3 centerPos = centerView.xyz / centerView.w;
 
-    for (int x = -2; x <= 2; x++) {
-        for (int y = -2; y <= 2; y++) {
-            vec2 off = vec2(x, y) * stepSize;
+    mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
+    int tapRange = 2; // Default 5x5 kernel
+
+    if (stepSize > 2.0) {
+        float rotAngle = getJitterRotation(uv, frameCounter);
+        rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
+        // Optimization: Use a 3x3 kernel for very large dilation steps to save performance
+        tapRange = 1; 
+    }
+
+    for (int x = -tapRange; x <= tapRange; x++) {
+        for (int y = -tapRange; y <= tapRange; y++) {
+            vec2 off = rot * (vec2(x, y) * stepSize);
             vec2 nUV = uv + off * texelSize;
             if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
 
             vec4  n      = textureLod(src, nUV, 0.0);
             float nLuma  = luma(n.rgb);
-            float nDepth = getDepth(textureLod(depthTex, nUV, 0.0).r);
+            float nDepthRaw = textureLod(depthTex, nUV, 0.0).r;
+            float nDepth = getDepth(nDepthRaw);
             vec3  nN     = normalize(textureLod(normalTex, nUV, 0.0).rgb * 2.0 - 1.0);
 
             float hw = atrousW(abs(x)) * atrousW(abs(y));
@@ -293,12 +345,17 @@ vec4 svgfAtrous(
                 float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
 
-                w = hw * wz * wn * wl;
+                // Strict Planar Rejection: Calculate the true distance from the neighbor's 3D position 
+                // to the mathematical plane defined by the center pixel's normal and position.
+                vec4 nClip = vec4(nUV * 2.0 - 1.0, nDepthRaw * 2.0 - 1.0, 1.0);
+                vec4 nView = gbufferProjectionInverse * nClip;
+                vec3 nPos = nView.xyz / nView.w;
+                float planeDist = abs(dot(nPos - centerPos, centerN));
+                float wPlane = exp(-planeDist * 10.0);
+
+                w = hw * wz * wn * wl * wPlane;
 
                 #ifdef SVGF_WORLD_RADIUS
-                    // Convert this tap's pixel offset to a world-space distance and
-                    // fall off past SVGF_SIGMA_WORLD blocks. This prevents dark halos
-                    // ("refractions") from bleeding across distant disjoint surfaces.
                     float tangential = length(off) * pxWorld * abs(centerDepth);
                     float worldDist  = sqrt(tangential * tangential
                                           + (nDepth - expectedD) * (nDepth - expectedD));

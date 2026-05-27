@@ -156,8 +156,8 @@ const bool colortex15Clear = false;
 // ---- ReSTIR GI (reservoir resampling; replaces plain temporal accumulation when enabled) ----
 #define RESTIR_GI               // Use ReSTIR reservoirs instead of simple GI accumulation
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] Candidate rays generated per frame
-#define RESTIR_M_CAP 32         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
-#define RESTIR_JACOBIAN         // World-space reconnection Jacobian for spatial reuse (correct cross-geometry resampling; enables wider reuse)
+#define RESTIR_M_CAP 48         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
+#define RESTIR_JACOBIAN         // World-space reconnection Jacobian for spatial reuse (correct cross-geometry resampling; enables wider reuse)/
 #define RESTIR_SPATIAL          // Enable spatial reservoir reuse from neighbours
 #define RESTIR_SPATIAL_SAMPLES 2 // [1 2 3 4 5] Neighbour reservoirs merged per pixel
 #define RESTIR_SPATIAL_RADIUS 16.0 // [4.0 8.0 16.0 24.0 32.0] Neighbour search radius (pixels)
