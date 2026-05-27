@@ -7,11 +7,10 @@
 #define VOXEL_RADIUS     64
 
 // Block categories stored in voxel atlas (.r channel of each RGBA8UI texel)
-#define VOXEL_AIR         0u
-#define VOXEL_OPAQUE      1u
-#define VOXEL_FOLIAGE     2u
-#define VOXEL_EMISSIVE    3u
-#define VOXEL_TRANSLUCENT 4u
+#define VOXEL_AIR      0u
+#define VOXEL_OPAQUE   1u
+#define VOXEL_FOLIAGE  2u
+#define VOXEL_EMISSIVE 3u
 
 // Atlas layout: 2048 x 1024 RGBA8UI
 // 16 columns x 8 rows, each cell = one 128x128 Z-slice of the grid
