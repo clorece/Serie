@@ -176,7 +176,7 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
     vec3 prevColor = max(YCoCgtoRGB(prevColorYCoCg), 0.0);
     
     // Velocity-based temporal rejection
-    float blendWeight = taaBlendWeight;
+    float blendWeight = TAA_BLEND_WEIGHT;
     float velocityReject = clamp(pow(dot(velocityPixels.xy, velocityPixels.xy), 0.25) * 0.1, 0.0, 1.0);
     blendWeight *= (1.0 - velocityReject);
 

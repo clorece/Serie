@@ -1,3 +1,6 @@
+#ifndef PIPELINE_SETTINGS_GLSL
+#define PIPELINE_SETTINGS_GLSL
+
 const int RGBA8 = 0;
 const int RGB10_A2 = 1;
 const int RGBA16 = 3;
@@ -34,6 +37,17 @@ const bool colortex13Clear = false;
 const bool colortex14Clear = false;
 const bool colortex15Clear = false;
 
+const int shadowMapResolution = SHADOW_RESOLUTION;
+const float shadowDistance = 160.0;
+const float sunPathRotation = -40.0; // [10.0 20.0 30.0 40.0 50.0 60.0]
+const float ambientOcclusionLevel = 0.5;
+const float ambientStrength = 0.3;
+const vec3 torchColor = vec3(0.9922, 0.6471, 0.1922);
+
+const bool shadowHardwareFiltering = false;
+const bool shadowtex1Mipmap = false;
+const bool shadowtex1Nearest = false;
 
 // TODO free up what buffers we can free by merging, or getting rid of dead buffers
 // maybe colortex3 and colortex6 can be merged into one bloom buffer
+#endif

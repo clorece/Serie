@@ -39,7 +39,7 @@ const float ATMOSPHERE_RADIUS_SQUARED = ATMOSPHERE_RADIUS * ATMOSPHERE_RADIUS;
 
 const mat3 COEFF_ATTENUATION = mat3(COEFF_RAYLEIGH, COEFF_MIE * 1.11, COEFF_OZONE);
 
-#define clamp01(x) clamp(x, 0.0, 1.0)
+
 
 vec2 GetRaySphereIntersection(vec3 position, vec3 direction, float radius) {
 	float PoD = dot(position, direction);

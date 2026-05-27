@@ -4,7 +4,7 @@
 
 #include "/lib/util/jitter.glsl"
 
-const float PI = 3.14159265359;
+
 
 out float material;
 out float foliage;

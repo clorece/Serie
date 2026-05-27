@@ -4,9 +4,7 @@
 #include "/lib/pt/rand.glsl"
 #include "/lib/pt/ddaTrace.glsl"
 
-#ifndef PI
-#define PI 3.14159265359
-#endif
+
 
 // Build an orthonormal tangent frame from a surface normal
 void buildTBN(vec3 n, out vec3 t, out vec3 b) {

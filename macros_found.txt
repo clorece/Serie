@@ -1,0 +1,71 @@
+﻿shaders\lib\fragment\atmosphere.glsl : 2 -> #define ATMOSPHERE_GLSL
+shaders\lib\fragment\atmosphere.glsl : 9 -> #define SUN_ILLUMINANCE 10.0
+shaders\lib\fragment\atmosphere.glsl : 10 -> #define MOON_ILLUMINANCE 10.0
+shaders\lib\fragment\atmosphere.glsl : 12 -> #define SUN_COLOR_BASE (vec3(1.0, 0.9, 0.81) * SUN_ILLUMINANCE)
+shaders\lib\fragment\atmosphere.glsl : 13 -> #define MOON_COLOR_BASE (vec3(0.25, 0.65, 1.0) * MOON_ILLUMINANCE)
+shaders\lib\fragment\atmosphere.glsl : 15 -> #define PLANET_RADIUS 6371e3
+shaders\lib\fragment\atmosphere.glsl : 16 -> #define ATMOSPHERE_HEIGHT 110e3
+shaders\lib\fragment\atmosphere.glsl : 17 -> #define SCALE_HEIGHTS vec2(8.0e3, 1.2e3)
+shaders\lib\fragment\atmosphere.glsl : 19 -> #define MIE_G 0.80
+shaders\lib\fragment\atmosphere.glsl : 21 -> #define COEFF_RAYLEIGH vec3(5.8e-6, 1.35e-5, 3.31e-5)
+shaders\lib\fragment\atmosphere.glsl : 22 -> #define COEFF_MIE vec3(3.0e-6, 3.0e-6, 3.0e-6)
+shaders\lib\fragment\atmosphere.glsl : 24 -> #define AIR_NUMBER_DENSITY 2.5035422e25
+shaders\lib\fragment\atmosphere.glsl : 25 -> #define OZONE_CONCENTRATION_PEAK 8e-6
+shaders\lib\fragment\atmosphere.glsl : 26 -> #define OZONE_CROSS_SECTION vec3(2.0e-21, 6.0e-21, 2.0e-22)
+shaders\lib\fragment\atmosphere.glsl : 42 -> #define clamp01(x) clamp(x, 0.0, 1.0)
+shaders\lib\fragment\shadows.glsl : 2 -> #define SHADOWS_GLSL
+shaders\lib\fragment\shadows.glsl : 5 -> #define FRAME_COUNTER_DECLARE
+shaders\lib\fragment\sky.glsl : 24 -> #define SKY_LUT_STEPS 6
+shaders\lib\lighting\indirectLighting.glsl : 13 -> #define PT_USE_VOXEL_LIGHT
+shaders\lib\lighting\indirectLighting.glsl : 15 -> #define PT_TRANSPARENT_TINTS
+shaders\lib\lighting\indirectLighting.glsl : 17 -> #define MINIMUM_AMBIENT ambientColor * 0.1
+shaders\lib\lighting\voxelPathTracing.glsl : 2 -> #define VOXEL_PATH_TRACING_GLSL
+shaders\lib\post\bloom.glsl : 2 -> #define BLOOM_GLSL
+shaders\lib\post\taa.glsl : 2 -> #define TAA_GLSL
+shaders\lib\post\tonemap.glsl : 2 -> #define TONEMAP_GLSL
+shaders\lib\pt\ao.glsl : 2 -> #define AO_GLSL
+shaders\lib\pt\ao.glsl : 8 -> #define PI 3.14159265359
+shaders\lib\pt\ddaTrace.glsl : 2 -> #define DDA_TRACE_GLSL
+shaders\lib\pt\denoise.glsl : 2 -> #define DENOISE_GLSL
+shaders\lib\pt\denoise.glsl : 5 -> #define FRAME_COUNTER_DECLARE
+shaders\lib\pt\denoise.glsl : 13 -> #define LUMA_FN
+shaders\lib\pt\gi.glsl : 2 -> #define GI_GLSL
+shaders\lib\pt\gtao.glsl : 2 -> #define GTAO_GLSL
+shaders\lib\pt\gtao.glsl : 20 -> #define PI 3.14159265359
+shaders\lib\pt\gtao.glsl : 22 -> #define GTAO_HALF_PI 1.57079632679
+shaders\lib\pt\rand.glsl : 2 -> #define RAND_GLSL
+shaders\lib\pt\restir.glsl : 2 -> #define RESTIR_GLSL
+shaders\lib\pt\restir.glsl : 10 -> #define LUMA_FN
+shaders\lib\pt\skyLut.glsl : 2 -> #define SKYLUT_GLSL
+shaders\lib\pt\voxelData.glsl : 2 -> #define VOXEL_DATA_GLSL
+shaders\lib\pt\voxelData.glsl : 6 -> #define VOXEL_GRID_SIZE  128
+shaders\lib\pt\voxelData.glsl : 7 -> #define VOXEL_RADIUS     64
+shaders\lib\pt\voxelData.glsl : 10 -> #define VOXEL_AIR      0u
+shaders\lib\pt\voxelData.glsl : 11 -> #define VOXEL_OPAQUE   1u
+shaders\lib\pt\voxelData.glsl : 12 -> #define VOXEL_FOLIAGE  2u
+shaders\lib\pt\voxelData.glsl : 13 -> #define VOXEL_EMISSIVE 3u
+shaders\lib\pt\voxelData.glsl : 17 -> #define VOXEL_ATLAS_COLS 16
+shaders\lib\pt\voxelData.glsl : 18 -> #define VOXEL_ATLAS_ROWS 8
+shaders\lib\util\common.glsl : 2 -> #define COMMON_GLSL
+shaders\lib\util\common.glsl : 5 -> #define texelSize (vec2(1.0) / vec2(viewWidth, viewHeight))
+shaders\lib\util\dither.glsl : 2 -> #define DITHER_GLSL
+shaders\lib\util\dither.glsl : 21 -> #define dither32(p)  (bayer32( p)-.499511719)
+shaders\lib\util\jitter.glsl : 2 -> #define JITTER_GLSL
+shaders\lib\util\jitter.glsl : 8 -> #define FRAME_COUNTER_DECLARE
+shaders\lib\util\positions.glsl : 2 -> #define POSITIONS_GLSL
+shaders\lib\util\sampling.glsl : 2 -> #define SAMPLING_GLSL
+shaders\lib\uniforms.glsl : 2 -> #define UNIFORMS_GLSL_INCLUDED
+shaders\program\deferred\d1_denoise.glsl : 2 -> #define DENOISE_SRC  colortex3
+shaders\program\deferred\d1_denoise.glsl : 3 -> #define DENOISE_STEP 1.0
+shaders\program\deferred\d2_denoise.glsl : 2 -> #define DENOISE_SRC  colortex6
+shaders\program\deferred\d2_denoise.glsl : 3 -> #define DENOISE_STEP 2.0
+shaders\program\deferred\d3_denoise.glsl : 2 -> #define DENOISE_SRC  colortex3
+shaders\program\deferred\d3_denoise.glsl : 3 -> #define DENOISE_STEP 4.0
+shaders\program\deferred\d4_denoise.glsl : 2 -> #define DENOISE_SRC  colortex6
+shaders\program\deferred\d4_denoise.glsl : 3 -> #define DENOISE_STEP 8.0
+shaders\program\deferred\d5_denoise.glsl : 2 -> #define DENOISE_SRC  colortex3
+shaders\program\deferred\d5_denoise.glsl : 3 -> #define DENOISE_STEP 16.0
+shaders\program\deferred\d6_denoise.glsl : 2 -> #define DENOISE_SRC  colortex6
+shaders\program\deferred\d6_denoise.glsl : 3 -> #define DENOISE_STEP 32.0
+shaders\program\deferred\d6_denoise.glsl : 4 -> #define DENOISE_LAST_ITER
+shaders\program\deferred\d_denoise_common.glsl : 16 -> #define DENOISE_STEP 1.0

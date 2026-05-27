@@ -2,7 +2,7 @@
 
 #include "/lib/options.glsl"
 
-const float PI = 3.14159265359;
+
 
 /*
 Shadow Source Code By saada2006:

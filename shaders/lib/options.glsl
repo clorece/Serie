@@ -19,8 +19,7 @@
 #define TAA
 #define TAA_JITTER_AMOUNT 1.0
 #define TAA_JITTER_SPREAD 1.0
-#define taaBlendWeight 0.9 // [0.8 0.85 0.9 0.95 0.99]
-#define taaSharpenAmount 0.01 // [0.01 0.025 0.05 0.075 0.1 0.125 0.15 0.175 0.2 0.225 0.25 0.3]
+#define TAA_BLEND_WEIGHT 0.94 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
 
 #define BLOOM
 #define BLOOM_STRENGTH 0.015 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
@@ -113,4 +112,16 @@
 #include "/lib/pipelineSettings.glsl"
 #include "/lib/uniforms.glsl"
 
+#endif
+// --- Utility Macros ---
+#ifndef PI
+#define PI 3.14159265359
+#endif
+
+#ifndef GTAO_HALF_PI
+#define GTAO_HALF_PI 1.57079632679
+#endif
+
+#ifndef clamp01
+#define clamp01(x) clamp(x, 0.0, 1.0)
 #endif

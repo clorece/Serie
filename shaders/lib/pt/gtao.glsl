@@ -16,11 +16,6 @@
 //  gbufferProjection(Inverse) for view<->screen transforms.
 // ============================================================================
 
-#ifndef PI
-#define PI 3.14159265359
-#endif
-#define GTAO_HALF_PI 1.57079632679
-
 // NOTE: the including pass must declare `uniform mat4 gbufferProjectionInverse;` and the
 // `texelSize` macro (from common.glsl) before this file is included.
 
