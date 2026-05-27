@@ -5,13 +5,6 @@
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 
-uniform sampler2D depthtex0;
-uniform vec3 cameraPosition;
-uniform vec3 previousCameraPosition;
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferPreviousProjection;
-uniform mat4 gbufferPreviousModelView;
-uniform mat4 gbufferModelViewInverse;
 
 // ---- Color Space Utilities (YCoCg) ----
 // Box clamping in YCoCg space prevents color shifting (rainbow ghosting)

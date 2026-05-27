@@ -32,17 +32,12 @@ void main() {
 #include "/lib/options.glsl"
 #include "/lib/util/common.glsl"
 
-uniform mat4 gbufferProjectionInverse; // for world-space tap distance (SVGF_WORLD_RADIUS)
 #include "/lib/pt/denoise.glsl"
 
 in vec2 texCoord;
 
-uniform sampler2D colortex1;   // view normals
-uniform sampler2D depthtex0;
-uniform sampler2D DENOISE_SRC; // colour (.rgb) + variance (.a)
 
 #ifdef DENOISE_LAST_ITER
-    uniform sampler2D colortex8;   // read history length (.a) to preserve it
 #endif
 
 void main() {

@@ -41,7 +41,6 @@ in vec2 lightmapCoord;
 in vec3 normal;
 in vec4 color;
 
-uniform sampler2D texture; // gbuffers color channel 0
 
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;

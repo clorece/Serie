@@ -1,10 +1,6 @@
 #ifndef COMMON_GLSL
 #define COMMON_GLSL
 
-uniform float near; 
-uniform float far;
-uniform float viewWidth;                    
-uniform float viewHeight;  
 
 #define texelSize (vec2(1.0) / vec2(viewWidth, viewHeight))
 

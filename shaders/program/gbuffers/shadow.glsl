@@ -16,20 +16,7 @@ flat out vec3 voxelNormal;
 flat out uint voxelBlockCategory;
 flat out int biomeTintedBlock;
 
-uniform float far;
-uniform float frameTimeCounter;
-uniform vec3 cameraPosition;
-uniform mat4 gbufferProjection;
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferModelView;
-uniform mat4 gbufferModelViewInverse;
-uniform mat4 shadowModelView;
-uniform mat4 shadowModelViewInverse;
-uniform mat4 shadowProjection;
-uniform mat4 shadowProjectionInverse;
 
-uniform int entityId;
-uniform int blockEntityId;
 
 attribute vec4 mc_Entity;
 attribute vec3 at_midBlock;
@@ -101,8 +88,6 @@ flat in vec3 voxelNormal;
 flat in uint voxelBlockCategory;
 flat in int biomeTintedBlock;
 
-uniform sampler2D texture;
-uniform vec3 cameraPosition;
 
 // Image binding for writes MUST use the colorimgN alias, not colortexN.
 // colortexN is the sampler (read) name; imageStore to colortexN is a silent no-op in Iris.

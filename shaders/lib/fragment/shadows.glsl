@@ -3,7 +3,6 @@
 
 #ifndef FRAME_COUNTER_DECLARE
 #define FRAME_COUNTER_DECLARE
-uniform int frameCounter;
 #endif
 
 

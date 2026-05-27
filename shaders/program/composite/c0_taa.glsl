@@ -15,9 +15,6 @@ void main() {
 
 in vec2 texCoord;
    
-uniform sampler2D colortex0;
-uniform sampler2D colortex5;
-uniform float frameTime;
 
 #include "/lib/util/common.glsl"
 #include "/lib/post/taa.glsl"

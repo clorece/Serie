@@ -15,8 +15,6 @@ void main() {
 
 in vec2 texCoord;
 
-uniform sampler2D colortex0; // Resolved HDR scene color (contains exposure in alpha)
-uniform sampler2D depthtex0; // Depth buffer
 
 #include "/lib/util/common.glsl"
 #include "/lib/post/bloom.glsl"

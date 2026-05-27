@@ -19,9 +19,6 @@ out vec3 upVector;
 out vec3 sunVector;
 out vec3 moonVector;
 
-uniform int worldTime;
-uniform vec3 sunPosition;
-uniform vec3 upPosition;
 
 void main() {
     gl_Position = ftransform();
@@ -46,8 +43,6 @@ in vec3 upVector;
 in vec3 sunVector;
 in vec3 moonVector;
 
-uniform mat4 gbufferModelViewInverse;
-uniform vec3 cameraPosition;
 
 #include "/lib/fragment/sky.glsl"
 

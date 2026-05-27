@@ -31,17 +31,7 @@ void main() {
 
 in vec2 texCoord;
 
-uniform sampler2D depthtex0;
-uniform sampler2D colortex1;    // view normals
-uniform sampler2D colortex12;   // previous-frame AO history
-uniform sampler2D colortex14;   // history length storage (.z = AO hist)
 
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferModelViewInverse;
-uniform mat4 gbufferPreviousModelView;
-uniform mat4 gbufferPreviousProjection;
-uniform vec3 cameraPosition;
-uniform vec3 previousCameraPosition;
 
 #include "/lib/pt/gtao.glsl"
 

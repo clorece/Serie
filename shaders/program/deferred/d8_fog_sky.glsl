@@ -16,9 +16,6 @@ out vec3 upVector;
 out vec3 sunVector;
 out vec3 moonVector;
 
-uniform int worldTime;
-uniform vec3 sunPosition;
-uniform vec3 upPosition;
 
 void main() {
     gl_Position = ftransform();
@@ -46,14 +43,6 @@ in vec3 upVector;
 in vec3 sunVector;
 in vec3 moonVector;
 
-uniform sampler2D colortex0;
-uniform sampler2D colortex6;
-uniform sampler2D depthtex0;
-uniform sampler2D depthtex1;
-uniform sampler2D shadowtex0;
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferModelViewInverse;
-uniform vec3 cameraPosition;
 
 float depth0 = texture(depthtex0, texCoord).x;
 

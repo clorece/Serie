@@ -15,7 +15,6 @@ void main() {
 
 in vec2 texCoord;
 
-uniform sampler2D colortex3; // Bloom input (bright-pass)
 
 #include "/lib/util/common.glsl"
 #include "/lib/post/bloom.glsl"

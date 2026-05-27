@@ -17,10 +17,6 @@ out vec3 upVector;
 out vec3 sunVector;
 out vec3 moonVector;
 
-uniform int worldTime;
-uniform vec3 sunPosition;
-uniform vec3 moonPosition;
-uniform vec3 upPosition;
 
 void main() {
     gl_Position = ftransform();
@@ -54,23 +50,6 @@ in vec3 lightColor;
 in vec3 ambientColor;
 in vec3 lightVector;
 
-uniform float rainStrength;
-uniform vec3 cameraPosition;
-uniform sampler2D colortex0;   // raw albedo
-uniform sampler2D colortex1;   // view normals
-uniform sampler2D colortex2;   // lightmap
-uniform sampler2D colortex3;   // denoised indirect (.rgb)
-uniform sampler2D colortex9;   // linear depth (.r) + luminance moments (.g, .b) + SSCS (.a)
-uniform sampler2D colortex12;  // GTAO: bent normal (.xy oct) + linear depth (.z) + AO (.w)
-uniform sampler2D colortex4;   // material
-uniform sampler2D depthtex0;
-uniform sampler2D shadowtex0;
-uniform sampler2D shadowtex1;
-uniform sampler2D shadowcolor0;
-uniform mat4 gbufferProjection;
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferModelView;
-uniform mat4 gbufferModelViewInverse;
 
 float depth0 = texture(depthtex0, texCoord).r;
 vec3 material = texture(colortex4, texCoord).rgb;
@@ -209,7 +188,6 @@ vec4 sampleAOFiltered(vec2 uv) {
 #ifdef PT_DEBUG_VOXELS
 #include "/lib/pt/voxelData.glsl"
 #endif
-uniform usampler2D colortex7;
 
 
 #include "/lib/util/positions.glsl"

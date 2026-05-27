@@ -13,13 +13,6 @@ out vec2 lightmapCoord;
 out vec3 normal;
 out vec4 color;
 
-uniform float frameTimeCounter;
-uniform vec3 cameraPosition;
-uniform mat4 gbufferModelView;
-uniform mat4 gbufferModelViewInverse;
-uniform mat4 gbufferPreviousProjection;
-uniform mat4 gbufferPreviousModelView;
-uniform sampler2D noisetex;
 attribute vec4 mc_Entity;
 
 vec3 wind(vec3 position) {
@@ -72,7 +65,6 @@ in vec2 lightmapCoord;
 in vec3 normal;
 in vec4 color;
 
-uniform sampler2D texture; // gbuffers color channel 0
 
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;

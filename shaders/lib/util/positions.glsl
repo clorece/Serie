@@ -1,8 +1,6 @@
 #ifndef POSITIONS_GLSL
 #define POSITIONS_GLSL
 
-uniform mat4 shadowModelView;
-uniform mat4 shadowProjection;
 
 vec3 convertScreenSpaceToWorldSpace(vec2 co, float depth) {
     vec4 fragposition = gbufferProjectionInverse * vec4(vec3(co, depth) * 2.0 - 1.0, 1.0);

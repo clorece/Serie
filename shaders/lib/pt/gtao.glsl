@@ -21,7 +21,6 @@
 #endif
 #define GTAO_HALF_PI 1.57079632679
 
-uniform mat4 gbufferProjection;
 // NOTE: the including pass must declare `uniform mat4 gbufferProjectionInverse;` and the
 // `texelSize` macro (from common.glsl) before this file is included.
 

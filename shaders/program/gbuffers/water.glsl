@@ -46,8 +46,6 @@ in vec3 normal;
 in vec4 color;
 in vec4 position;
 
-uniform sampler2D texture; // gbuffers color channel 0
-uniform sampler2D shadowtex0;
 
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;

@@ -26,12 +26,7 @@ void main() {
 
 in vec2 texCoord;
 
-uniform sampler2D colortex1;   // normals
-uniform sampler2D colortex8;   // accumulated GI (.rgb) + history length (.a)
-uniform sampler2D colortex9;   // linear depth (.r) + luminance moments (.g, .b)
-uniform sampler2D depthtex0;
 
-uniform mat4 gbufferProjectionInverse;
 #include "/lib/pt/denoise.glsl"
 
 void main() {

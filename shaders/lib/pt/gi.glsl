@@ -67,9 +67,6 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     return r;
 }
 
-uniform mat4 gbufferPreviousModelView;
-uniform mat4 gbufferPreviousProjection;
-uniform vec3 previousCameraPosition;
 
 // Trace ONE GI ray and return the incoming radiance from that direction.
 vec3 giRayRadiance(

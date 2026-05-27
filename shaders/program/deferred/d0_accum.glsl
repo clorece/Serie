@@ -28,25 +28,7 @@ void main() {
 
 in vec2 texCoord;
 
-uniform sampler2D colortex1;   // normals
-uniform sampler2D colortex2;   // lightmap
-uniform sampler2D colortex3;   // raw noisy GI (from d0_restir)
-uniform sampler2D colortex6;   // raw moments (from d0_restir)
-uniform sampler2D colortex8;   // GI history
-uniform sampler2D colortex9;   // moments history
-uniform sampler2D colortex10;  // ReSTIR reservoir radiance/M
-uniform sampler2D colortex11;  // ReSTIR reservoir samplePos/W
-uniform sampler2D colortex14;  // ReSTIR reservoir sampleNormal
-uniform sampler2D colortex15;  // normal history
-uniform sampler2D depthtex0;
 
-uniform vec3 cameraPosition;
-uniform vec3 previousCameraPosition;
-uniform mat4 gbufferProjection;
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferModelViewInverse;
-uniform mat4 gbufferPreviousModelView;
-uniform mat4 gbufferPreviousProjection;
 
 #include "/lib/pt/denoise.glsl"
 

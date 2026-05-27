@@ -14,11 +14,6 @@ void main() {
 #include "/lib/options.glsl"
 
 in vec2 texCoord;
-uniform float aspectRatio;
-uniform ivec2 eyeBrightnessSmooth;
-uniform sampler2D colortex0; // Resolved HDR scene color (contains exposure in alpha)
-uniform sampler2D colortex3; // Gaussian blurred bloom color
-uniform sampler2D colortex4;
 
 #include "/lib/util/common.glsl"
 #include "/lib/util/dither.glsl"

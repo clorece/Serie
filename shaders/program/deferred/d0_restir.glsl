@@ -22,10 +22,6 @@ out vec3 upVector;
 out vec3 sunVector;
 out vec3 moonVector;
 
-uniform int worldTime;
-uniform vec3 sunPosition;
-uniform vec3 moonPosition;
-uniform vec3 upPosition;
 
 void main() {
     gl_Position = ftransform();
@@ -48,13 +44,6 @@ in vec3 lightColor;
 in vec3 ambientColor;
 in vec3 lightVector;
 
-uniform float rainStrength;
-uniform vec3 cameraPosition;
-uniform sampler2D colortex1;
-uniform sampler2D colortex2;
-uniform sampler2D depthtex0;
-uniform mat4 gbufferProjectionInverse;
-uniform mat4 gbufferModelViewInverse;
 
 vec3 clipSpace;
 
@@ -67,17 +56,6 @@ vec3 clipSpace;
 #include "/lib/pt/denoise.glsl"
 
 // Voxel atlas + persistent history
-uniform usampler2D colortex7;
-uniform sampler2D colortex5;   // prev-frame resolved HDR scene (radiance cache for multi-bounce)
-uniform sampler2D colortex13;  // directional sky LUT (octahedral, written by d6_skylut last frame)
-uniform sampler2D colortex14;  // ReSTIR reservoir sample-hit normal (octahedral)
-uniform sampler2D colortex15;  // primary surface normal history (.xy octahedral world-space)
-uniform sampler2D colortex8;   // indirect history (.rgb + histLen .a)
-uniform sampler2D colortex9;   // linear-depth history (.r)
-uniform sampler2D colortex10;  // ReSTIR reservoir: radiance.rgb + M
-uniform sampler2D colortex11;  // ReSTIR reservoir: samplePos.xyz + W
-uniform mat4 gbufferProjection;
-uniform mat4 gbufferModelView;
 
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
