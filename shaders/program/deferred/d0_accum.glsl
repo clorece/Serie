@@ -175,7 +175,18 @@ void main() {
         // Screen padding to prevent sampling garbage at the very edges of the screen
         vec2 paddingSpatial = 2.0 * texelSize;
         
-        for (int i = 0; i < RESTIR_SPATIAL_SAMPLES; i++) {
+        // --- Adaptive Spatial Reuse Optimization ---
+        // If the temporal history is already highly converged (M is near maximum),
+        // we can dynamically reduce or entirely skip the expensive spatial reuse.
+        // This saves immense memory bandwidth across large stable areas of the screen.
+        int spatialSamples = RESTIR_SPATIAL_SAMPLES;
+        if (shade.M > float(RESTIR_M_CAP) * 0.8) {
+            spatialSamples = 0; // Fully converged: skip spatial
+        } else if (shade.M > float(RESTIR_M_CAP) * 0.4) {
+            spatialSamples = min(RESTIR_SPATIAL_SAMPLES, 1); // Partially converged: scale down
+        }
+        
+        for (int i = 0; i < spatialSamples; i++) {
             // Reciprocal Neighbor Selection: generate a screen-uniform random offset
             vec2 uniformOffset = getUniformOffset(i, frameCounter);
             ivec2 delta = ivec2(round(uniformOffset));

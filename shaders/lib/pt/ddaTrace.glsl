@@ -85,18 +85,27 @@ bool traceVoxelRay(
     ivec3 stepDir = ivec3(sign(rayDir));
 
     // Per-axis step size
-    vec3 invRayDir = 1.0 / (abs(rayDir) + 1e-8);
-    vec3 tDelta = invRayDir;
+    vec3 invRayDir = 1.0 / (rayDir + 1e-8);
+    vec3 tDelta = abs(invRayDir);
+
+    // Pre-calculate exact distance where the ray exits the voxel grid AABB.
+    // This eliminates the need to check 3D bounds on every single step of the loop.
+    vec3 t0 = (vec3(0.0) - localPos) * invRayDir;
+    vec3 t1 = (vec3(VOXEL_GRID_SIZE) - localPos) * invRayDir;
+    vec3 tMaxBox = max(t0, t1);
+    float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
 
     // Distance to the first boundary crossing
-    vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * (1.0 / (rayDir + 1e-8));
+    vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
 
     float tEntry = 0.0;
     // Cap iterations to slightly more than the grid diameter
     for (int i = 0; i < 80; i++) {
-        // Exit if we exceed the requested distance or leave the active grid volume
-        if (tEntry >= maxDist) break;
-        if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, ivec3(VOXEL_GRID_SIZE)))) {
+        // Exit if we exceed the requested distance
+        if (tEntry >= maxDist) return false;
+        
+        // Exit if we leave the active grid volume
+        if (tEntry > tExit) {
             // Escape to screen-space fallback
             vec3 dummyA, dummyN, dummyP;
             return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);

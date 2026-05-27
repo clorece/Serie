@@ -128,9 +128,9 @@ const bool colortex15Clear = false;
 
 
 // ---- SVGF denoiser (Schied et al. 2017, re-implemented from the paper) ----
-#define SVGF_SIGMA_Z 4.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
-#define SVGF_SIGMA_N 64.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
-#define SVGF_SIGMA_L 10.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
+#define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
+#define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
+#define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
 #define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] History length below which variance is estimated spatially
 #define PT_DETAIL_RECONSTRUCT // Reconstruct contact shadows / fine GI detail in the filter
 #define SVGF_WORLD_RADIUS // Bound the a-trous footprint in WORLD space so distant GI keeps detail (fixes far-away flatness)

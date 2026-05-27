@@ -25,7 +25,15 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     vec3  localPos = worldPos - gridOrigin;
     ivec3 vox      = ivec3(floor(localPos));
     ivec3 stepDir  = ivec3(sign(rayDir));
-    vec3  tDelta   = 1.0 / max(abs(rayDir), vec3(1e-8));
+    vec3  tDelta   = abs(1.0 / (rayDir + 1e-8));
+
+    // Pre-calculate exact distance where the ray exits the voxel grid AABB.
+    // Eliminates per-step bounds checking.
+    vec3 t0Box = (vec3(0.0) - localPos) / (rayDir + 1e-8);
+    vec3 t1Box = (vec3(VOXEL_GRID_SIZE) - localPos) / (rayDir + 1e-8);
+    vec3 tMaxBox = max(t0Box, t1Box);
+    float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
+    float actualMaxDist = min(maxDist, tExit);
 
     vec3 tMax;
     for(int i=0; i<3; ++i) {
@@ -37,8 +45,7 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     vec3  lastMask = vec3(0.0);
     float tEntry   = 0.0;
     for (int i = 0; i < 80; i++) {
-        if (tEntry >= maxDist) break;
-        if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, ivec3(VOXEL_GRID_SIZE)))) break;
+        if (tEntry > actualMaxDist) break;
 
         uvec4 v = texelFetch(atlas, voxelCoordToAtlas(vox), 0);
         if (v.r != VOXEL_AIR && i > 0) {
@@ -90,15 +97,16 @@ vec3 giRayRadiance(
         }
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
-        if (ndl > 0.0) {
+        if (ndl > 0.0 && skyOcc > 0.01) {
             bool occluded = traceVoxelRay(atlas, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV);
             if (!occluded) rad += h.albedo * sunColor * ndl * skyOcc;
         }
 
         // Sky probe: shoot one DDA ray from the bounce surface toward the sky.
+        // Optimization: Skip expensive DDA if sky lightmap is negligible.
         vec3  skyProbeRaw    = h.normal + vec3(0.0, 1.0, 0.0);
         float skyProbeLenSq  = dot(skyProbeRaw, skyProbeRaw);
-        if (skyProbeLenSq > 1e-4) {
+        if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) {
             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
             float lambertWeight = dot(h.normal, skyProbeDir);
             bool  skyEscape     = !traceVoxelRay(atlas, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV);
