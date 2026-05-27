@@ -37,8 +37,8 @@ uniform sampler2D colortex8;   // GI history
 uniform sampler2D colortex9;   // moments history
 uniform sampler2D colortex10;  // ReSTIR reservoir radiance/M
 uniform sampler2D colortex11;  // ReSTIR reservoir samplePos/W
-uniform sampler2D colortex14;  // ReSTIR reservoir sampleNormal
-uniform sampler2D colortex15;  // normal history
+uniform sampler2D colortex14;  // irradiance cache atlas (used for spatial-reject fallback)
+uniform sampler2D colortex15;  // .xy primary normal hist + .zw reservoir sample normal hist
 uniform sampler2D depthtex0;
 
 uniform vec3 cameraPosition;
@@ -52,6 +52,7 @@ uniform mat4 gbufferPreviousProjection;
 vec3 clipSpace;
 #include "/lib/util/positions.glsl"
 #include "/lib/pt/restir.glsl"
+#include "/lib/pt/ircache.glsl"
 
 vec3 getNeighborWorldPosition(vec2 nUV, float nDepthRaw) {
     vec3 viewPos = convertScreenSpaceToWorldSpace(nUV, nDepthRaw);
@@ -125,7 +126,7 @@ void main() {
     // by d0_restir.glsl on the CURRENT frame, fixing the geometric misalignment bug.
     #if defined(VOXEL_GI) && defined(RESTIR_GI) && defined(RESTIR_SPATIAL)
         uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter + 1);
-        Reservoir shade = readReservoir(colortex10, colortex11, colortex14, texCoord);
+        Reservoir shade = readReservoir(colortex10, colortex11, colortex15,texCoord);
         shade.wSum = luma(shade.radiance) * shade.W * shade.M;
         
         const float spDepthGate  = 0.10;
@@ -168,7 +169,7 @@ void main() {
             vec3 nNormal = normalize(texture(colortex1, nUV).rgb * 2.0 - 1.0);
             if (dot(normal, nNormal) < spNormalGate) continue;
 
-            Reservoir n = readReservoir(colortex10, colortex11, colortex14, nUV);
+            Reservoir n = readReservoir(colortex10, colortex11, colortex15,nUV);
             
             // De-duplication: if the neighbor holds the exact same sample,
             // we down-weight its confidence to 0 to prevent artificial inflation and correlation noise.

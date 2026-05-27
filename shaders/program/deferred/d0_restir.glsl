@@ -7,9 +7,11 @@
 //    colortex9  = linear depth (.r)                 [reprojection validation]
 //    colortex10 = ReSTIR reservoir radiance (.rgb) + M (.a)
 //    colortex11 = ReSTIR reservoir samplePos (.xyz) + W (.a)
-//    colortex15 = surface normal history (.xy octahedral world-space)
-//  The denoise chain (d1..d3) reads colortex8; nothing else writes 8/9/10/11/15,
-//  so they survive the frame and become "previous frame" history next frame.
+//    colortex15 = .xy primary normal hist + .zw reservoir sample-hit normal (octahedral)
+//  Also READS colortex14 (irradiance cache atlas, written last frame by d_ic_update at
+//  deferred13) to back ReSTIR's screen-space failure modes: ray-hit radiance comes from
+//  the IC instead of the colortex5 reproject, and disoccluded pixels (no usable temporal
+//  reservoir) get seeded with a synthetic IC reservoir at confidence IC_PRIMER_M.
 // ============================================================================
 
 #ifdef VERTEX
@@ -65,13 +67,14 @@ vec3 clipSpace;
 #include "/lib/pt/gi.glsl"
 #include "/lib/pt/restir.glsl"
 #include "/lib/pt/denoise.glsl"
+#include "/lib/pt/ircache.glsl"
 
 // Voxel atlas + persistent history
 uniform usampler2D colortex7;
-uniform sampler2D colortex5;   // prev-frame resolved HDR scene (radiance cache for multi-bounce)
+uniform sampler2D colortex5;   // prev-frame resolved HDR scene (used only when IC_BACK_RESTIR is off)
 uniform sampler2D colortex13;  // directional sky LUT (octahedral, written by d6_skylut last frame)
-uniform sampler2D colortex14;  // ReSTIR reservoir sample-hit normal (octahedral)
-uniform sampler2D colortex15;  // primary surface normal history (.xy octahedral world-space)
+uniform sampler2D colortex14;  // irradiance cache atlas (.rgb sphere irradiance, .a histLen)
+uniform sampler2D colortex15;  // .xy primary normal hist + .zw reservoir sample normal hist
 uniform sampler2D colortex8;   // indirect history (.rgb + histLen .a)
 uniform sampler2D colortex9;   // linear-depth history (.r)
 uniform sampler2D colortex10;  // ReSTIR reservoir: radiance.rgb + M
@@ -92,12 +95,16 @@ void main() {
     float linDepth = getDepth(depth0);
 
     // History outputs are written every frame so the persistent buffers stay valid.
+    // resv15Out packs both the primary normal (.xy) and the reservoir sample normal (.zw);
+    // the .zw lanes are filled in when a ReSTIR reservoir is written below, else stay zero.
     vec4 hist8Out  = vec4(0.0);
     vec4 hist9Out  = vec4(depth0, 0.0, 0.0, 1.0);
     vec4 resv10Out = vec4(0.0);
     vec4 resv11Out = vec4(0.0);
-    vec4 resv14Out = vec4(0.0);
-    vec4 resv15Out = vec4(octEncodeNormal(normalWorld), 0.0, 1.0);
+    vec4 resv15Out = vec4(octEncodeNormal(normalWorld), 0.0, 0.0);
+
+    // IC atlas anchor: colortex14 was written last frame anchored at previousCameraPosition.
+    vec3 prevICOrigin = icGridOrigin(previousCameraPosition);
 
     #if defined(VOXEL_GI) || defined(VOXEL_AO)
         float skyLightmap = texture(colortex2, texCoord).y;
@@ -150,17 +157,51 @@ void main() {
             Reservoir res = newReservoir();
             for (int i = 0; i < RESTIR_INITIAL_SAMPLES; i++) {
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
-                vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory;
+                vec3 hitPos; vec3 hitNormal; vec3 hitAlbedo; bool wasHit; uint hitCategory;
                 
+              #ifdef IC_RESTIR_LITE
+                VoxelHit h = traceVoxelGI(colortex7, gridOrigin, origin, dir, float(GI_RADIUS));
+                vec3 rad = vec3(0.0);
+                if (h.hit) {
+                    wasHit = true; hitCategory = h.category;
+                    hitPos = h.pos; hitNormal = h.normal; hitAlbedo = h.albedo;
+                    if (h.category == VOXEL_EMISSIVE) {
+                        rad = h.albedo * float(GI_EMISSION);
+                    } else {
+                        vec4 icHit = icSampleTrilinear(colortex14, h.pos, h.normal, prevICOrigin, colortex7, gridOrigin);
+                        rad = h.albedo * max(icHit.rgb, vec3(0.0));
+                    }
+                } else {
+                    wasHit = false; hitCategory = VOXEL_AIR;
+                    hitPos = h.pos; hitNormal = -dir; hitAlbedo = vec3(0.0);
+                    float skyOcc = max(skyLightmap, 0.0);
+                    #ifdef GI_SKY_DIRECTIONAL
+                        rad = sampleSkyLut(colortex13, dir) * GI_SKY_BRIGHTNESS * skyOcc;
+                    #else
+                        rad = giSky * skyOcc;
+                    #endif
+                    rad *= smoothstep(-0.2, 0.4, dir.y);
+                }
+              #else
                 // Hybrid Voxel/SSRT Raytrace
                 vec3 rad = giRayRadiance(
                     colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky, 
                     colortex13, depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView, 
-                    hitPos, hitNormal, wasHit, hitCategory, skyLightmap
+                    hitPos, hitNormal, hitAlbedo, wasHit, hitCategory, skyLightmap
                 );
 
-                // Infinite multi-bounce logic (optimized lookup)
+                // Multi-bounce radiance at the hit surface. The IC stores last frame's
+                // converged outgoing-radiance per probe, so a trilinear lookup at hitPos
+                // gives the same quantity colortex5 was being abused for - but world-space
+                // stable (no off-screen failures, no disocclusion gap). Falls back to the
+                // legacy screen-reproject when IC_BACK_RESTIR is off.
                 if (wasHit && hitCategory != VOXEL_EMISSIVE) {
+                  #ifdef IC_BACK_RESTIR
+                    vec4 icHit = icSampleTrilinear(colortex14, hitPos, hitNormal, prevICOrigin, colortex7, gridOrigin);
+                    if (icHit.a > 0.0) {
+                        rad += hitAlbedo * icHit.rgb * (float(IC_FEEDBACK) / 100.0);
+                    }
+                  #else
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
                     vec4  viewHit    = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
                     vec4  clipHit    = gbufferPreviousProjection * viewHit;
@@ -173,14 +214,14 @@ void main() {
                             float expectedLinD   = getDepth(expectedRawD);
                             float actualLinD     = getDepth(prevDepthRaw);
                             float relErr         = abs(expectedLinD - actualLinD) / max(expectedLinD, 0.1);
-                            
-                            // ReSTIR multi-bounce: overwrite radiance with previous frame if depth matches
                             if (prevDepthRaw < 0.9999 && relErr < 0.05) {
                                 rad = texture(colortex5, uvHit).rgb;
                             }
                         }
                     }
+                  #endif
                 }
+              #endif
 
                 updateReservoir(res, rad, hitPos - cameraPosition, hitNormal, luma(rad), seed);
             }
@@ -205,7 +246,7 @@ void main() {
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
 
                 if (depthValid && normalSim > 0.5) {
-                    Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev);
+                    Reservoir prev = readReservoir(colortex10, colortex11, colortex15, uvPrev);
 
                     // Geometry and Motion-based rejection for reservoirs.
                     // We DO NOT use luminance rejection here because 1spp path tracing
@@ -225,6 +266,30 @@ void main() {
                     mergeReservoir(res, prev, 1.0, seed);
                 }
             }
+
+            // Disocclusion fallback: any pixel that didn't pull in a strong temporal
+            // reservoir (new geometry, big camera move, normal mismatch) has M~1 from
+            // the initial RIS alone - that's the 30-frame noise tail. Seed it with a
+            // synthetic reservoir whose radiance comes from the IC at this pixel's
+            // world position, at confidence IC_PRIMER_M. The IC is already a smooth,
+            // multi-bounce converged estimate so the reservoir starts pre-denoised.
+          #ifdef IC_BACK_RESTIR
+            if (res.M < float(IC_PRIMER_M)) {
+                vec3 primerWorldPos = worldAbs + normalWorld * 0.5;
+                vec4 primerIC = icSampleTrilinear(colortex14, primerWorldPos, normalWorld, prevICOrigin, colortex7, gridOrigin);
+                if (primerIC.a > 0.0 && luma(primerIC.rgb) > 1e-4) {
+                    Reservoir primer = newReservoir();
+                    primer.radiance     = primerIC.rgb;
+                    primer.samplePos    = primerWorldPos - cameraPosition;
+                    primer.sampleNormal = normalWorld;
+                    primer.M            = float(IC_PRIMER_M);
+                    primer.W            = 1.0;
+                    primer.wSum         = luma(primerIC.rgb) * primer.M;
+                    mergeReservoir(res, primer, 1.0, seed);
+                }
+            }
+          #endif
+
             finalizeReservoir(res);
             
             // Hard clamp the temporal reservoir's unbiased contribution before it goes into history.
@@ -235,10 +300,11 @@ void main() {
                 res.W *= float(RESTIR_CLAMP) / unbiasedLuma;
             }
 
-            // Store the temporal reservoir (pre-spatial) for next frame
+            // Store the temporal reservoir (pre-spatial) for next frame. Sample normal
+            // packs into the .zw lanes of colortex15 (alongside the primary normal in .xy).
             resv10Out = vec4(res.radiance, res.M);
             resv11Out = vec4(res.samplePos, res.W);
-            resv14Out = vec4(octEncodeNormal(res.sampleNormal), 0.0, 0.0);
+            resv15Out.zw = octEncodeNormal(res.sampleNormal);
 
             // 3. Spatial reuse moved to d0_accum to prevent buffer read/write conflicts.
             Reservoir shade = res;
@@ -283,13 +349,12 @@ void main() {
         hist9Out = vec4(depth0, rawAO, rawAO * rawAO, 1.0);
     #endif
 
-    /* RENDERTARGETS: 3,6,10,11,14,15 */
-    gl_FragData[0] = hist8Out; // Writes to colortex3 (Raw GI)
-    gl_FragData[1] = hist9Out; // Writes to colortex6 (Raw Moments)
-    gl_FragData[2] = resv10Out;
-    gl_FragData[3] = resv11Out;
-    gl_FragData[4] = resv14Out;
-    gl_FragData[5] = resv15Out;
+    /* RENDERTARGETS: 3,6,10,11,15 */
+    gl_FragData[0] = hist8Out;  // colortex3 - raw GI
+    gl_FragData[1] = hist9Out;  // colortex6 - raw moments
+    gl_FragData[2] = resv10Out; // colortex10 - reservoir radiance + M
+    gl_FragData[3] = resv11Out; // colortex11 - reservoir samplePos + W
+    gl_FragData[4] = resv15Out; // colortex15 - .xy primary normal, .zw sample normal
 }
 
 #endif

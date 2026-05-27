@@ -45,7 +45,7 @@
 // strong as the sun, sunlit and shaded faces read the same and the scene goes flat. Lowering
 // LIGHTING_INDIRECT (or raising LIGHTING_DIRECT) restores the sun-vs-shade contrast.
 #define LIGHTING_DIRECT 110   // [50 75 100 110 125 150 200] Direct sunlight weight (%) in the final blend
-#define LIGHTING_INDIRECT 70  // [25 40 55 70 85 100 125 150] Indirect/ambient (GI) weight (%); lower = more contrast, less flat
+#define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150] Indirect/ambient (GI) weight (%); lower = more contrast, less flat
 #define LIGHTING_AO_FULL      // Occlude the ambient/GI by the FULL GTAO term (physically correct) instead of the partial AO_GI_STRENGTH mix
 
 //#define WIND_MOVEMENT // WIP
@@ -80,7 +80,9 @@ const bool colortex8Clear = false;
 const int colortex9Format = RGBA16F;
 const bool colortex9Clear = false;
 
-// ReSTIR reservoirs (persistent): colortex10 = radiance.rgb + M, colortex11 = samplePos.xyz + W
+// ReSTIR reservoirs (persistent):
+//   colortex10 = radiance.rgb + M (RGBA32F)
+//   colortex11 = samplePos.xyz + W (RGBA32F)
 const int RGBA32F = 7;
 const int colortex10Format = RGBA32F;
 const bool colortex10Clear = false;
@@ -97,13 +99,17 @@ const bool colortex12Clear = false;
 const int colortex13Format = RGBA16F;
 const bool colortex13Clear = false;
 
-// ReSTIR reservoir sample-hit normal (persistent): .xy = octahedral world normal of the
-// stored sample's hit surface — needed for the world-space reconnection Jacobian on reuse.
+// Irradiance cache atlas (persistent): RGBA16F. .rgb = sphere-averaged
+// incoming irradiance per probe, .a = temporal history length.
+// 64^3 probes packed as 8x8 z-slice tiles of 64x64 = 512x512 atlas region
+// (only the top-left 512x512 of this colortex is used). See lib/pt/ircache.glsl.
 const int colortex14Format = RGBA16F;
 const bool colortex14Clear = false;
 
-// Temporal normal history (persistent): .xy = octahedral world-space normal of the primary
-// visible surface — used for bilateral history rejection to prevent ghosting on moving geometry.
+// Primary surface normal + ReSTIR sample-hit normal (persistent, dual-use, RGBA16F):
+//   .xy = octahedral world normal of the primary visible surface (for bilateral history rejection)
+//   .zw = octahedral world normal of the ReSTIR reservoir sample's hit surface (for the
+//         world-space reconnection Jacobian on reuse). Both written by d0_restir each frame.
 const int colortex15Format = RGBA16F;
 const bool colortex15Clear = false;
 
@@ -111,27 +117,27 @@ const bool colortex15Clear = false;
 #define VOXEL_GI
 #define GI_SAMPLES 1    // [1 2 3 4] Rays per pixel per frame (higher = less noise, lower fps)
 #define GI_RADIUS  24   // [12 16 24 32 48] Max ray distance in blocks
-#define GI_STRENGTH 200 // [25 50 75 100 150 200] Indirect light intensity (percent)
+#define GI_STRENGTH 50 // [25 50 75 100 150 200] Indirect light intensity (percent). Multi-bounce IC handles amplification so 100% is sufficient.
 #define GI_SKY_DIRECTIONAL    // Sample a real directional sky (octahedral LUT) for GI rays instead of a flat ambient tint
-#define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0] Sky irradiance multiplier for GI rays (lower this when GI_SKY_DIRECTIONAL is on)
+#define GI_SKY_BRIGHTNESS 2.0 // [1.0 2.0 3.0 4.0 6.0 8.0] Sky irradiance multiplier for GI rays (lower this when GI_SKY_DIRECTIONAL is on)
 #define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun colour (percent) for a warmer, less cold feel
 #define SKY_LUT_RES 256       // Octahedral sky-LUT side length in texels (sharper sky gradient = higher); kept <= screen size
 #define SKY_LUT_STEPS 4       // [4 6 8 12] Atmosphere primary-march steps for the sky LUT (quality vs cost)
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] Sky contribution weight at bounce surfaces (sky probe)
 #define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] Max blocks the sky-probe DDA ray travels from a bounce surface
 #define GI_FLOOR 100    // [0 50 100 150 200] Ambient floor (percent of ambientColor); gated by skylight
-#define GI_EMISSION 2   // [1 2 3 4 5 6 7 8] Emissive block glow strength
+#define GI_EMISSION 1   // [1 2 3 4 5 6 7 8] Emissive block glow strength
 #define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] Temporal frames to blend
 #define GI_FIREFLY 4.0  // [1.5 2.0 3.0 4.0 6.0 8.0] Relative firefly clamp (x temporal-mean luminance)
-#define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
+#define GI_TEMPORAL_REJECT 1.0 // [1.0 1.5 2.0 3.0 4.0 8.0] History rejection in sigmas; lower = less ghosting, more noise
 #define GI_DENOISE      // SVGF variance-guided spatial filter to clean up GI noise
 
 
 // ---- SVGF denoiser (Schied et al. 2017, re-implemented from the paper) ----
-#define SVGF_SIGMA_Z 4.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
-#define SVGF_SIGMA_N 64.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
-#define SVGF_SIGMA_L 10.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
-#define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] History length below which variance is estimated spatially
+#define SVGF_SIGMA_Z 1.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
+#define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
+#define SVGF_SIGMA_L 4.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
+#define SVGF_VAR_BOOST 2  // [2 4 6 8 12 16] History length below which variance is estimated spatially
 #define PT_DETAIL_RECONSTRUCT // Reconstruct contact shadows / fine GI detail in the filter
 #define SVGF_WORLD_RADIUS // Bound the a-trous footprint in WORLD space so distant GI keeps detail (fixes far-away flatness)
 #define SVGF_SIGMA_WORLD 2.0 // [0.75 1.0 1.5 2.0 3.0 4.0 6.0] World-space blur radius in blocks; taps farther than this (e.g. across distant surfaces) are down-weighted
@@ -149,20 +155,43 @@ const bool colortex15Clear = false;
 // PRESERVE_MAX converged areas look ~like the denoiser is OFF (it isn't — it's just showing
 // the raw history). OFF by default: SVGF_RAW_HISTORY already lets the normal a-trous keep
 // converged detail. Enable only if converged areas still look over-smoothed.
-//#define SVGF_DETAIL_PRESERVE   // Re-inject raw detail on temporally-converged pixels
+#define SVGF_DETAIL_PRESERVE   // Re-inject raw detail on temporally-converged pixels
 #define SVGF_PRESERVE_MAX 85     // [0 25 50 70 85 95 100] Max % of raw (un-blurred) GI kept once a pixel is fully converged
 #define SVGF_PRESERVE_FRAMES 16  // [8 16 24 32 48 64] History length (frames) at which max preservation is reached
 
-// ---- ReSTIR GI (reservoir resampling; replaces plain temporal accumulation when enabled) ----
-#define RESTIR_GI               // Use ReSTIR reservoirs instead of simple GI accumulation
-#define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] Candidate rays generated per frame
-#define RESTIR_M_CAP 32         // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
-#define RESTIR_JACOBIAN         // World-space reconnection Jacobian for spatial reuse (correct cross-geometry resampling; enables wider reuse)
-#define RESTIR_SPATIAL          // Enable spatial reservoir reuse from neighbours
-#define RESTIR_SPATIAL_SAMPLES 2 // [1 2 3 4 5] Neighbour reservoirs merged per pixel
+// ---- ReSTIR GI (reservoir resampling for the primary indirect light estimate) ----
+#define RESTIR_GI                  // Use ReSTIR reservoirs instead of plain temporal accumulation
+#define RESTIR_INITIAL_SAMPLES 1   // [0 1 2 4 6] Candidate rays generated per pixel per frame (0 = IC primer only)
+#define RESTIR_M_CAP 32            // [8 12 16 24 32 48] Max reservoir confidence (history clamp)
+#define RESTIR_JACOBIAN            // World-space reconnection Jacobian for spatial reuse (slower, more correct)
+#define RESTIR_SPATIAL             // Enable spatial reservoir reuse from neighbours
+#define RESTIR_SPATIAL_SAMPLES 2   // [1 2 3 4 5] Neighbour reservoirs merged per pixel
 #define RESTIR_SPATIAL_RADIUS 16.0 // [4.0 8.0 16.0 24.0 32.0] Neighbour search radius (pixels)
-#define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] Clamp on the unbiased reservoir weight W (anti-firefly)
-#define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] Absolute firefly clamp on the resolved GI
+#define RESTIR_W_MAX 8.0           // [2.0 4.0 8.0 16.0 32.0] Clamp on the unbiased reservoir weight W (anti-firefly)
+#define RESTIR_CLAMP 8.0           // [2.0 4.0 8.0 16.0 32.0] Absolute firefly clamp on the resolved GI
+
+// ---- Irradiance Cache (world-space probe grid; backs ReSTIR to eliminate disocclusion noise) ----
+// A 64^3 grid of isotropic irradiance probes covers a +-32 block range around the
+// camera. The IC is updated each frame in d_ic_update and plugs into ReSTIR at three
+// points: (1) replaces colortex5 reproject for the ray-hit radiance lookup inside
+// giRayRadiance, (2) seeds a synthetic reservoir on temporal-reuse disocclusion, and
+// (3) fills in for rejected spatial neighbours in d0_accum.
+#define IC_BACK_RESTIR                   // Master toggle: when on, IC fills ReSTIR's screen-space gaps (off = legacy ReSTIR with colortex5 reproject only)
+#define IC_RESTIR_LITE                   // Lite RIS: primary DDA only, IC provides radiance (faster, less contact detail)
+#define IC_PRIMER_M 8                    // [2 4 6 8 12 16 24] Confidence (M) of the synthetic IC-seeded reservoir on disocclusion; higher = more IC, less first-frame noise
+#define IC_RAYS_PER_PROBE 8              // [2 4 6 8 12 16 24] Rays per probe per frame (higher = less probe noise, slower)
+#define IC_HISTORY_MAX 64                // [16 32 48 64 96 128 192] Temporal blend cap (frames); higher = smoother, slower to react
+#define IC_FEEDBACK 100                  // [0 25 50 75 100 125 150] Multi-bounce strength (%) — how much prev-frame IC the new probe re-injects on hits
+#define IC_NORMAL_BIAS 50                // [0 25 50 75 100 150 200] Per-pixel sample offset along the surface normal in tenths of a block (50 = 0.5 blocks)
+#define IC_FIREFLY 4.0                   // [2.0 3.0 4.0 6.0 8.0] Per-probe firefly clamp (multiple of prev-frame luma)
+#define IC_PROBE_RADIUS 32               // Block-space cascade radius (do not change without resizing the atlas in ircache.glsl)
+#define IC_SKIP_SOLID_PROBES             // Skip the trace for probes whose centers fall inside a solid voxel (they cannot contribute)
+#define IC_SKIP_INTERVAL 8               // [2 4 8 16 32] Re-trace static converged probes only every N frames to save ray casts
+// Debug visualisation of the irradiance cache. Replaces the final lit scene with one of:
+//   0 = off, 1 = per-pixel IC sample (what each surface pulls from the cache),
+//   2 = raw atlas in the top-left corner (raw probe values; rest of screen = scene),
+//   3 = probe history-length heatmap (red = no history, green = converged)
+#define IC_DEBUG_VIEW 0                  // [0 1 2 3]
 
 // ---- Ambient Occlusion (screen-space GTAO; complements Voxel GI's macro occlusion) ----
 // GTAO adds the sub-voxel CONTACT darkening the 1-block voxel grid cannot resolve. It is

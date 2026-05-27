@@ -69,7 +69,7 @@ vec3 giRayRadiance(
     usampler2D atlas, vec3 camPos, vec3 gridOrigin,
     vec3 origin, vec3 dir, vec3 sunDir, vec3 sunColor, vec3 skyColor, sampler2D skyLut,
     sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV,
-    out vec3 hitPos, out vec3 hitNormal, out bool wasHit, out uint hitCategory,
+    out vec3 hitPos, out vec3 hitNormal, out vec3 hitAlbedo, out bool wasHit, out uint hitCategory,
     float skyLightmap
 ) {
     VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
@@ -86,8 +86,11 @@ vec3 giRayRadiance(
         if (h.category == VOXEL_EMISSIVE) {
             hitPos    = h.pos;
             hitNormal = h.normal;
+            hitAlbedo = vec3(0.0);
             return h.albedo * float(GI_EMISSION);
         }
+
+        hitAlbedo = h.albedo;
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0) {
@@ -123,6 +126,7 @@ vec3 giRayRadiance(
         wasHit = true;
         hitCategory = VOXEL_OPAQUE;
         hitNormal = ssrtHitNormal;
+        hitAlbedo = vec3(0.0);
         
         // Approximate the hit UV to sample the radiance buffer
         vec4 clipEnd = gbufferProj * (gbufferMV * vec4(hitPos - camPos, 1.0));
@@ -138,6 +142,7 @@ vec3 giRayRadiance(
     hitCategory = VOXEL_AIR;
     hitPos      = h.pos;
     hitNormal   = -dir; 
+    hitAlbedo   = vec3(0.0);
     #ifdef GI_SKY_DIRECTIONAL
         vec3 skyRad = sampleSkyLut(skyLut, dir) * GI_SKY_BRIGHTNESS * skyOcc;
     #else
@@ -160,8 +165,8 @@ vec3 computeGI(
 
     for (int i = 0; i < GI_SAMPLES; i++) {
         vec3 dir = cosHemisphereDir(normal, randFloat(seed), randFloat(seed));
-        vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat;
-        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap);
+        vec3 hitPos; vec3 hitNormal; vec3 hitAlbedo; bool wasHit; uint hitCat;
+        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, skyLut, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, hitAlbedo, wasHit, hitCat, skyLightmap);
     }
     return acc / float(GI_SAMPLES);
 }

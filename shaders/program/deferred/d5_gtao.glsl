@@ -74,9 +74,12 @@ void main() {
     float linDepth = getDepth(depth0);
 
     // ---- Temporal reprojection (camera-relative world space, mirrors d0_restir) ----
+    // Per-pixel AO history length used to live in colortex14.z, but colortex14 is now
+    // the irradiance cache atlas. AO uses a fixed exponential blend instead (loses some
+    // disocclusion-snap responsiveness; the depth gate below still rejects on big jumps,
+    // and the aoDelta-based reject still cuts ghosting on moving contact shadows).
     float aoOut   = aoRaw;
     vec3  bentOut = bentWorld;
-    float aoHist  = 1.0;
 
     vec3 worldRel     = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
     vec3 worldPrevRel = worldRel;
@@ -93,30 +96,25 @@ void main() {
 
     if (all(greaterThanEqual(uvPrev, vec2(0.0))) && all(lessThan(uvPrev, vec2(1.0)))) {
         vec4 hist = texture(colortex12, uvPrev);
-        float prevHistLen = texture(colortex14, uvPrev).z;
         float prevDepth = hist.z;
         // Disocclusion: reject history when the surface depth jumped.
         float depthTol = 0.05 * linDepth + 0.10;
         if (abs(prevDepth - linDepth) < depthTol) {
-            aoHist = min(prevHistLen + 1.0, float(AO_ACCUM_FRAMES));
+            // Fixed exponential blend (effective history ~AO_ACCUM_FRAMES frames).
+            float alpha = 1.0 / float(AO_ACCUM_FRAMES);
 
             // Loosen blending when AO changes a lot (moving contact shadows) to cut ghosting.
             float aoDelta = abs(aoRaw - hist.w);
-            float reject = clamp(aoDelta * 4.0 - 0.5, 0.0, 1.0);
-            aoHist = mix(aoHist, 1.0, reject * reject);
+            float reject  = clamp(aoDelta * 4.0 - 0.5, 0.0, 1.0);
+            alpha = mix(alpha, 1.0, reject * reject);
 
-            float alpha = 1.0 / aoHist;
             aoOut   = mix(hist.w, aoRaw, alpha);
             bentOut = normalize(mix(octDecodeNormal(hist.xy), bentWorld, alpha));
         }
     }
 
-    // Preserve ReSTIR normals in colortex14.xy while writing AO history to .z
-    vec2 restirNormals = texture(colortex14, texCoord).xy;
-
-    /* RENDERTARGETS: 12,14 */
+    /* RENDERTARGETS: 12 */
     gl_FragData[0] = vec4(octEncodeNormal(bentOut), linDepth, clamp(aoOut, 0.0, 1.0));
-    gl_FragData[1] = vec4(restirNormals, aoHist, 0.0);
 }
 
 #endif

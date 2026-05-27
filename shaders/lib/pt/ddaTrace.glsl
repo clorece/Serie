@@ -74,11 +74,14 @@ bool traceVoxelRay(
     vec3 gridOrigin = floor(camPos) - vec3(VOXEL_RADIUS);
     vec3 localPos   = worldPos - gridOrigin;
 
-    // Fast check: if the origin is far outside the grid, skip the trace entirely.
     if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) {
         // Fallback to screen-space for rays starting outside voxel volume
+      #ifndef IC_BACK_RESTIR
         vec3 dummyA, dummyN, dummyP;
         return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);
+      #else
+        return false;
+      #endif
     }
 
     ivec3 vox     = ivec3(floor(localPos));
@@ -98,8 +101,12 @@ bool traceVoxelRay(
         if (tEntry >= maxDist) break;
         if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, ivec3(VOXEL_GRID_SIZE)))) {
             // Escape to screen-space fallback
+          #ifndef IC_BACK_RESTIR
             vec3 dummyA, dummyN, dummyP;
             return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);
+          #else
+            return false;
+          #endif
         }
 
         uint vt = sampleVoxel(atlas, vox);

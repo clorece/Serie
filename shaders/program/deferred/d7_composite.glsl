@@ -56,11 +56,13 @@ in vec3 lightVector;
 
 uniform float rainStrength;
 uniform vec3 cameraPosition;
+uniform vec3 previousCameraPosition;
 uniform sampler2D colortex0;   // raw albedo
 uniform sampler2D colortex1;   // view normals
 uniform sampler2D colortex2;   // lightmap
 uniform sampler2D colortex3;   // denoised indirect (.rgb)
 uniform sampler2D colortex9;   // linear depth (.r) + luminance moments (.g, .b) + SSCS (.a)
+uniform sampler2D colortex14;  // irradiance cache atlas (.rgb = sphere irradiance, .a = histLen)
 uniform sampler2D colortex12;  // GTAO: bent normal (.xy oct) + linear depth (.z) + AO (.w)
 uniform sampler2D colortex4;   // material
 uniform sampler2D depthtex0;
@@ -81,6 +83,10 @@ vec3 clipSpace;
 
 #include "/lib/util/dither.glsl"
 #include "/lib/util/positions.glsl"
+
+#if IC_DEBUG_VIEW > 0
+    #include "/lib/pt/ircache.glsl"
+#endif
 
 vec3 getLightmap(vec3 l) {
     l.x = 1.0 * pow(l.x, 5.06);
@@ -308,7 +314,9 @@ void main() {
         #endif
         
         // Prevent skylight illumination from the path tracer from illuminating sunlit terrain
+      #ifndef IC_BACK_RESTIR
         gi *= vec3(1.0) - (directShadow * max(dot(normal, lightVector), 0.0));
+      #endif
 
         indirect = gi;
     #elif defined(AO_GTAO)
@@ -378,10 +386,65 @@ void main() {
         vec3 debugIllum = texture(colortex3, texCoord).rgb;
         /* RENDERTARGETS: 0 */
         gl_FragData[0] = vec4(debugIllum, 1.0);
-    #else
-        /* RENDERTARGETS: 0 */
-        gl_FragData[0] = vec4(color, 1.0);
+        return;
     #endif
+
+    // DEBUG VIEW: irradiance cache. Turning IC_DEBUG_VIEW off costs nothing
+    // (the whole block is preprocessed out and the ircache.glsl include above
+    // is also gated by the same macro).
+    #if IC_DEBUG_VIEW > 0
+    {
+        vec3 dbg = color;
+        ivec2 px = ivec2(gl_FragCoord.xy);
+
+        // colortex10 was written last frame anchored at previousCameraPosition;
+        // pass that origin so the debug view matches what d0 actually reads.
+        vec3 dbgPrevOrigin = icGridOrigin(previousCameraPosition);
+
+        #if IC_DEBUG_VIEW == 1
+            // Per-pixel: trilinearly sample the cache at this surface's world position.
+            if (depth0 < 1.0) {
+                vec3 worldRel = getWorldPosition().xyz;
+                vec3 worldAbs = worldRel + cameraPosition;
+                vec3 nWorld   = normalize(mat3(gbufferModelViewInverse) * normal);
+                float bias    = float(IC_NORMAL_BIAS) / 100.0;
+                vec3 voxelGridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
+                vec4 ic = icSampleTrilinear(colortex14, worldAbs + nWorld * bias, nWorld, dbgPrevOrigin, colortex7, voxelGridOrigin);
+                dbg = ic.rgb;
+            } else {
+                dbg = vec3(0.0);
+            }
+        #elif IC_DEBUG_VIEW == 2
+            // Raw atlas overlay in the top-left corner. The rest of the screen
+            // keeps showing the lit scene so you can compare side-by-side.
+            ivec3 pc;
+            if (icAtlasToCoord(px, pc)) {
+                dbg = texelFetch(colortex14, px, 0).rgb;
+            }
+        #elif IC_DEBUG_VIEW == 3
+            // Probe convergence heatmap. Lerp red->green by histLen / IC_HISTORY_MAX
+            // so fresh probes (no history) glow red and converged ones go green.
+            if (depth0 < 1.0) {
+                vec3 worldRel = getWorldPosition().xyz;
+                vec3 worldAbs = worldRel + cameraPosition;
+                vec3 nWorld   = normalize(mat3(gbufferModelViewInverse) * normal);
+                vec3 voxelGridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
+                vec4 ic = icSampleTrilinear(colortex14, worldAbs, nWorld, dbgPrevOrigin, colortex7, voxelGridOrigin);
+                float t = clamp(ic.a / float(IC_HISTORY_MAX), 0.0, 1.0);
+                dbg = mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), t);
+            } else {
+                dbg = vec3(0.0);
+            }
+        #endif
+
+        /* RENDERTARGETS: 0 */
+        gl_FragData[0] = vec4(dbg, 1.0);
+        return;
+    }
+    #endif
+
+    /* RENDERTARGETS: 0 */
+    gl_FragData[0] = vec4(color, 1.0);
 }
 
 #endif

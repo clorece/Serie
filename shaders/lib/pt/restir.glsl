@@ -70,18 +70,21 @@ void finalizeReservoir(inout Reservoir r) {
 }
 
 // Pack/unpack across the persistent reservoir buffers:
-//   c10 = radiance.rgb + M    c11 = samplePos.xyz + W    c14 = octahedral sampleNormal (.xy)
-Reservoir readReservoir(sampler2D c10, sampler2D c11, sampler2D c14, vec2 uv) {
+//   c10  = radiance.rgb + M
+//   c11  = samplePos.xyz + W
+//   nrm  = primary normal (.xy) + reservoir sample-hit normal (.zw octahedral); colortex15.
+//   The sample-normal moved off colortex14 (now the IC atlas) into colortex15's spare lanes.
+Reservoir readReservoir(sampler2D c10, sampler2D c11, sampler2D nrm, vec2 uv) {
     ivec2 texel = ivec2(uv * vec2(viewWidth, viewHeight));
     vec4 a = texelFetch(c10, texel, 0);
     vec4 b = texelFetch(c11, texel, 0);
-    vec4 c = texelFetch(c14, texel, 0);
+    vec4 c = texelFetch(nrm, texel, 0);
     Reservoir r;
     r.radiance     = a.rgb;
     r.M            = a.a;
     r.samplePos    = b.xyz;
     r.W            = b.a;
-    r.sampleNormal = octDecodeNormal(c.xy);
+    r.sampleNormal = octDecodeNormal(c.zw);
     r.wSum         = 0.0;
     return r;
 }
