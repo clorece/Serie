@@ -64,7 +64,8 @@ vec3 getLightmap(vec3 l) {
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
     float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
-    float blocklightSuppression = mix(1.0, 0.0, sunUp * l.y); // l.y is sky lightmap value
+    float skyExposure = smoothstep(0.6, 0.9, l.y);
+    float blocklightSuppression = mix(1.0, 0.0, sunUp * skyExposure);
 
     vec3 torchLighting = l.x * torchColor * blocklightSuppression;
     vec3 skyLighting = l.y * ambientColor;

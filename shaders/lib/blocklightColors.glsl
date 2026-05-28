@@ -56,9 +56,9 @@ vec4 GetSpecialBlocklightColor(int mat) {
 				if (mat < 8) {
 					if (mat == 2) return vec4(fireSpecialLightColor, 0.0); // Torch
 					#ifndef END
-						if (mat == 3) return vec4(vec3(1.0, 1.0, 1.0) * 4.0, 0.0); // End Rod - This is the base for all lights. Total value 12
+						if (mat == 3) return vec4(vec3(1.0, 1.0, 1.0) * 0.25, 0.0); // End Rod - This is the base for all lights. Total value 12
 					#else
-						if (mat == 3) return vec4(vec3(1.25, 0.5, 1.25) * 4.0, 0.0); // End Rod in the End dimension
+						if (mat == 3) return vec4(vec3(1.25, 0.5, 1.25) * 0.1, 0.0); // End Rod in the End dimension
 					#endif
 					if (mat == 4) return vec4(vec3(0.7, 1.5, 2.0) * 3.0, 0.0); // Beacon
 					if (mat == 5) return vec4(fireSpecialLightColor, 0.0); // Fire
@@ -78,7 +78,7 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					if (mat == 15) return vec4(fireSpecialLightColor, 0.0); // Campfire:Lit
 					if (mat == 16) return vec4(vec3(1.7, 0.9, 0.4) * 4.0, 0.0); // Redstone Lamp:Lit
 					if (mat == 17) return vec4(vec3(1.7, 0.9, 0.4) * 2.0, 0.0); // Respawn Anchor:Lit
-					if (mat == 18) return vec4(vec3(1.0, 1.25, 1.5) * 3.4, 0.0); // Sea Lantern
+					if (mat == 18) return vec4(vec3(1.0, 1.25, 1.5) * 2.4, 0.0); // Sea Lantern
 					if (mat == 19) return vec4(vec3(3.0, 0.9, 0.2) * 3.0, 0.0); // Shroomlight
 				} else {
 					if (mat == 20) return vec4(vec3(1.25, 0.9, 0.4) * 2.8, 0.0); // Cave Vines:With Glow Berries
@@ -106,7 +106,7 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					#else
 						if (mat == 34) return vec4(vec3(0.4, 0.55, 0.55), 0.0); // Glow Lichen vanilla
 					#endif
-					if (mat == 35) return vec4(redstoneSpecialLightColor * 0.25, 0.0); // Redstone Torch
+					if (mat == 35) return vec4(redstoneSpecialLightColor * 0.05, 0.0); // Redstone Torch
 					if (mat == 36) return vec4(vec3(0.325, 0.15, 0.425) * 5.0, 0.05); // Amethyst Cluster, Amethyst Buds, Calibrated Sculk Sensor
 					if (mat == 37) return vec4(lavaSpecialLightColor * 0.1, 0.1); // Magma Block
 				}

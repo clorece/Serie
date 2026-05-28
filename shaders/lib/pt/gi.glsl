@@ -115,7 +115,8 @@ vec3 giRayRadiance(
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
     float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
-    float blocklightSuppression = mix(1.0, 0.0, sunUp * skyLightmap);
+    float skyExposure = smoothstep(0.6, 0.9, skyLightmap);
+    float blocklightSuppression = mix(1.0, 0.0, sunUp * skyExposure);
     rayEmission *= blocklightSuppression;
 
     // Smooth the lightmap to avoid harsh transitions in the PT
