@@ -22,7 +22,7 @@
 #define TAA_BLEND_WEIGHT 0.94 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
 
 #define BLOOM
-#define BLOOM_STRENGTH 0.015 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
+#define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
 #define EXPOSURE 3.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
@@ -40,7 +40,7 @@
 
 #define LIGHTING_DIRECT 110   // [50 75 100 110 125 150 200]
 #define LIGHTING_INDIRECT 70  // [25 40 55 70 85 100 125 150]
-#define LIGHTING_AO_FULL
+//#define LIGHTING_AO_FULL
 
 //#define WIND_MOVEMENT // WIP
 
@@ -48,11 +48,9 @@
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  24   // [12 16 24 32 48] TODO might also be dead due to ReSTIR
 #define GI_STRENGTH 200 // [25 50 75 100 150 200]
-#define GI_SKY_DIRECTIONAL
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun TODO rework this so that it is only daytime
-#define SKY_LUT_RES 256       // octahedral sky-LUT side length in texels (sharper sky gradient = higher)
-#define SKY_LUT_STEPS 4       // [4 6 8 12] atmosphere primary-march steps for the sky LUT 
+#define SKY_LUT_STEPS 4       // [4 6 8 12] atmosphere primary-march steps (used by lib/fragment/sky.glsl for the main sky render)
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
 #define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] max blocks the sky-probe DDA ray travels from a bounce surface
 #define GI_FLOOR 100    // [0 50 100 150 200] TODO probably dont need this as a macro
@@ -89,17 +87,15 @@
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] clamp on the unbiased reservoir weight W 
 #define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] absolute firefly clamp on the resolved GI
 
-#define AO_GTAO
-#define AO_GI_STRENGTH 70    // [0 25 50 70 100]
+// Ray-traced AO (RTAO): short cosine rays through the voxel atlas, computed in
+// d0_restir alongside the GI pass and temporally accumulated by d0_accum into
+// colortex9.a. Replaces the old screen-space GTAO (which lived in colortex12 +
+// a dedicated d5_gtao pass). Cheaper, single design, no separate buffer.
+#define AO_RTAO
+#define AO_GI_STRENGTH 50    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
-#define GTAO_SLICES 2        // [1 2 3 4] slices per pixel
-#define GTAO_HORIZON_STEPS 4 // [2 3 4 6 8] horizon march steps per slice direction
-#define GTAO_RADIUS 0.5      // [1.0 1.5 2.0 3.0 4.0]
-#define GTAO_FALLOFF 1.0    // [0.5 0.6 0.75 0.85]
-#define AO_MULTIBOUNCE       // Jimenez multibounce compensation
-#define AO_BENT_NORMAL       // bent normal for directional skylight
-#define AO_DENOISE
-#define AO_DENOISE_RADIUS 3  // [1 2 3] 
+#define RTAO_SAMPLES 1       // [2 3 4 6 8] cosine rays fired per pixel per frame
+#define RTAO_RADIUS  1       // [1 2 3 4 6] AO ray length in blocks (short = contact AO)
 
 //#define VOXEL_AO
 #define AO_SAMPLES 2   // [2 4 6 8] 

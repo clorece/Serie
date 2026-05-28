@@ -44,7 +44,10 @@ in vec3 lightVector;
 
 
 float depth0 = texture(depthtex0, texCoord).r;
-vec3 material = texture(colortex4, texCoord).rgb;
+// Material code is packed into colortex1.a (RGB10_A2 -> 2-bit, 4 codes):
+// 0.0=normal, 1/3=foliage, 2/3=grass, 1.0=emissive. Point-sample (texelFetch)
+// so bilinear filtering can't blend two codes together.
+float material = texelFetch(colortex1, ivec2(gl_FragCoord.xy), 0).a;
 vec3 normal = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
 vec3 lightmap = texture(colortex2, texCoord).rgb;
 
@@ -63,12 +66,12 @@ vec3 getLightmap(vec3 l) {
 float getNdotL(vec3 n, vec3 l) {
     float dotNL = dot(n, l);
 
-    // Foliage (1.0: leaves, 1.1: grass, flowers, crops, vines)
-    // Disables directional shading for a flat, translucent look.
-    //if (material.x > 0.9 && material.x < 1.2) {
-        //return max(dotNL, 0.0) * lightScatter * viewScatter;
-    //    return 0.1;
-    //}
+    // Foliage check (material codes 1/3 = leaves, 2/3 = grass)
+    if (material > 0.16 && material < 0.83) {
+        // Wrap lighting for foliage/grass to simulate translucency
+        // and fix harsh shadows on crossed-quad models.
+        return max(dotNL * 0.5 + 0.5, 0.0);
+    }
 
     // Opaque Disney (Burley) Diffuse
     // Adds a retro-reflective peak and smoother falloff based on surface roughness.
@@ -142,41 +145,6 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 
 #include "/lib/fragment/shadows.glsl"
 
-#ifdef AO_DENOISE
-// Depth-aware bilateral filter over the GTAO buffer (colortex12). The horizon march uses few
-// steps + per-pixel dither, so after temporal accumulation some high-frequency noise / stepping
-// remains; this resolves it spatially without bleeding across depth edges. colortex12 stores
-// .xy = oct bent normal, .z = linear depth, .w = AO.
-vec4 sampleAOFiltered(vec2 uv) {
-    vec4  c  = texture(colortex12, uv);
-    float cd = c.z;                          // center linear depth
-    if (cd <= 0.0 || cd > 1e4) return c;     // sky / invalid: leave as-is
-
-    vec3  cBent   = octDecodeNormal(c.xy);
-    float aoSum   = c.w;
-    vec3  bentSum = cBent;
-    float wSum    = 1.0;
-
-    for (int y = -AO_DENOISE_RADIUS; y <= AO_DENOISE_RADIUS; y++) {
-        for (int x = -AO_DENOISE_RADIUS; x <= AO_DENOISE_RADIUS; x++) {
-            if (x == 0 && y == 0) continue;
-            vec4 sm = texture(colortex12, uv + vec2(x, y) * texelSize * 2.0);
-            if (sm.z <= 0.0 || sm.z > 1e4) continue; // skip sky / invalid neighbours
-            vec3 nBent = octDecodeNormal(sm.xy);
-            // edge stops: linear depth + bent-normal similarity, plus a spatial gaussian.
-            float dw = exp2(-abs(sm.z - cd) / max(0.04 * cd + 0.05, 1e-3) * 6.0);
-            float nw = pow(max(dot(cBent, nBent), 0.0), 8.0);
-            float gw = exp2(-float(x * x + y * y) * 0.5);
-            float w  = dw * nw * gw;
-            aoSum   += sm.w * w;
-            bentSum += nBent * w;
-            wSum    += w;
-        }
-    }
-    return vec4(octEncodeNormal(normalize(bentSum)), cd, aoSum / wSum);
-}
-#endif
-
 #ifdef PT_DEBUG_VOXELS
 #include "/lib/pt/voxelData.glsl"
 #endif
@@ -235,33 +203,47 @@ void main() {
     float diffuse = getNdotL(normal, lightVector);
     float skyOcc = sqrt(lightmap.y); // Loosened modulation: allows leakage until nearly 0 lightmap
     
-    vec3 directShadow = getShadow();
+    vec3 directShadow = getShadow(material);
     if (depth0 < 1.0) {
         float ditherVal = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
         vec3 viewPos = getFragPosition().xyz;
         // Combine standard shadow map with infinite screen-space shadows.
-        // This provides micro-contact detail and infinite-distance mountain shadows.
-        directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal);
+        // Disabled on foliage to allow shadow-map offset subsurface scattering.
+        if (!(material > 0.16 && material < 0.83)) {
+            directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal);
+        }
     }
     vec3 direct = diffuse * lightColor * directShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
 
-    // ---- Screen-space contact AO (GTAO, from d5_gtao) ----
-    // The voxel GI already captures macro occlusion; this adds the sub-voxel contact
-    // darkening the 1-block grid cannot resolve. Multiplied onto the indirect term only
-    // (with a small radius) so it complements rather than double-counts the GI.
+    // Shadowmap-based Subsurface Scattering for foliage
+    if (material > 0.16 && material < 0.83 && depth0 < 1.0) {
+        vec3 viewPos = getFragPosition().xyz;
+        float VdotL = max(dot(normalize(-viewPos), lightVector), 0.0);
+        
+        // Allium uses a very sharp highlight for SSS: pow(max(VdotL, 0.0), 10.0) * 0.6
+        float sssPhase = pow(VdotL, 10.0) * 0.6;
+        
+        // We only apply SSS to the unlit faces (backfaces). 
+        float NdotL = max(dot(normal, lightVector), 0.0);
+        float backfaceMask = clamp(1.0 - NdotL, 0.0, 1.0);
+        
+        // directShadow here contains the offset shadow map. If it's > 0 on the backface,
+        // light is successfully passing through the leaf.
+        vec3 sssLight = lightColor * directShadow * sssPhase * backfaceMask * (1.0 - rainStrength * 0.75);
+        
+        // We multiply by lightmap.y (sky access) to prevent glowing deep in caves
+        direct += sssLight * lightmap.y * 2.5; // boosted to match Allium's lightHighlight * 2.5 multiplier
+    }
+
+    // ---- Ray-traced contact AO ----
+    // Voxel GI captures macro occlusion; RTAO (short cosine rays in the voxel atlas, computed
+    // in d0_restir, temporally accumulated by d0_accum into colortex9.a) adds the sub-voxel
+    // contact darkening the 1-block grid cannot resolve. Multiplied onto the indirect term
+    // so it complements rather than double-counts the GI.
     float aoTerm = 1.0;
-    vec3  bentNormalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
-    #ifdef AO_GTAO
+    #ifdef AO_RTAO
         if (depth0 < 1.0) {
-            #ifdef AO_DENOISE
-                vec4 aoData = sampleAOFiltered(texCoord);
-            #else
-                vec4 aoData = texture(colortex12, texCoord);
-            #endif
-            aoTerm = aoData.w;
-            #ifdef AO_BENT_NORMAL
-                bentNormalWorld = octDecodeNormal(aoData.xy);
-            #endif
+            aoTerm = texture(colortex9, texCoord).a;
         }
     #endif
 
@@ -269,28 +251,21 @@ void main() {
     vec3 indirect;
     #if defined(VOXEL_GI)
         vec3 gi = texture(colortex3, texCoord).rgb;
-        #ifdef AO_GTAO
+        #ifdef AO_RTAO
             #ifdef LIGHTING_AO_FULL
                 gi *= aoTerm;                                       // ambient occlusion fully occludes the ambient term
             #else
                 gi *= mix(1.0, aoTerm, float(AO_GI_STRENGTH) / 100.0);
             #endif
         #endif
-        
+
         // Prevent skylight illumination from the path tracer from illuminating sunlit terrain
         gi *= vec3(1.0) - (directShadow * max(dot(normal, lightVector), 0.0));
 
         indirect = gi;
-    #elif defined(AO_GTAO)
-        // GI off, GTAO on: ambient from lightmap, occluded by contact AO.
-        #ifdef AO_BENT_NORMAL
-            float skyFacing  = clamp(bentNormalWorld.y * 0.5 + 0.5, 0.0, 1.0);
-            vec3  torchLight = pow(clamp(lightmap.x, 0.0, 1.0), 5.06) * torchColor;
-            vec3  skyLight   = ambientColor * lightmap.y * skyFacing;
-            indirect = (torchLight + skyLight + vec3(ambientStrength)) * aoTerm;
-        #else
-            indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
-        #endif
+    #elif defined(AO_RTAO)
+        // GI off, RTAO on: lightmap ambient occluded by contact AO. No bent normal (kept scalar).
+        indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
     #elif defined(VOXEL_AO)
         float ao = texture(colortex3, texCoord).r;
         float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
@@ -300,7 +275,7 @@ void main() {
     #endif
 
     // ---- Optional contact AO on direct sunlight ----
-    #if defined(AO_GTAO) && (AO_DIRECT_STRENGTH > 0)
+    #if defined(AO_RTAO) && (AO_DIRECT_STRENGTH > 0)
         direct *= mix(1.0, aoTerm, float(AO_DIRECT_STRENGTH) / 100.0);
     #endif
 
@@ -311,7 +286,7 @@ void main() {
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
     color = color * (direct + indirect);
 
-    if (material.x > 1.9) {
+    if (material > 0.83) { // emissive code = 1.0 in colortex1.a; threshold halfway between 2/3 and 1.0
         color *= 4.0; // emissive boost for bloom
     }
 

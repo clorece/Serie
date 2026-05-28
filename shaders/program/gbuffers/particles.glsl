@@ -45,6 +45,10 @@ in vec4 color;
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;
     
+    if (albedo.a < 0.1) {
+        discard;
+    }
+    
     /* DRAWBUFFERS:012 */
     gl_FragData[0] = albedo;
     gl_FragData[1] = vec4(normal * 0.5 + 0.5, 0.0); // .a = 0 (default material; see terrain.glsl colortex1.a packing)

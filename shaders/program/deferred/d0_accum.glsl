@@ -103,6 +103,10 @@ void main() {
     vec3  worldRel = getWorldPosition().xyz;
     
     vec3  rawGI = texture(colortex3, texCoord).rgb;
+    // RTAO raw scalar lives in colortex14.w (written by d0_restir alongside the
+    // sample-hit normal in .xy). We blend it with the previous frame's AO history
+    // (carried in c9.a) using the same reproject/rejection as the GI accumulation.
+    float rawAO = texture(colortex14, texCoord).w;
     
     // --- Pre-Accumulation Firefly / Outlier Rejection ---
     // We must check depth and normals so we don't accidentally blur
@@ -209,7 +213,6 @@ void main() {
         rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);
     #endif
 
-    vec4  p6    = texture(colortex6, texCoord);
     float lr    = dot(rawGI, vec3(0.2126, 0.7152, 0.0722)); // Use clamped luma for moments
 
     // Reproject
@@ -236,6 +239,7 @@ void main() {
     float giHist    = 1.0;
     float giM1      = lr;
     float giM2      = lr * lr;
+    float blendedAO = rawAO;
 
     // Tighten screen bounds to prevent bilinear/fetch sampling off the edge of the screen
     vec2 padding = 1.5 * texelSize;
@@ -276,13 +280,16 @@ void main() {
                 // Track the raw variance so the GI_TEMPORAL_REJECT macro works properly
                 giM1 = mix(p9_tmp.g, lr, a);
                 giM2 = mix(p9_tmp.b, lr * lr, a);
+                // AO uses the same temporal alpha as GI. p9_tmp.a is the previous-frame
+                // accumulated AO (written by THIS pass on the previous frame).
+                blendedAO = mix(p9_tmp.a, rawAO, a);
             }
         }
     }
 
     /* RENDERTARGETS: 8,9 */
     gl_FragData[0] = vec4(blendedGI, giHist);
-    gl_FragData[1] = vec4(depth0, giM1, giM2, 1.0);
+    gl_FragData[1] = vec4(depth0, giM1, giM2, blendedAO);
 }
 
 #endif

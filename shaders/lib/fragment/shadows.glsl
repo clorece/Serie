@@ -23,7 +23,7 @@ float shadow2DLinear(sampler2D shadowTex, vec2 uv, float receiverDepth) {
     return mix(shadowBottom, shadowTop, f.y);
 }
 
-vec3 getShadow() {
+vec3 getShadow(float material) {
     vec4 worldPos = getWorldPosition();
     vec3 playerPos = worldPos.xyz;
     
@@ -33,14 +33,16 @@ vec3 getShadow() {
     // based on the camera's view angle, causing the shadow boundary lines to slide and rotate as you pan.
     float NdotL = max(dot(normal, lightVector), 0.0);
     
-    float distanceBias = pow(dot(playerPos, playerPos), 0.75);
-    distanceBias = 0.12 + 0.0008 * distanceBias;
+    float distance = length(playerPos);
+    float distanceBias = 0.02 + 0.001 * distance;
     
     // We reconstruct the world normal from the view normal to apply the positional bias in world space
     vec3 normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
-    vec3 positionBias = normalWorld * distanceBias * (2.0 - 0.95 * NdotL);
+    vec3 lightWorld = normalize(mat3(gbufferModelViewInverse) * lightVector);
     
-    // Push the player-relative world position along the normal
+    // Push the player-relative world position along the normal and the light vector to prevent peter panning
+    vec3 positionBias = (normalWorld * 1.5 + lightWorld * 0.5) * distanceBias * (1.5 - NdotL);
+    
     worldPos.xyz += positionBias;
     
     vec4 shadowPos = toShadowSpace(worldPos);
@@ -63,6 +65,11 @@ vec3 getShadow() {
     bias = clamp(bias, 0.00005, 0.004 * resolutionScale); 
 
     float receiverDepth = shadowPos.z - bias;
+    
+    // Subsurface Scattering Offset (Allium style)
+    if (material > 0.16 && material < 0.83) {
+        receiverDepth -= 0.000175;
+    }
 
     #ifdef SHADOW_FILTER
         // 3. High-Frequency Temporal Dither using Interleaved Gradient Noise (perfect for TAA blending)
@@ -122,8 +129,10 @@ vec3 getShadow() {
         }
 
         // Artistic Foliage adjustment
-        if (material.x > 0.9) {
-            filterRadius *= 1.5;
+        if (material > 0.16 && material < 0.83) {
+            // Force a large minimum blur radius for subsurface scattering
+            // to prevent sharp self-shadowing from nearby leaves.
+            filterRadius = max(filterRadius, maxFilterRadius * 0.8);
         }
 
         // Removed the dynamic early-out for numBlockers == 0.

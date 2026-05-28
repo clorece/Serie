@@ -8,20 +8,21 @@ const int RGBA16F = 5;
 const int RGBA32F = 7;
 const int RGBA8UI = 11;
 
-const int colortex1Format = RGB10_A2; // View normals
+const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
-const int colortex3Format = RGBA16F; // gaussian blurred bloom color
-const int colortex4Format = RGBA8;   // material data
+const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred)
+// colortex4 deleted — material code now packed into colortex1.a (was the only consumer).
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
-const int colortex6Format = RGBA16F; // horizontally blurred bloom input
+const int colortex6Format = RGBA16F; // SVGF a-trous ping-pong B (deferred). Bloom no longer uses this.
 const int colortex7Format = RGBA8UI; // voxel data atlas (.x = block type, .y = light level, .z = emissive light, .w = unused)
-const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated irradiance, .a = history length; colortex9 .r = linear depth)
-const int colortex9Format = RGBA16F; // temporal AO history (.r = accumulated AO, .g = history length, .b = linear depth)
+const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated irradiance, .a = history length)
+const int colortex9Format = RGBA16F; // SVGF moments (.r = linear depth, .g = luma M1, .b = luma M2)
 const int colortex10Format = RGBA32F; // ReSTIR reservoir radiance.rgb + M
 const int colortex11Format = RGBA32F; // ReSTIR reservoir samplePos.xyz + W
-const int colortex12Format = RGBA16F; // GTAO
-const int colortex13Format = RGBA16F; // skyLut
-const int colortex14Format = RGBA16F; // ReSTIR reservoir sample-hit normal
+// colortex12 deleted — RTAO replaces GTAO; raw AO from d0_restir lives in c14.w
+// and the temporally-accumulated AO lives in c9.a.
+// colortex13 deleted — GI rays use flat skyColor instead of the directional LUT.
+const int colortex14Format = RGBA16F; // .xy = ReSTIR reservoir sample-hit normal, .w = raw RTAO scalar
 const int colortex15Format = RGBA16F; // temporal normal history
 
 const bool colortex3Clear = true;
@@ -32,8 +33,6 @@ const bool colortex8Clear = false;
 const bool colortex9Clear = false;
 const bool colortex10Clear = false;
 const bool colortex11Clear = false;
-const bool colortex12Clear = false;
-const bool colortex13Clear = false;
 const bool colortex14Clear = false;
 const bool colortex15Clear = false;
 
@@ -48,6 +47,10 @@ const bool shadowHardwareFiltering = false;
 const bool shadowtex1Mipmap = false;
 const bool shadowtex1Nearest = false;
 
-// TODO free up what buffers we can free by merging, or getting rid of dead buffers
-// maybe colortex3 and colortex6 can be merged into one bloom buffer
+// Required for the multi-scale bloom atlas (mip-sampling colortex0 at LODs 2..8).
+const bool colortex0MipmapEnabled = true;
+
+// TODO colortex6 is now SVGF-only (no longer touched by bloom). To delete it entirely,
+// refactor the a-trous chain (d1/d3/d5_denoise) to single-buffer ping-pong on colortex3.
+// Watch the c3 ping-pong parity warning when doing that.
 #endif

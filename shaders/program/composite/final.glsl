@@ -17,6 +17,7 @@ in vec2 texCoord;
 
 #include "/lib/util/common.glsl"
 #include "/lib/util/dither.glsl"
+#include "/lib/post/bloom.glsl"
 #include "/lib/post/tonemap.glsl"
 
 void main() {
@@ -24,7 +25,7 @@ void main() {
     // SCENE & EXPOSURE FETCH
     // ----------------------------------------------------
     vec3 sceneColor = texture(colortex0, texCoord).rgb;
-    
+
     // Apply dynamic camera-like temporal auto-exposure with manual bias
     float totalExposure = EXPOSURE;
     #ifdef AUTO_EXPOSURE
@@ -33,16 +34,18 @@ void main() {
         totalExposure *= autoExposure;
     }
     #endif
-    
+
     sceneColor *= totalExposure;
 
     // ----------------------------------------------------
-    // BLOOM BLENDING
+    // BLOOM BLENDING  (multi-scale atlas — see lib/post/bloom.glsl)
     // ----------------------------------------------------
+    // ReadBloomAtlas already unpacks the gamma-4 storage back to linear HDR.
+    // Multiply by exposure so the bloom tracks the scene's auto-exposure, then
+    // mix (not add) into the scene — bounded, doesn't blow out highlights.
     #ifdef BLOOM
-    vec3 bloomColor = texture(colortex3, texCoord).rgb;
-    // Apply exposure to bloom since it was extracted from raw HDR scene color
-    sceneColor += (bloomColor * totalExposure) * BLOOM_STRENGTH;
+    vec3 bloomColor = ReadBloomAtlas(colortex3, texCoord) * totalExposure;
+    sceneColor = mix(sceneColor, bloomColor, BLOOM_STRENGTH);
     #endif
 
     vec3 color = sceneColor;

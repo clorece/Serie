@@ -52,7 +52,7 @@ void main() {
     
     /* DRAWBUFFERS:01 */
     gl_FragData[0] = albedo;
-    gl_FragData[1] = vec4(normal * 0.5 + 0.5, 1.0);
+    gl_FragData[1] = vec4(normal * 0.5 + 0.5, 0.0); // .a = 0 (default material; see terrain.glsl colortex1.a packing)
 }
 
 #endif

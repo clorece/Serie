@@ -24,25 +24,6 @@ vec3 getMoonDisc(vec3 rd, vec3 moonDir, vec3 transmittance) {
 #define SKY_LUT_STEPS 6
 #endif
 
-// Disc-free sky for the GI/skylight LUT: atmospheric scattering + ground blend, but NO
-// sun/moon discs. The sun is handled separately as direct light, so including the disc in
-// the skylight would double-count it (and spawn fireflies in the GI). Mirrors getSky's
-// scattering + ground blend exactly so the indirect skylight matches the displayed sky.
-vec3 getSkyNoDisc(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
-    vec3 upVec = vec3(0.0, 1.0, 0.0);
-    vec3 scatterRd = normalize(vec3(rd.x, max(rd.y, 0.0), rd.z));
-
-    vec3 transmittance;
-    vec3 skyColor = GetAtmosphere(scatterRd, upVec, sunDir, moonDir, eyeAltitude, transmittance, SKY_LUT_STEPS, 4);
-
-    float sunZenith = clamp(sunDir.y, 0.0, 1.0);
-    vec3 noonGround = vec3(0.9, 0.95, 1.0) * sunZenith;
-    vec3 groundColor = mix(skyColor * 0.4, noonGround, pow(sunZenith, 2.0));
-    float horizon = smoothstep(-0.6, 0.05, rd.y);
-
-    return mix(groundColor, skyColor, horizon);
-}
-
 vec3 getSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     vec3 upVec = vec3(0.0, 1.0, 0.0);
     

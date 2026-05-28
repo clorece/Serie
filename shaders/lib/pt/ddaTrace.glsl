@@ -4,7 +4,7 @@
 #include "/lib/pt/voxelData.glsl"
 
 // Screen-Space Ray Tracing Fallback (Optimized 2D Line March)
-bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, vec3 camPos, mat4 gbufferProj, mat4 gbufferMV, sampler2D depthtex0, out vec3 hitAlbedo, out vec3 hitNormal, out vec3 hitPos) {
+bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, vec3 camPos, mat4 gbufferProj, mat4 gbufferMV, sampler2D depthtex0, float dither, out vec3 hitAlbedo, out vec3 hitNormal, out vec3 hitPos) {
     vec3 viewOrigin = (gbufferMV * vec4(worldRayOrigin - camPos, 1.0)).xyz;
     vec3 viewDir = mat3(gbufferMV) * worldRayDir;
     
@@ -22,32 +22,63 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     
     vec3 rayDelta = uvEnd - uvOrigin;
     
-    // Scale steps by screen distance, max 24 steps
+    // 1. Pre-clip ray to screen boundaries to remove inner loop branching
+    float tMax = 1.0;
+    if (rayDelta.x > 0.0) tMax = min(tMax, (1.0 - uvOrigin.x) / rayDelta.x);
+    else if (rayDelta.x < 0.0) tMax = min(tMax, -uvOrigin.x / rayDelta.x);
+    if (rayDelta.y > 0.0) tMax = min(tMax, (1.0 - uvOrigin.y) / rayDelta.y);
+    else if (rayDelta.y < 0.0) tMax = min(tMax, -uvOrigin.y / rayDelta.y);
+    if (rayDelta.z > 0.0) tMax = min(tMax, (1.0 - uvOrigin.z) / rayDelta.z);
+    else if (rayDelta.z < 0.0) tMax = min(tMax, -uvOrigin.z / rayDelta.z);
+    
+    if (tMax <= 0.0) return false;
+    rayDelta *= tMax;
+    
+    // Scale steps by screen distance, max 16 steps due to dithering
     float screenDist = max(abs(rayDelta.x), abs(rayDelta.y));
-    if (screenDist < 0.01) return false;
+    if (screenDist < 0.005) return false;
     
-    float steps = clamp(screenDist * 100.0, 4.0, 24.0);
+    float steps = clamp(screenDist * 100.0, 4.0, 16.0);
     vec3 stepDelta = rayDelta / steps;
-    vec3 currentUV = uvOrigin + stepDelta;
     
-    float thickness = 0.05; // 5% thickness tolerance
+    // 2. Dither the start position to hide stepping artifacts
+    vec3 currentUV = uvOrigin + stepDelta * dither;
+    
+    // 3. Set up linear depth interpolation for accurate thickness testing
+    float invZOrigin = 1.0 / viewOrigin.z;
+    float invZEnd = 1.0 / viewEnd.z;
+    float invZDelta = (invZEnd - invZOrigin) * tMax;
+    float invZStep = invZDelta / steps;
+    float currentInvZ = invZOrigin + invZStep * dither;
+    
+    // World space thickness tolerance (e.g. 1.0 meters/blocks)
+    float hitThickness = 1.0; 
+    float P22 = gbufferProj[2][2];
+    float P32 = gbufferProj[3][2];
     
     for (int i = 0; i < int(steps); i++) {
-        if (currentUV.x < 0.0 || currentUV.x > 1.0 || currentUV.y < 0.0 || currentUV.y > 1.0) return false;
-        
         float depthBuffer = textureLod(depthtex0, currentUV.xy, 0.0).r;
         if (depthBuffer >= 1.0) {
             currentUV += stepDelta;
+            currentInvZ += invZStep;
             continue;
         }
 
-        // We only really need to check Z depth difference
-        if (currentUV.z > depthBuffer && currentUV.z - depthBuffer < thickness) {
-            hitPos = worldRayOrigin + worldRayDir * maxDist * (float(i) / steps); // approximate
-            hitNormal = vec3(0.0, 1.0, 0.0); // Default normal
+        // Convert depth buffer to linear view space Z
+        float ndcZ = depthBuffer * 2.0 - 1.0;
+        float sceneViewZ = P32 / (-ndcZ - P22);
+        
+        float rayViewZ = 1.0 / currentInvZ;
+
+        // Both sceneViewZ and rayViewZ are negative. Smaller value means further from camera.
+        if (rayViewZ < sceneViewZ && rayViewZ > sceneViewZ - hitThickness) {
+            hitPos = worldRayOrigin + worldRayDir * maxDist * tMax * (float(i) / steps); // approximate
+            hitNormal = -worldRayDir; // Better fallback normal than vec3(0,1,0)
             return true;
         }
+        
         currentUV += stepDelta;
+        currentInvZ += invZStep;
     }
     return false;
 }
@@ -78,7 +109,7 @@ bool traceVoxelRay(
     if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) {
         // Fallback to screen-space for rays starting outside voxel volume
         vec3 dummyA, dummyN, dummyP;
-        return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);
+        return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyA, dummyN, dummyP);
     }
 
     ivec3 vox     = ivec3(floor(localPos));
@@ -108,7 +139,7 @@ bool traceVoxelRay(
         if (tEntry > tExit) {
             // Escape to screen-space fallback
             vec3 dummyA, dummyN, dummyP;
-            return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, dummyA, dummyN, dummyP);
+            return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyA, dummyN, dummyP);
         }
 
         uint vt = sampleVoxel(atlas, vox);

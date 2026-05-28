@@ -87,11 +87,23 @@ void main() {
         vec3 rawGI = giSky; // sky fallback
         float lr   = luma(rawGI);
 
+        // Per-frame raw AO (RTAO). Default 1 = fully unoccluded for sky pixels.
+        // Temporal accumulation happens in d0_accum (-> colortex9.a).
+        float rawAO = 1.0;
+
         if (depth0 < 1.0) {
             vec3 worldRel    = getWorldPosition().xyz;
             vec3 worldAbs    = worldRel + cameraPosition;
             vec3 sunDirWorld = normalize(mat3(gbufferModelViewInverse) * lightVector);
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
+
+            // RTAO: short cosine-weighted voxel rays. Uses a separate seed stream
+            // so AO noise doesn't correlate with GI ray noise (better temporal stability).
+            #ifdef AO_RTAO
+                uint aoSeed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter * 37 + 9);
+                rawAO = computeRTAO(colortex7, worldAbs, normalWorld, aoSeed, cameraPosition,
+                                    depthtex0, gbufferProjection, gbufferModelView);
+            #endif
 
             // Reproject into previous frame (avoid precision loss by staying relative)
             vec3 worldPrevRel = worldRel;
@@ -131,10 +143,11 @@ void main() {
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory;
                 
                 // Hybrid Voxel/SSRT Raytrace
+                float dither = randFloat(seed);
                 vec3 rad = giRayRadiance(
-                    colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky, 
-                    colortex13, depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView, 
-                    hitPos, hitNormal, wasHit, hitCategory, skyLightmap
+                    colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
+                    depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView,
+                    hitPos, hitNormal, wasHit, hitCategory, skyLightmap, dither
                 );
 
                 // Infinite multi-bounce logic (optimized lookup)
@@ -235,7 +248,7 @@ void main() {
             // ---- Plain single-bounce GI ----
             rawGI = computeGI(
                 colortex7, worldAbs, normalWorld, seed, cameraPosition,
-                sunDirWorld, lightColor, giSky, colortex13, skyLightmap,
+                sunDirWorld, lightColor, giSky, skyLightmap,
                 depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView
             ) * (float(GI_STRENGTH) / 100.0);
             lr    = luma(rawGI);
@@ -243,6 +256,9 @@ void main() {
         }
         hist8Out = vec4(rawGI, 1.0);
         hist9Out = vec4(depth0, lr, lr * lr, 1.0);
+        // Stash raw per-frame AO into the spare .w of the sample-hit-normal output.
+        // d0_accum reads it back, temporal-blends it, and writes the result into c9.a.
+        resv14Out.w = rawAO;
 
     #elif defined(VOXEL_AO)
         // ---- Voxel AO fallback (output raw for accumulation) ----

@@ -2,6 +2,6 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-/* DRAWBUFFERS:0124 */
+/* DRAWBUFFERS:012 */
 
 #include "/program/gbuffers/terrain.glsl"

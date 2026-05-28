@@ -7,7 +7,6 @@
 
 
 out float material;
-out float foliage;
 out vec2 texCoord;
 out vec2 lightmapCoord;
 out vec3 normal;
@@ -59,7 +58,6 @@ https://github.com/saada2006/MinecraftShaderProgramming
 */
 
 in float material;
-in float foliage;
 in vec2 texCoord;
 in vec2 lightmapCoord;
 in vec3 normal;
@@ -69,12 +67,22 @@ in vec4 color;
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;
     
-    /* DRAWBUFFERS:0124 */
+    // Material packed into colortex1.a (RGB10_A2 -> 2-bit alpha = 4 codes):
+    //   material == 0.0 -> alpha 0    (normal/excluded)
+    //   material == 1.0 -> alpha 1/3  (foliage leaves)
+    //   material == 1.1 -> alpha 2/3  (grass / flowers)
+    //   material == 2.0 -> alpha 3/3  (emissive)
+    // Decoded in d7_composite. RGB10_A2 alpha rounds writes to {0, 1/3, 2/3, 1.0}
+    // exactly, so the four codes survive storage.
+    float matAlpha = (material >= 1.95) ? 1.0
+                   : (material >= 1.05) ? (2.0 / 3.0)
+                   : (material >= 0.95) ? (1.0 / 3.0)
+                   :                       0.0;
+
+    /* DRAWBUFFERS:012 */
     gl_FragData[0] = albedo;
-    gl_FragData[1] = vec4(normal * 0.5 + 0.5, 1.0);
+    gl_FragData[1] = vec4(normal * 0.5 + 0.5, matAlpha);
     gl_FragData[2] = vec4(lightmapCoord, 0.0, 1.0);
-    gl_FragData[3] = vec4(material);
-    gl_FragData[6] = color;
 }
 
 #endif

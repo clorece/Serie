@@ -2,6 +2,6 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-/* DRAWBUFFERS:6 */
+/* DRAWBUFFERS:3 */
 
-#include "/program/composite/c2_bloom_blur_h.glsl"
+#include "/program/composite/c2_bloom_finalize.glsl"
