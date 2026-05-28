@@ -7,7 +7,7 @@
 #define SHADOW_RESOLUTION 3072 //[512 1024 1563 2048 3072 4096 6144 8192]
 #define SHADOW_FILTER_QUALITY 8 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
 #define SHADOW_MAP_BIAS 0.85 //Increase this if you get shadow acne. Decrease this if you get peter panning. [0.000 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008 0.009 0.010 0.012 0.014 0.016 0.018 0.020 0.022 0.024 0.026 0.028 0.030 0.035 0.040 0.045 0.050]
-//#define SCREENSPACE_SHADOWS // Screen-space contact + infinite shadows multiplied onto the shadow map.
+#define SCREENSPACE_SHADOWS // Screen-space contact + infinite shadows multiplied onto the shadow map.
 
 //#define FAKE_SSS  // WIP
 #define SCATTER_AMOUNT 2.0; // [1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0]
@@ -27,15 +27,15 @@
 
 #define AUTO_EXPOSURE
 #define EXPOSURE 3.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
-#define AUTO_EXPOSURE_TARGET 0.035 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
+#define AUTO_EXPOSURE_TARGET 0.065 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 1.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.1 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
 #define AUTO_EXPOSURE_MAX 128.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
-#define COLOR_CONTRAST 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
-#define COLOR_SATURATION 1.04 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_CONTRAST 1.005 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_SATURATION 1.1 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 //#define VIGNETTE
 
@@ -56,7 +56,8 @@
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
 #define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] max blocks the sky-probe DDA ray travels from a bounce surface
 #define GI_FLOOR 100    // [0 50 100 150 200] TODO probably dont need this as a macro
-#define GI_EMISSION 2   // [1 2 3 4 5 6 7 8] emissive block glow strength
+#define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
+//#define EXCLUDE_BLOCKLIGHTS_VOXELIZATION // Excludes custom blocklights (torches, lanterns, etc.) from the path-traced GI voxel grid entirely.
 #define GI_FIREFLY 4.0  // TODO might be dead macro
 #define GI_TEMPORAL_REJECT 4.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
 
@@ -106,6 +107,7 @@
 
 //#define PT_DEBUG_VOXELS  // voxel debug view
 //#define GI_DEBUG_VIEW    // irradiance debug
+#define PT_LIGHT_DEBUG 0 // [0 1 2 3 4] Diagnostic isolation: 0=off, 1=RTAO/AO term, 2=indirect(GI), 3=direct-shadow visibility, 4=raw albedo. Shows the chosen lighting component alone so we can see which one makes the dark halo around torches.
 
 #include "/lib/pipelineSettings.glsl"
 #include "/lib/uniforms.glsl"

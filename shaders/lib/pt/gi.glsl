@@ -5,6 +5,7 @@
 #include "/lib/pt/ddaTrace.glsl"
 // ao.glsl provides cosHemisphereDir, buildTBN and PI
 #include "/lib/pt/ao.glsl"
+#include "/lib/blocklightColors.glsl"
 // Sky bounces use the flat per-frame skyColor (passed in) — no directional LUT.
 
 // Result of a GI ray traversal through the voxel grid.
@@ -14,12 +15,13 @@ struct VoxelHit {
     vec3  normal;    // surface normal of the face the ray entered through
     uint  category;
     vec3  albedo;
+    vec3  emission;  // emission gathered from non-occluding blocklights the ray passed through
 };
 
 // DDA that returns hit position, face normal and voxel contents (for GI gathering).
 VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
     VoxelHit r;
-    r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0);
+    r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0); r.emission = vec3(0.0);
 
     vec3  localPos = worldPos - gridOrigin;
     if (any(lessThan(localPos, vec3(0.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE)))) {
@@ -50,12 +52,36 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
         if (tEntry > actualMaxDist) break;
 
         uvec4 v = texelFetch(atlas, voxelCoordToAtlas(vox), 0);
-        if (v.r != VOXEL_AIR && i > 0) {
+        if (i == 0) {
+            // At the starting cell, if it contains a blocklight (e.g. a torch mounted on the shading surface),
+            // gather its emission so the mounting face is illuminated. Then continue the ray.
+            if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
+                vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
+                                       : vec3(v.gba) / 255.0;
+                if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
+                    e = vec3(0.0);
+                }
+                e = max(e, vec3(0.0));
+                r.emission += e * float(GI_EMISSION) * 0.35;
+            }
+        } else if (v.r != VOXEL_AIR) {
+            // Any non-air voxel at i > 0 stops the ray.
             r.hit      = true;
             r.category = v.r;
             r.albedo   = vec3(v.gba) / 255.0;
             r.pos      = worldPos + rayDir * tEntry;
             r.normal   = -vec3(stepDir) * lastMask; // face we entered through
+
+            // If the hit voxel is a blocklight, gather its emission and stop!
+            if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
+                vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
+                                       : vec3(v.gba) / 255.0;
+                if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
+                    e = vec3(0.0);
+                }
+                e = max(e, vec3(0.0));
+                r.emission += e * float(GI_EMISSION);
+            }
             return r;
         }
 
@@ -75,10 +101,14 @@ vec3 giRayRadiance(
     usampler2D atlas, vec3 camPos, vec3 gridOrigin,
     vec3 origin, vec3 dir, vec3 sunDir, vec3 sunColor, vec3 skyColor,
     sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV,
-    out vec3 hitPos, out vec3 hitNormal, out bool wasHit, out uint hitCategory,
+    out vec3 hitPos, out vec3 hitNormal, out bool wasHit, out uint hitCategory, out vec3 rayEmission,
     float skyLightmap, float dither
 ) {
     VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
+
+    // Emission picked up from blocklights the ray passed through. Returned separately so the
+    // caller can add it AFTER any multi-bounce radiance overwrite (otherwise it gets discarded).
+    rayEmission = h.emission;
 
     // Smooth the lightmap to avoid harsh transitions in the PT
     float skyOcc = max(skyLightmap, 0.0);
@@ -87,12 +117,6 @@ vec3 giRayRadiance(
         wasHit      = true;
         hitCategory = h.category;
         vec3 rad = vec3(0.0);
-
-        if (h.category == VOXEL_EMISSIVE) {
-            hitPos    = h.pos;
-            hitNormal = h.normal;
-            return h.albedo * float(GI_EMISSION);
-        }
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0 && skyOcc > 0.01) {
@@ -130,7 +154,10 @@ vec3 giRayRadiance(
         
         // Sample previous frame HDR scene for Screen-Space Global Illumination (SSGI)
         vec3 ssgiColor = texture(colortex5, ssrtHitUV).rgb;
-        return ssgiColor;
+        if (isnan(ssgiColor.r) || isnan(ssgiColor.g) || isnan(ssgiColor.b) || isinf(ssgiColor.r) || isinf(ssgiColor.g) || isinf(ssgiColor.b)) {
+            ssgiColor = vec3(0.0);
+        }
+        return max(ssgiColor, vec3(0.0));
     }
 
     wasHit      = false;
@@ -156,8 +183,9 @@ vec3 computeGI(
     for (int i = 0; i < GI_SAMPLES; i++) {
         float dither = randFloat(seed);
         vec3 dir = cosHemisphereDir(normal, randFloat(seed), randFloat(seed));
-        vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat;
-        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, skyLightmap, dither);
+        vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat; vec3 rayEmission;
+        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, rayEmission, skyLightmap, dither);
+        acc += rayEmission;
     }
     return acc / float(GI_SAMPLES);
 }

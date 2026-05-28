@@ -47,7 +47,12 @@ void main() {
     // Classify block category from entity ID
     float eid = mc_Entity.x;
     if      (eid == 10000.0) voxelBlockCategory = 2u; // foliage 2 (leaves) - Voxelized
-    else if (eid == 10001.0) voxelBlockCategory = 3u; // emissive
+    #ifdef EXCLUDE_BLOCKLIGHTS_VOXELIZATION
+    else if (eid >= 10100.0 && eid <= 10199.0) voxelBlockCategory = 0u; // excluded from voxel grid entirely
+    #else
+    else if (eid >= 10100.0 && eid <= 10199.0) voxelBlockCategory = 100u + uint(round(eid - 10100.0)); // special block light (mat stored as 100 + mat)
+    #endif
+    else if (eid == 10001.0) voxelBlockCategory = 3u; // emissive (fallback)
     else if (eid == 10002.0 || eid == 10004.0 || eid == 10005.0 || entityId == 10002 || blockEntityId == 10002) voxelBlockCategory = 0u; // excluded (entities, grass, flowers, transparents, etc.) -> VOXEL_AIR
     else                     voxelBlockCategory = 1u; // opaque (default)
 

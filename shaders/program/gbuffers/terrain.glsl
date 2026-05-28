@@ -28,7 +28,7 @@ void main() {
     color = gl_Color;
 
     if (mc_Entity.x == 10000) material = 1.0; // foliage 2 (leaves) - wrap-around NdotL
-    if (mc_Entity.x == 10001) material = 2.0; // emissive
+    if (mc_Entity.x == 10001 || (mc_Entity.x >= 10100 && mc_Entity.x <= 10199)) material = 2.0; // emissive
     if (mc_Entity.x == 10002) material = 0.0; // structural excluded (slabs, fences) - normal shading
     if (mc_Entity.x == 10005) material = 1.1; // grass, flowers (soft constant NdotL)
 

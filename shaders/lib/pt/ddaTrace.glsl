@@ -148,6 +148,7 @@ bool traceVoxelRay(
         }
 
         uint vt = sampleVoxel(atlas, vox);
+        // All non-air voxels (including all blocklights) act as solid occluders for shadow rays
         if (vt != VOXEL_AIR && i > 0) return true;
 
         // Step to the nearest axis boundary

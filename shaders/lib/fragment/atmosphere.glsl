@@ -7,7 +7,7 @@
 
 // --- Constants ---
 #define SUN_ILLUMINANCE 10.0
-#define MOON_ILLUMINANCE 10.0
+#define MOON_ILLUMINANCE 0.05
 
 #define SUN_COLOR_BASE (vec3(1.0, 0.9, 0.81) * SUN_ILLUMINANCE)
 #define MOON_COLOR_BASE (vec3(0.25, 0.65, 1.0) * MOON_ILLUMINANCE)

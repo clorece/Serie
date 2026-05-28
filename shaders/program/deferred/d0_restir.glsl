@@ -140,18 +140,18 @@ void main() {
             Reservoir res = newReservoir();
             for (int i = 0; i < RESTIR_INITIAL_SAMPLES; i++) {
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
-                vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory;
-                
+                vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory; vec3 rayEmission;
+
                 // Hybrid Voxel/SSRT Raytrace
                 float dither = randFloat(seed);
                 vec3 rad = giRayRadiance(
                     colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
                     depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView,
-                    hitPos, hitNormal, wasHit, hitCategory, skyLightmap, dither
+                    hitPos, hitNormal, wasHit, hitCategory, rayEmission, skyLightmap, dither
                 );
 
                 // Infinite multi-bounce logic (optimized lookup)
-                if (wasHit && hitCategory != VOXEL_EMISSIVE) {
+                if (wasHit && hitCategory != VOXEL_EMISSIVE && hitCategory < 100u) {
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
                     vec4  viewHit    = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
                     vec4  clipHit    = gbufferPreviousProjection * viewHit;
@@ -172,6 +172,16 @@ void main() {
                         }
                     }
                 }
+
+                // Add emission from non-occluding blocklights the ray passed through. Done after
+                // the multi-bounce overwrite so it is never discarded.
+                if (isnan(rad.r) || isnan(rad.g) || isnan(rad.b) || isinf(rad.r) || isinf(rad.g) || isinf(rad.b)) {
+                    rad = vec3(0.0);
+                }
+                if (isnan(rayEmission.r) || isnan(rayEmission.g) || isnan(rayEmission.b) || isinf(rayEmission.r) || isinf(rayEmission.g) || isinf(rayEmission.b)) {
+                    rayEmission = vec3(0.0);
+                }
+                rad = max(rad, vec3(0.0)) + max(rayEmission, vec3(0.0));
 
                 updateReservoir(res, rad, hitPos - cameraPosition, hitNormal, luma(rad), seed);
             }
@@ -254,6 +264,14 @@ void main() {
             lr    = luma(rawGI);
           #endif
         }
+        
+        // Prevent NaNs or infinities from ever getting written to hist8Out/hist9Out (raw GI/moments)
+        if (isnan(rawGI.r) || isnan(rawGI.g) || isnan(rawGI.b) || isinf(rawGI.r) || isinf(rawGI.g) || isinf(rawGI.b)) {
+            rawGI = vec3(0.0);
+        }
+        rawGI = max(rawGI, vec3(0.0));
+        lr    = luma(rawGI);
+
         hist8Out = vec4(rawGI, 1.0);
         hist9Out = vec4(depth0, lr, lr * lr, 1.0);
         // Stash raw per-frame AO into the spare .w of the sample-hit-normal output.

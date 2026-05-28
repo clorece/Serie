@@ -278,8 +278,17 @@ void main() {
             #endif
         #endif
 
-        // Prevent skylight illumination from the path tracer from illuminating sunlit terrain
-        gi *= vec3(1.0) - (directShadow * max(dot(normal, lightVector), 0.0));
+        // Prevent skylight illumination from the path tracer from illuminating sunlit terrain,
+        // but ensure that path-traced emissives (blocklight, warm bounces) ignore this restriction.
+        float skyRatio = 0.22 / 0.4;
+        float emissiveWeight = clamp((gi.r - gi.b * skyRatio) / max(gi.r, 1e-5), 0.0, 1.0);
+        emissiveWeight = max(emissiveWeight, clamp(lightmap.x * 4.0, 0.0, 1.0));
+
+        vec3 giSkyComponent = gi * (1.0 - emissiveWeight);
+        vec3 giEmissiveComponent = gi * emissiveWeight;
+
+        giSkyComponent *= vec3(1.0) - (directShadow * max(dot(normal, lightVector), 0.0));
+        gi = giSkyComponent + giEmissiveComponent;
 
         indirect = gi;
     #elif defined(AO_RTAO)
@@ -298,15 +307,43 @@ void main() {
         direct *= mix(1.0, aoTerm, float(AO_DIRECT_STRENGTH) / 100.0);
     #endif
 
+    // ---- Diagnostic: isolate one lighting component (PT_LIGHT_DEBUG in options.glsl) ----
+    #if PT_LIGHT_DEBUG > 0
+        if (depth0 < 1.0) {
+            #if PT_LIGHT_DEBUG == 1
+                gl_FragData[0] = vec4(vec3(aoTerm), 1.0);        // RTAO / AO term
+            #elif PT_LIGHT_DEBUG == 2
+                gl_FragData[0] = vec4(indirect, 1.0);            // indirect (voxel GI)
+            #elif PT_LIGHT_DEBUG == 3
+                gl_FragData[0] = vec4(directShadow, 1.0);        // direct-light visibility (shadow)
+            #else
+                gl_FragData[0] = vec4(color, 1.0);               // raw albedo
+            #endif
+            return;
+        }
+    #endif
+
     // Total irradiance = direct sun + indirect fill, weighted to set the sun-vs-ambient
     // contrast ratio, then modulated by albedo. Keeping ambient from matching the sun is
     // what stops flat shading.
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
-    color = color * (direct + indirect);
 
     if (material > 0.83) { // emissive code = 1.0 in colortex1.a; threshold halfway between 2/3 and 1.0
-        color *= 4.0; // emissive boost for bloom
+        // Ported philosophy from Allium: distinguish between the glowing light source itself
+        // (high albedo brightness) and its structural, non-glowing parts (like wooden sticks, metal frames,
+        // or stone crevices). Structural parts receive 100% standard direct sun, shadows, and NdotL shading,
+        // while the glowing parts receive the appropriate self-emission boost.
+        float albedoBrightness = max(color.r, max(color.g, color.b));
+        float isGlowing = smoothstep(0.3, 0.7, albedoBrightness);
+
+        vec3 shadedColor = color * (direct + indirect);
+        float emissiveBoost = mix(2.5 * float(GI_EMISSION), 1.0, lightmap.y);
+        vec3 glowingColor = color * (direct + indirect * emissiveBoost);
+
+        color = mix(shadedColor, glowingColor, isGlowing);
+    } else {
+        color = color * (direct + indirect);
     }
 
     // ---- Voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl) ----
