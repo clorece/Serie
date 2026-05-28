@@ -92,24 +92,31 @@ float getNdotL(vec3 n, vec3 l) {
 float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView) {
     float viewDist = length(viewPos);
     
-    // Adaptive Ray March settings
-    float rayLength = mix(0.8, 128.0, clamp(viewDist / 512.0, 0.0, 1.0));
-    int steps = int(mix(16.0, 48.0, clamp(viewDist / 512.0, 0.0, 1.0))); // Increased min steps to 16
+    // Contact Shadow vs Infinite Shadow
+    // Up close, we restrict this to a short-range contact shadow to prevent massive false positives 
+    // that smear across foreground geometry (e.g., doors, pillars).
+    // Beyond shadowDistance (where the real shadow map stops), we smoothly scale up the ray length
+    // to provide infinite shadows for distant mountains where these false positives are far less noticeable.
+    
+    float isFar = smoothstep(shadowDistance * 0.8, shadowDistance * 1.2, viewDist);
+    
+    float rayLength = mix(clamp(viewDist * 0.1, 0.25, 2.5), 128.0, isFar);
+    int steps = int(mix(12.0, 32.0, isFar));
     
     vec3 stepVec = lightDir * (rayLength / float(steps));
     float stepLen = length(stepVec);
 
-    // Drastically reduced normal bias so the ray starts closer to the surface
-    float nBias = mix(0.005, 0.2, clamp(viewDist / 512.0, 0.0, 1.0));
+    // Normal bias to prevent acne
+    float nBias = mix(0.05 + viewDist * 0.005, 0.2, isFar);
     vec3 rayPos = viewPos + normalView * nBias + stepVec * dither;
 
     float sscs = 1.0;
     
-    // Dynamic thickness scales with the step length to prevent missing thin objects
-    float thickness = max(stepLen * 2.0, mix(0.15, 8.0, clamp(viewDist / 512.0, 0.0, 1.0)));
+    // Dynamic thickness scales up in the distance to catch large mountains
+    float thickness = max(stepLen * 1.5, mix(0.15, 8.0, isFar));
     
-    // Adaptive depth tolerance prevents grazing rays from failing intersection
-    float distTolerance = 0.002 + abs(viewPos.z) * 0.001;
+    // Adaptive depth tolerance
+    float distTolerance = mix(0.005, 0.002, isFar) + abs(viewPos.z) * 0.001;
 
     for (int i = 0; i < steps; i++) {
         rayPos += stepVec;
@@ -127,7 +134,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
         vec4 sampleView = gbufferProjectionInverse * sampleClip;
         float sampleZ = sampleView.z / sampleView.w;
 
-        // Depth test with adaptive tolerance and thickness
+        // Depth test
         float zDiff = sampleZ - rayPos.z;
         if (zDiff > distTolerance && zDiff < thickness) {
             sscs = smoothstep(0.6, 1.0, float(i) / float(steps));
@@ -135,7 +142,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
         }
     }
 
-    // Fade the effect out near the screen edges to prevent "shadow pop-in"
+    // Fade the effect out near the screen edges
     vec4 startClip = gbufferProjection * vec4(viewPos, 1.0);
     vec2 startUV = (startClip.xy / startClip.w) * 0.5 + 0.5;
     float edgeFade = smoothstep(0.0, 0.1, min(min(startUV.x, 1.0 - startUV.x), min(startUV.y, 1.0 - startUV.y)));
