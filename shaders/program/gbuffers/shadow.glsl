@@ -15,6 +15,7 @@ flat out vec3 voxelCenter;
 flat out vec3 voxelNormal;
 flat out uint voxelBlockCategory;
 flat out int biomeTintedBlock;
+out float skyLight;
 
 
 
@@ -72,6 +73,7 @@ void main() {
 	gl_Position.xy *= 1.0 / distortFactor;
 
     gl_FrontColor = gl_Color;
+    skyLight = gl_MultiTexCoord1.y * (1.0 / 240.0);
 }
 
 #endif
@@ -92,6 +94,7 @@ flat in vec3 voxelCenter;
 flat in vec3 voxelNormal;
 flat in uint voxelBlockCategory;
 flat in int biomeTintedBlock;
+in float skyLight;
 
 
 // Image binding for writes MUST use the colorimgN alias, not colortexN.
@@ -136,6 +139,17 @@ void main() {
     }
 
     uint finalCategory = voxelBlockCategory;
+
+    // --- Adaptive Blocklight Reduction ---
+    // Scale down blocklight emission outdoors under the open sky during the day.
+    if (finalCategory == 3u || finalCategory >= 100u) {
+        vec3 sunVec = normalize(sunPosition);
+        vec3 upVec  = normalize(upPosition);
+        float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
+        if (sunUp > 0.001 && skyLight > 0.5) {
+            finalCategory = 0u; // Exclude from voxelization / set as AIR (no emission)
+        }
+    }
 
     uvec4 voxelData = uvec4(finalCategory, uvec3(clamp(albedo, 0.0, 1.0) * 255.0 + 0.5));
 

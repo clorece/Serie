@@ -58,7 +58,15 @@ vec3 clipSpace;
 
 vec3 getLightmap(vec3 l) {
     l.x = 1.0 * pow(l.x, 5.06);
-    vec3 torchLighting = l.x * torchColor;
+
+    // --- Adaptive Blocklight Reduction ---
+    // Scale down vanilla blocklights outdoors under the open sky during the day.
+    vec3 sunVec = normalize(sunPosition);
+    vec3 upVec  = normalize(upPosition);
+    float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
+    float blocklightSuppression = mix(1.0, 0.0, sunUp * l.y); // l.y is sky lightmap value
+
+    vec3 torchLighting = l.x * torchColor * blocklightSuppression;
     vec3 skyLighting = l.y * ambientColor;
     return torchLighting + skyLighting;
 }

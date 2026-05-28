@@ -110,6 +110,14 @@ vec3 giRayRadiance(
     // caller can add it AFTER any multi-bounce radiance overwrite (otherwise it gets discarded).
     rayEmission = h.emission;
 
+    // --- Adaptive Blocklight Reduction ---
+    // Scale down blocklight emission outdoors under the open sky during the day.
+    vec3 sunVec = normalize(sunPosition);
+    vec3 upVec  = normalize(upPosition);
+    float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
+    float blocklightSuppression = mix(1.0, 0.0, sunUp * skyLightmap);
+    rayEmission *= blocklightSuppression;
+
     // Smooth the lightmap to avoid harsh transitions in the PT
     float skyOcc = max(skyLightmap, 0.0);
 
