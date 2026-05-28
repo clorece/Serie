@@ -64,3 +64,9 @@ option.VIGNETTE.comment=Applies a subtle darkening around the edges of the viewp
 option.GI_DEBUG_VIEW=GI Debug View
 option.GI_DEBUG_VIEW.comment=Outputs the raw/denoised GI buffer directly to the screen to visualize the indirect light reaching the surfaces.
 
+
+option.VOXEL_GRID_SIZE=Voxel Grid Size
+option.VOXEL_GRID_SIZE.comment=Changes the bounds of the voxel path tracing volume. Higher values trace further but reduce performance.
+value.VOXEL_GRID_SIZE.64=64 (Small)
+value.VOXEL_GRID_SIZE.128=128 (Normal)
+value.VOXEL_GRID_SIZE.256=256 (Large)

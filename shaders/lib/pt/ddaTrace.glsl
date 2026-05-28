@@ -4,7 +4,7 @@
 #include "/lib/pt/voxelData.glsl"
 
 // Screen-Space Ray Tracing Fallback (Optimized 2D Line March)
-bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, vec3 camPos, mat4 gbufferProj, mat4 gbufferMV, sampler2D depthtex0, float dither, out vec3 hitAlbedo, out vec3 hitNormal, out vec3 hitPos) {
+bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, vec3 camPos, mat4 gbufferProj, mat4 gbufferMV, sampler2D depthtex0, float dither, out vec2 hitUV, out vec3 hitNormal, out vec3 hitPos) {
     vec3 viewOrigin = (gbufferMV * vec4(worldRayOrigin - camPos, 1.0)).xyz;
     vec3 viewDir = mat3(gbufferMV) * worldRayDir;
     
@@ -69,11 +69,16 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
         float sceneViewZ = P32 / (-ndcZ - P22);
         
         float rayViewZ = 1.0 / currentInvZ;
+        float prevRayViewZ = 1.0 / (currentInvZ - invZStep);
 
-        // Both sceneViewZ and rayViewZ are negative. Smaller value means further from camera.
-        if (rayViewZ < sceneViewZ && rayViewZ > sceneViewZ - hitThickness) {
+        // Robust intersection: check if the ray crossed the surface in this step,
+        // or if it's within a depth-proportional thickness tolerance.
+        float hitThickness = max(1.0, abs(sceneViewZ) * 0.05);
+        if ((rayViewZ < sceneViewZ && prevRayViewZ >= sceneViewZ) || 
+            (rayViewZ < sceneViewZ && rayViewZ > sceneViewZ - hitThickness)) {
             hitPos = worldRayOrigin + worldRayDir * maxDist * tMax * (float(i) / steps); // approximate
             hitNormal = -worldRayDir; // Better fallback normal than vec3(0,1,0)
+            hitUV = currentUV.xy;
             return true;
         }
         
@@ -108,8 +113,8 @@ bool traceVoxelRay(
     // Fast check: if the origin is far outside the grid, skip the trace entirely.
     if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) {
         // Fallback to screen-space for rays starting outside voxel volume
-        vec3 dummyA, dummyN, dummyP;
-        return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyA, dummyN, dummyP);
+        vec2 dummyUV; vec3 dummyN, dummyP;
+        return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
     }
 
     ivec3 vox     = ivec3(floor(localPos));
@@ -130,16 +135,16 @@ bool traceVoxelRay(
     vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
 
     float tEntry = 0.0;
-    // Cap iterations to slightly more than the grid diameter
-    for (int i = 0; i < 80; i++) {
+    // Cap iterations to scale dynamically with the grid diameter
+    for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
         // Exit if we exceed the requested distance
         if (tEntry >= maxDist) return false;
         
         // Exit if we leave the active grid volume
         if (tEntry > tExit) {
             // Escape to screen-space fallback
-            vec3 dummyA, dummyN, dummyP;
-            return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyA, dummyN, dummyP);
+            vec2 dummyUV; vec3 dummyN, dummyP;
+            return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
         }
 
         uint vt = sampleVoxel(atlas, vox);

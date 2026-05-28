@@ -22,6 +22,9 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0);
 
     vec3  localPos = worldPos - gridOrigin;
+    if (any(lessThan(localPos, vec3(0.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE)))) {
+        return r;
+    }
     ivec3 vox      = ivec3(floor(localPos));
     ivec3 stepDir  = ivec3(sign(rayDir));
     vec3  tDelta   = abs(1.0 / (rayDir + 1e-8));
@@ -118,15 +121,16 @@ vec3 giRayRadiance(
     // If the ray escapes the voxel bounds, seamlessly trace it against the screen-space
     // depth buffer to pick up infinite-distance geometry (mountains, trees outside radius).
     vec3 ssrtHitNormal;
-    if (screenSpaceRayTrace(h.pos, dir, 256.0, camPos, gbufferProj, gbufferMV, depthtex0, dither, h.albedo, ssrtHitNormal, hitPos)) {
+    vec2 ssrtHitUV;
+    float remainingDist = max(0.0, float(GI_RADIUS) - distance(origin, h.pos));
+    if (remainingDist > 0.0 && screenSpaceRayTrace(h.pos, dir, remainingDist, camPos, gbufferProj, gbufferMV, depthtex0, dither, ssrtHitUV, ssrtHitNormal, hitPos)) {
         wasHit = true;
         hitCategory = VOXEL_OPAQUE;
         hitNormal = ssrtHitNormal;
         
-        // The ray hit something in screen-space. To restrict SSRT to AO only,
-        // we do NOT sample the screen for bounced colors (GI), we just return 0 
-        // radiance so that the hit registers as an occluder, blocking sky/sun light.
-        return vec3(0.0);
+        // Sample previous frame HDR scene for Screen-Space Global Illumination (SSGI)
+        vec3 ssgiColor = texture(colortex5, ssrtHitUV).rgb;
+        return ssgiColor;
     }
 
     wasHit      = false;

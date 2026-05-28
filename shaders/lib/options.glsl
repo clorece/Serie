@@ -45,8 +45,9 @@
 //#define WIND_MOVEMENT // WIP
 
 #define VOXEL_GI
+#define VOXEL_GRID_SIZE 128 // [64 128 256 512 1024 2048]
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
-#define GI_RADIUS  24   // [12 16 24 32 48] TODO might also be dead due to ReSTIR
+#define GI_RADIUS  24   // [12 16 24 32 48 64 96 128] TODO might also be dead due to ReSTIR
 #define GI_STRENGTH 200 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun TODO rework this so that it is only daytime
@@ -99,7 +100,7 @@
 
 //#define VOXEL_AO
 #define AO_SAMPLES 2   // [2 4 6 8] 
-#define AO_RADIUS  8   // [4 6 8 10 12] 
+#define AO_RADIUS  8   // [4 6 8 10 12 16 24 32 48 64] 
 #define AO_STRENGTH 100 // [25 50 75 100] 
 
 //#define PT_DEBUG_VOXELS  // voxel debug view

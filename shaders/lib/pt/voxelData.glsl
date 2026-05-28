@@ -1,21 +1,25 @@
 #ifndef VOXEL_DATA_GLSL
 #define VOXEL_DATA_GLSL
 
-// Voxel grid: 128^3, centered on floor(cameraPosition)
-// Provides +-64 block radius around the player in each axis
-#define VOXEL_GRID_SIZE  128
-#define VOXEL_RADIUS     64
+#include "/lib/options.glsl"
+
+#define VOXEL_RADIUS 64
+
+#if VOXEL_GRID_SIZE <= 64
+    #define VOXEL_ATLAS_COLS 8
+#elif VOXEL_GRID_SIZE <= 512
+    #define VOXEL_ATLAS_COLS 16
+#else
+    #define VOXEL_ATLAS_COLS 32
+#endif
+
+#define VOXEL_ATLAS_ROWS (VOXEL_GRID_SIZE / VOXEL_ATLAS_COLS)
 
 // Block categories stored in voxel atlas (.r channel of each RGBA8UI texel)
 #define VOXEL_AIR      0u
 #define VOXEL_OPAQUE   1u
 #define VOXEL_FOLIAGE  2u
 #define VOXEL_EMISSIVE 3u
-
-// Atlas layout: 2048 x 1024 RGBA8UI
-// 16 columns x 8 rows, each cell = one 128x128 Z-slice of the grid
-#define VOXEL_ATLAS_COLS 16
-#define VOXEL_ATLAS_ROWS 8
 
 // Convert a voxel grid coordinate [0, VOXEL_GRID_SIZE) to a 2D atlas texel
 ivec2 voxelCoordToAtlas(ivec3 c) {

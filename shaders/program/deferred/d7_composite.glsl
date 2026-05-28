@@ -89,16 +89,21 @@ float getNdotL(vec3 n, vec3 l) {
     return max(dotNL, 0.0) * lightScatter * viewScatter;
 }
 
-float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView) {
+float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalView, float material) {
     float viewDist = length(viewPos);
+    
+    float isFar = smoothstep(shadowDistance * 0.8, shadowDistance * 1.2, viewDist);
+    bool isFoliage = (material > 0.16 && material < 0.83);
+    
+    if (isFoliage && isFar <= 0.0) {
+        return 1.0;
+    }
     
     // Contact Shadow vs Infinite Shadow
     // Up close, we restrict this to a short-range contact shadow to prevent massive false positives 
     // that smear across foreground geometry (e.g., doors, pillars).
     // Beyond shadowDistance (where the real shadow map stops), we smoothly scale up the ray length
     // to provide infinite shadows for distant mountains where these false positives are far less noticeable.
-    
-    float isFar = smoothstep(shadowDistance * 0.8, shadowDistance * 1.2, viewDist);
     
     float rayLength = mix(clamp(viewDist * 0.1, 0.25, 2.5), 128.0, isFar);
     int steps = int(mix(12.0, 32.0, isFar));
@@ -147,7 +152,13 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
     vec2 startUV = (startClip.xy / startClip.w) * 0.5 + 0.5;
     float edgeFade = smoothstep(0.0, 0.1, min(min(startUV.x, 1.0 - startUV.x), min(startUV.y, 1.0 - startUV.y)));
 
-    return mix(1.0, sscs, edgeFade);
+    float shadowResult = mix(1.0, sscs, edgeFade);
+    if (isFoliage) {
+        // Fade in the shadow based on distance to prevent glowing distant trees,
+        // while preserving subsurface scattering up close.
+        shadowResult = mix(1.0, shadowResult, isFar);
+    }
+    return shadowResult;
 }
 
 #include "/lib/fragment/shadows.glsl"
@@ -215,10 +226,9 @@ void main() {
         float ditherVal = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
         vec3 viewPos = getFragPosition().xyz;
         // Combine standard shadow map with infinite screen-space shadows.
-        // Disabled on foliage to allow shadow-map offset subsurface scattering.
-        if (!(material > 0.16 && material < 0.83)) {
-            directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal);
-        }
+        // Disabled on foliage for short range to allow shadow-map offset subsurface scattering,
+        // but enabled for infinite shadows to prevent glowing trees in the distance.
+        directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal, material);
     }
     vec3 direct = diffuse * lightColor * directShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
 
@@ -311,7 +321,7 @@ void main() {
 
         bool hit = false;
         vec3 hitAlbedo = vec3(0.0);
-        for (int i = 0; i < 128; i++) {
+        for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
             if (any(lessThan(voxPos, ivec3(0))) || any(greaterThanEqual(voxPos, ivec3(VOXEL_GRID_SIZE)))) break;
             VoxelSample vs = readVoxel(colortex7, voxPos);
             if (vs.category != VOXEL_AIR) { hit = true; hitAlbedo = vs.albedo; break; }
