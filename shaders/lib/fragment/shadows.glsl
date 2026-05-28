@@ -27,24 +27,32 @@ vec3 getShadow(float material) {
     vec4 worldPos = getWorldPosition();
     vec3 playerPos = worldPos.xyz;
     
-    // Normal-based distance bias to fix shadow acne
-    // We calculate NdotL strictly in view-space where both normal and lightVector match correctly.
-    // Comparing a world-space normal against a view-space lightVector was causing NdotL to fluctuate
-    // based on the camera's view angle, causing the shadow boundary lines to slide and rotate as you pan.
+    // NdotL strictly in view-space (normal and lightVector both view-space here) so the
+    // shadow boundary doesn't slide/rotate as the camera pans.
     float NdotL = max(dot(normal, lightVector), 0.0);
-    
+
     float distance = length(playerPos);
-    float distanceBias = 0.02 + 0.001 * distance;
-    
-    // We reconstruct the world normal from the view normal to apply the positional bias in world space
+
+    // World-space face normal used for the positional bias.
     vec3 normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
-    vec3 lightWorld = normalize(mat3(gbufferModelViewInverse) * lightVector);
-    
-    // Push the player-relative world position along the normal and the light vector to prevent peter panning
-    vec3 positionBias = (normalWorld * 1.5 + lightWorld * 0.5) * distanceBias * (1.5 - NdotL);
-    
-    worldPos.xyz += positionBias;
-    
+
+    // Positional shadow bias without peter-panning: push along the surface normal only
+    // (never along the light vector — that detaches the shadow and leaks light at contact
+    // edges). Scales mildly with distance, and grazing faces (NdotL -> 0, where acne is
+    // worst) get up to ~2x the bias of sun-facing faces.
+    vec3 bias = 0.25 * normalWorld * clamp(0.12 + 0.01 * distance, 0.0, 1.0) * (2.0 - clamp(NdotL, 0.0, 1.0));
+
+    // Edge nudge: shift the lookup toward the interior of the block it belongs to — up to
+    // ~0.1 blocks per axis at the faces, zero at the centre. A receiver sitting on a block
+    // seam then tests a point safely inside its occluder instead of leaking sun through the
+    // gap. Scaled by (1 - skylight) so it only kicks in for enclosed/dark surfaces where
+    // leaks happen; in open sky it is zero and never displaces outdoor shadows.
+    vec3 edge = (0.1 - 0.2 * fract(playerPos + cameraPosition + normalWorld * 0.01)) * (1.0 - lightmap.y);
+
+    playerPos += bias + edge;
+
+    worldPos.xyz = playerPos;
+
     vec4 shadowPos = toShadowSpace(worldPos);
     
     // Out of bounds check
@@ -56,17 +64,13 @@ vec3 getShadow(float material) {
     float distortedDist = length(shadowPos.xy * 2.0 - 1.0);
     float distortFactor = (1.0 - SHADOW_MAP_BIAS) / max(1.0 - distortedDist * SHADOW_MAP_BIAS, 0.0001);
 
-    // 2. Calculate high-fidelity slope-scaled and resolution-aware depth bias.
-    float cosTheta = max(dot(normal, lightVector), 0.0);
-    float tanTheta = sqrt(1.0 - cosTheta * cosTheta) / max(cosTheta, 0.0001);
-    
+    // 2. Small constant depth bias only. The positional normal + edge bias above prevent
+    // acne; adding a large slope-scaled depth bias on top peter-pans and leaks light
+    // through block seams, so it is intentionally kept tiny here.
     float resolutionScale = 4096.0 / float(shadowMapResolution);
-    float bias = (0.00012 + 0.0006 * clamp(tanTheta, 0.0, 5.0)) * distortFactor * resolutionScale;
-    bias = clamp(bias, 0.00005, 0.004 * resolutionScale); 
+    float receiverDepth = shadowPos.z - 0.00006 * resolutionScale;
 
-    float receiverDepth = shadowPos.z - bias;
-    
-    // Subsurface Scattering Offset (Allium style)
+    // Subsurface scattering offset for foliage.
     if (material > 0.16 && material < 0.83) {
         receiverDepth -= 0.000175;
     }

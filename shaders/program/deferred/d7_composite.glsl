@@ -222,6 +222,7 @@ void main() {
     float skyOcc = sqrt(lightmap.y); // Loosened modulation: allows leakage until nearly 0 lightmap
     
     vec3 directShadow = getShadow(material);
+    #ifdef SCREENSPACE_SHADOWS
     if (depth0 < 1.0) {
         float ditherVal = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
         vec3 viewPos = getFragPosition().xyz;
@@ -230,6 +231,7 @@ void main() {
         // but enabled for infinite shadows to prevent glowing trees in the distance.
         directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal, material);
     }
+    #endif
     vec3 direct = diffuse * lightColor * directShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
 
     // Shadowmap-based Subsurface Scattering for foliage

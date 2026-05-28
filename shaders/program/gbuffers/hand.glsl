@@ -44,7 +44,11 @@ in vec4 color;
 
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;
-    
+
+    // Blending is disabled for this pass (see shaders.properties), so discard
+    // fully-transparent fragments instead of writing them as opaque pixels.
+    if (albedo.a < 0.1) discard;
+
     /* DRAWBUFFERS:012 */
     gl_FragData[0] = albedo;
     gl_FragData[1] = vec4(normal * 0.5 + 0.5, 0.0); // .a = 0 (default material; see terrain.glsl colortex1.a packing)
