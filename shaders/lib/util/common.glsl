@@ -39,9 +39,6 @@ vec3 octDecodeNormal(vec2 f) {
     return normalize(n);
 }
 
-// Pack an RGB colour into a single RGBA16-UNORM channel (RGB565: 32/64/32 levels). Exact because a
-// 16-bit UNORM holds integers 0..65535. MUST be point-sampled (texelFetch) on read -- a bit-packed
-// value can't be bilinear-filtered. Used to carry glass/ice block colour in colortex2.a -> c_water.
 float packColor565(vec3 c) {
     c = clamp(c, 0.0, 1.0);
     uint r = uint(c.r * 31.0 + 0.5);
@@ -55,6 +52,33 @@ vec3 unpackColor565(float v) {
     return vec3(float((p >> 11) & 31u) / 31.0,
                 float((p >>  5) & 63u) / 63.0,
                 float( p        & 31u) / 31.0);
+}
+
+bool isInShadow(vec3 worldPosCamRel) {
+    vec4 sp = shadowProjection * shadowModelView * vec4(worldPosCamRel, 1.0);
+    sp /= sp.w;
+
+    float distortedDist = length(sp.xy);
+    float distortFactor = (1.0 - SHADOW_MAP_BIAS) + distortedDist * SHADOW_MAP_BIAS;
+    sp.xy /= distortFactor;
+    sp = sp * 0.5 + 0.5;
+
+    if (sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0 || sp.z < 0.0 || sp.z > 1.0) {
+        return false;
+    }
+
+    // Sample shadowtex1 (opaque blockers only) — shadowtex0 includes the water
+    // surface as an occluder, so every sub-water pixel would always read as
+    // shadowed and kill caustics. shadowtex1 is depth excluding translucents,
+    // which is exactly what we want for the "is the receiver in OPAQUE-block
+    // shade" question.
+    //
+    // No normal bias is applied (the function deliberately doesn't take a
+    // normal — keep the call site simple). Without it the tiny depth bias
+    // getShadow uses self-shadows everywhere, so we ramp ~20x to compensate.
+    float bias = 0.0015 * (4096.0 / float(SHADOW_RESOLUTION));
+    float depth = texture(shadowtex1, sp.xy).r;
+    return depth < (sp.z - bias);
 }
 
 #endif

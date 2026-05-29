@@ -1,11 +1,3 @@
-// c1_bloom_atlas : multi-scale bloom atlas + TAA / exposure persistence
-// Replaces the old soft-threshold extract. Builds the 7-tile mip atlas via
-// mip-sampled colortex0 (LODs 2..8) and stores it in colortex3. Also carries
-// the TAA-resolved HDR scene + exposure into colortex5 for the next frame's
-// d0_restir / temporal radiance cache.
-//
-// Tile layout, packing and unpack live in lib/post/bloom.glsl.
-
 #include "/lib/options.glsl"
 
 #ifdef VERTEX
@@ -29,8 +21,6 @@ in vec2 texCoord;
 void main() {
     vec3 sceneColor = texture(colortex0, texCoord).rgb;
 
-    // Carry the previous-frame exposure through to colortex5 so c0_taa and the
-    // PT chain can keep using the existing "exposure-in-alpha" channel.
     float exposure = texelFetch(colortex0, ivec2(0), 0).a;
     if (exposure <= 0.001 || isnan(exposure) || isinf(exposure)) {
         exposure = 1.3;

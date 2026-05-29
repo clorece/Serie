@@ -1,5 +1,5 @@
 // d0_accum : spatiotemporal accumulation for indirect light
-// Reads the noisy raw GI from d0_restir (colortex3) and blends it with the
+// reads the noisy raw GI from d0_restir (colortex3) and blends it with the
 // history (colortex8) using bilateral reprojection and YCoCg neighborhood
 // clamping to suppress ghosting.
 //
@@ -44,9 +44,7 @@ float calculateJacobian(vec3 shadingPos, vec3 neighborShadingPos, vec3 samplePos
     
     float dOriginal2 = dot(vOriginal, vOriginal);
     float dNew2      = dot(vNew, vNew);
-    
-    // Footprint-based threshold: if the sample is extremely close to either shading point,
-    // the shift mapping is unstable. Fallback to 1.0 instead of rejecting to prevent flickering.
+
     if (dOriginal2 < 0.01 || dNew2 < 0.01) return 1.0;
     
     float dOriginal = sqrt(dOriginal2);
@@ -54,15 +52,11 @@ float calculateJacobian(vec3 shadingPos, vec3 neighborShadingPos, vec3 samplePos
     
     float cosOriginal = abs(dot(sampleNormal, vOriginal)) / dOriginal;
     float cosNew      = abs(dot(sampleNormal, vNew)) / dNew;
-    
-    // Footprint-based threshold: if the path is almost parallel to the surface (grazing),
-    // reconnection is extremely unstable. Fallback to 1.0 instead of rejecting.
+
     if (cosOriginal < 0.05 || cosNew < 0.05) return 1.0;
     
     float jacobian = (cosNew * dOriginal2) / (cosOriginal * dNew2);
-    
-    // Clamp Jacobian to a safe range to prevent fireflies/spikes
-    // Expanded the range slightly to prevent edge darkening/flickering
+
     return clamp(jacobian, 0.05, 20.0);
 }
 
@@ -100,13 +94,8 @@ void main() {
     vec3  worldRel = getWorldPosition().xyz;
     
     vec3  rawGI = texture(colortex3, texCoord).rgb;
-    // RTAO raw scalar lives in colortex14.w (written by d0_restir alongside the
-    // sample-hit normal in .xy). We blend it with the previous frame's AO history
-    // (carried in c9.a) using the same reproject/rejection as the GI accumulation.
     float rawAO = texture(colortex14, texCoord).w;
     
-    // We must check depth and normals so we don't accidentally blur
-    // the dark background into the bright foreground edges.
     vec3 neighborSum = vec3(0.0);
     float neighborWeight = 0.0;
     for (int x = -1; x <= 1; x++) {
@@ -133,38 +122,30 @@ void main() {
         vec3 neighborAvg = neighborSum / neighborWeight;
         neighborLuma = dot(neighborAvg, vec3(0.2126, 0.7152, 0.0722));
         
-        // If the center pixel is drastically brighter than its VALID neighbors, clamp it.
+        // if the center pixel is drastically brighter than its VALID neighbors, clamp it.
         if (centerLumaRaw > neighborLuma * 3.0 + 0.02) {
             rawGI = neighborAvg; 
         }
     }
     
-    // By doing spatial reuse in this pass, we can read the reservoirs written
-    // by d0_restir.glsl on the CURRENT frame, fixing the geometric misalignment bug.
     #if defined(VOXEL_GI) && defined(RESTIR_GI) && defined(RESTIR_SPATIAL)
         uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter + 1);
         Reservoir shade = readReservoir(colortex10, colortex11, colortex14, texCoord);
         shade.wSum = luma(shade.radiance) * shade.W * shade.M;
         
-        // Strict but robust gates to prevent geometry blending
         const float spDepthGate  = 0.10; // 10% relative depth
         const float spNormalGate = 0.90; // Approx 25 degrees
-        
-        // Screen padding to prevent sampling garbage at the very edges of the screen
+
         vec2 paddingSpatial = 2.0 * texelSize;
         
-        // If the temporal history is already highly converged (M is near maximum),
-        // we can dynamically reduce or entirely skip the expensive spatial reuse.
-        // This saves immense memory bandwidth across large stable areas of the screen.
         int spatialSamples = RESTIR_SPATIAL_SAMPLES;
         if (shade.M > float(RESTIR_M_CAP) * 0.8) {
-            spatialSamples = 0; // Fully converged: skip spatial
+            spatialSamples = 0; // fully converged: skip spatial
         } else if (shade.M > float(RESTIR_M_CAP) * 0.4) {
-            spatialSamples = min(RESTIR_SPATIAL_SAMPLES, 1); // Partially converged: scale down
+            spatialSamples = min(RESTIR_SPATIAL_SAMPLES, 1); // partially converged: scale down
         }
         
         for (int i = 0; i < spatialSamples; i++) {
-            // Reciprocal Neighbor Selection: generate a screen-uniform random offset
             vec2 uniformOffset = getUniformOffset(i, frameCounter);
             ivec2 delta = ivec2(round(uniformOffset));
             
@@ -172,12 +153,10 @@ void main() {
                 delta.x = 1;
             }
             
-            // XOR-based reciprocal neighbor selection to reduce correlation
             ivec2 p = ivec2(gl_FragCoord.xy);
             ivec2 q = p ^ delta;
             vec2 nUV = (vec2(q) + 0.5) * texelSize;
-            
-            // Strict screen bounds check to fix screen-border flickering
+
             if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x || 
                 nUV.y < paddingSpatial.y || nUV.y > 1.0 - paddingSpatial.y) continue;
 
@@ -193,10 +172,6 @@ void main() {
             Reservoir n = readReservoir(colortex10, colortex11, colortex14, nUV);
             n.M = min(n.M, float(RESTIR_M_CAP));
 
-            // Merge the neighbor's reservoir. 
-            // We force the Jacobian to 1.0 for spatial reuse because the distance between 
-            // pixels is extremely small. Calculating the true Jacobian for spatial reuse 
-            // introduces massive numerical instability at block edges (causing severe flickering).
             mergeReservoir(shade, n, 1.0, seed);
         }
         finalizeReservoir(shade);
@@ -212,8 +187,6 @@ void main() {
     vec2 uvPrev;
     float expectedClipZ;
     if (isHand) {
-        // The hand moves with the camera. Its screen-space position is roughly static.
-        // If we apply world-space reprojection, it will smear massively when rotating the camera.
         uvPrev = texCoord;
         expectedClipZ = clipSpace.z;
     } else {
@@ -231,7 +204,6 @@ void main() {
     float giM2      = lr * lr;
     float blendedAO = rawAO;
 
-    // Tighten screen bounds to prevent bilinear/fetch sampling off the edge of the screen
     vec2 padding = 1.5 * texelSize;
     bool validReproj = all(greaterThanEqual(uvPrev, padding)) && all(lessThan(uvPrev, 1.0 - padding));
 
@@ -241,13 +213,7 @@ void main() {
             if (prev8.a > 0.5) {
                 giHist = min(prev8.a + 1.0, float(GI_ACCUM_FRAMES));
 
-                // Box Clamping (YCoCg) - Modern anti-ghosting
                 vec3 clampedHistory = clipHistory(prev8.rgb, rawGI, colortex3, texCoord);
-
-                // Variance-based rejection (Controlled by GI_TEMPORAL_REJECT)
-                // We use the 'neighborLuma' (3x3 spatial average) to detect lighting changes.
-                // Comparing raw 1spp noise to the history will constantly trigger false rejections,
-                // preventing the accumulation from ever smoothing out.
                 float prevStd = sqrt(max(p9_tmp.b - p9_tmp.g * p9_tmp.g, 0.0));
                 float tol     = prevStd * GI_TEMPORAL_REJECT + 0.05 * p9_tmp.g + 0.01;
                 float reject  = clamp((abs(neighborLuma - p9_tmp.g) - tol) / (tol + 1e-3), 0.0, 1.0);
@@ -267,8 +233,7 @@ void main() {
                 blendedGI = mix(clampedHistory, rawGI, a);
                 giM1 = mix(p9_tmp.g, lr, a);
                 giM2 = mix(p9_tmp.b, lr * lr, a);
-                // AO uses the same temporal alpha as GI. p9_tmp.a is the previous-frame
-                // accumulated AO (written by THIS pass on the previous frame).
+
                 blendedAO = mix(p9_tmp.a, rawAO, a);
             }
         }

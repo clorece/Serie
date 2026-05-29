@@ -1,8 +1,6 @@
 #ifndef SAMPLING_GLSL
 #define SAMPLING_GLSL
 
-// 5-Tap optimized Bicubic Catmull-Rom Filtering
-// Prevents accumulating blur when sampling history buffers over many frames.
 vec4 textureCatmullRom(sampler2D colortex, vec2 texcoord, vec2 resolution) {
     vec2 position = texcoord * resolution;
     vec2 centerPosition = floor(position - 0.5) + 0.5;
@@ -10,7 +8,7 @@ vec4 textureCatmullRom(sampler2D colortex, vec2 texcoord, vec2 resolution) {
     vec2 f2 = f * f;
     vec2 f3 = f * f2;
 
-    float c = 0.6; // Sharpness tuning factor
+    float c = 0.6;
     vec2 w0 =        -c  * f3 +  2.0 * c         * f2 - c * f;
     vec2 w1 =  (2.0 - c) * f3 - (3.0 - c)        * f2         + 1.0;
     vec2 w2 = -(2.0 - c) * f3 + (3.0 -  2.0 * c) * f2 + c * f;

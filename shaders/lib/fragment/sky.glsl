@@ -27,7 +27,7 @@ vec3 getMoonDisc(vec3 rd, vec3 moonDir, vec3 transmittance) {
 vec3 getSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     vec3 upVec = vec3(0.0, 1.0, 0.0);
 
-    // Clamp view direction to horizon for scattering to avoid black nadir
+    // clamp view direction to horizon for scattering to avoid black nadir
     vec3 scatterRd = normalize(vec3(rd.x, max(rd.y, 0.0), rd.z));
 
     vec3 transmittance;

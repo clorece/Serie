@@ -45,7 +45,6 @@
 
 //#define WIND_MOVEMENT // WIP
 
-// --- Water (deferred surface shading: waves + refraction + reflections) ---
 #define WATER_WAVES
 #define WATER_PARALLAX
 #define WATER_PARALLAX_STEPS 8 // [4 6 8 10 12 14 16 18 20 22 24 26 28 30 32]
@@ -57,16 +56,11 @@
 #define WATER_NORMAL_FADE 128.0 // [0.0 1.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 48.0 64.0 96.0 128.0] distance (blocks) over which wave normals LOD back toward flat (anti-aliases / hides tiling at range)
 #define WATER_NORMAL_FADE_MIN 100.0 // [0.0 1.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 48.0 64.0 96.0 100.0] Minimum normal strength percentage at the fade distance. 0 = fully flat, 50 = 50% less strength.
 
-// Vertex wave displacement: actually moves the water surface mesh for the big swells (the fine
-// ripples stay in the normal map -- water geometry is ~1 vertex/block and can't carry them). The
-// height comes from the SAME FBM field as the wave normals (low octaves only) so the geometry
-// matches the shading; a trochoidal horizontal pull toward crests sharpens crests / broadens
-// troughs for an ocean-like silhouette.
 #define WATER_DISPLACEMENT
 #define WATER_DISPLACEMENT_HEIGHT 0.28 // [0.04 0.06 0.08 0.10 0.12 0.16 0.20 0.28 0.32 0.35 0.40] swell height (blocks)
 #define WATER_DISPLACEMENT_OCTAVES 1 // [1 2 3] big FBM octaves that move the mesh (low = only the largest swells)
 #define WATER_DISPLACEMENT_STEEPNESS 1.0 // [0.0 0.15 0.30 0.45 0.60 0.80 1.00] trochoidal crest sharpening (0 = rounded vertical-only)
-#define WATER_DISPLACEMENT_OFFSET 0.50 // [0.0 0.02 0.04 0.06 0.08 0.10 0.14 0.20 0.30] sink the rest water level this many blocks so cranked-up crests stay at/below the vanilla waterline (raise alongside _HEIGHT)
+#define WATER_DISPLACEMENT_OFFSET 0.30 // [0.0 0.02 0.04 0.06 0.08 0.10 0.14 0.20 0.30] sink the rest water level this many blocks so cranked-up crests stay at/below the vanilla waterline (raise alongside _HEIGHT)
 
 #define WATER_REFRACTION
 #define WATER_REFRACTION_STRENGTH 0.24 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24 0.32 0.35 0.40 0.50] screen-space refraction offset
@@ -77,23 +71,17 @@
 
 #define WATER_ROUGHNESS 0.02 // [0.0 0.005 0.01 0.02 0.04 0.08 0.16] surface roughness for reflections (higher = blurrier/more diffuse reflections, lower = sharper/mirror-like reflections)
 
-// Diagnostic. 0 = off (normal shading).
-// 1 = c_water paints water solid RED wherever the colortex2.b water flag is set (sanity check
-//     that water is detected). Everything else is unaffected.
-// 2 = water thickness (depthtex1 - depthtex0) as greyscale (black=0, white=>=8 blocks). Checks
-//     whether depthtex1 separates translucents so refraction can be depth-scaled like other packs.
-#define WATER_DEBUG 0 // [0 1 2]
-
-// Underwater fog: when the camera is submerged, tint the whole view with the same absorption /
-// scatter as the through-water look, accumulated by distance (so being underwater matches the
-// colour of water seen from outside).
 #define WATER_FOG
 
-// Per-channel Beer-Lambert absorption (1/blocks). Higher = water clears faster to scatter tint.
+#define WATER_CAUSTICS
+#define WATER_CAUSTICS_STRENGTH 2.0 // [0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.6 2.0 2.5 3.0] brightness of caustic bands on submerged terrain
+#define WATER_CAUSTICS_SCALE 1.0    // [0.30 0.50 0.70 1.00 1.40 1.80 2.40 3.20] >1 = denser pattern (smaller bands); 1 = matches the visible wave field
+#define WATER_CAUSTICS_DEPTH_MAX 12.0 // [4.0 6.0 8.0 10.0 12.0 16.0 24.0 32.0] no caustics on terrain deeper than this below the water surface
+
+// higher = water clears faster to scatter tint.
 #define WATER_ABSORPTION_R 0.45 // [0.10 0.20 0.30 0.45 0.60 0.80 1.00]
 #define WATER_ABSORPTION_G 0.13 // [0.05 0.08 0.13 0.18 0.25 0.35]
 #define WATER_ABSORPTION_B 0.08 // [0.03 0.05 0.08 0.12 0.18 0.25]
-// In-scatter colour reached for thick water (linear, gets tonemapped/exposed downstream).
 #define WATER_SCATTER_R 0.015 // [0.0 0.005 0.010 0.015 0.025 0.04 0.06]
 #define WATER_SCATTER_G 0.045 // [0.0 0.02 0.03 0.045 0.06 0.09 0.12]
 #define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
@@ -161,6 +149,7 @@
 //#define PT_DEBUG_VOXELS  // voxel debug view
 //#define GI_DEBUG_VIEW    // irradiance debug
 #define PT_LIGHT_DEBUG 0 // [0 1 2 3 4] Diagnostic isolation: 0=off, 1=RTAO/AO term, 2=indirect(GI), 3=direct-shadow visibility, 4=raw albedo. Shows the chosen lighting component alone so we can see which one makes the dark halo around torches.
+#define WATER_DEBUG 0 // [0 1 2]
 
 #include "/lib/pipelineSettings.glsl"
 #include "/lib/uniforms.glsl"

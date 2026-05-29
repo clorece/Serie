@@ -35,19 +35,12 @@ void main() {
 
     sceneColor *= totalExposure;
 
-    // BLOOM BLENDING  (multi-scale atlas — see lib/post/bloom.glsl)
-    // ReadBloomAtlas already unpacks the gamma-4 storage back to linear HDR.
-    // Multiply by exposure so the bloom tracks the scene's auto-exposure, then
-    // mix (not add) into the scene — bounded, doesn't blow out highlights.
     #ifdef BLOOM
     vec3 bloomColor = ReadBloomAtlas(colortex3, texCoord) * totalExposure;
     sceneColor = mix(sceneColor, bloomColor, BLOOM_STRENGTH);
     #endif
 
     vec3 color = sceneColor;
-
-    // CINEMATIC COLOR GRADING SUITE (HDR Pass)
-    // Color Temperature / White Balance Shifting (HDR space)
     vec3 tempShift = vec3(1.0);
     if (COLOR_TEMP > 0.0) {
         tempShift = vec3(1.0 + COLOR_TEMP * 0.25, 1.0 + COLOR_TEMP * 0.08, 1.0 - COLOR_TEMP * 0.25);
@@ -56,7 +49,6 @@ void main() {
     }
     color = clamp(color * tempShift, 0.0, 10.0);
 
-    // Cinematic Lens Vignette (HDR space)
     #ifdef VIGNETTE
     vec2 vignCoord = texCoord * (1.0 - texCoord.yx);
     float vign = vignCoord.x * vignCoord.y * 15.0;
@@ -64,22 +56,15 @@ void main() {
     color *= vign;
     #endif
 
-    // TONEMAPPING (HDR -> LDR)
     color = applyTonemap(color);
 
-    // CINEMATIC COLOR GRADING SUITE (LDR Pass for deep blacks & vibrant punch)
-    // Contrast (pivot around middle LDR gray 0.5)
     color = clamp((color - vec3(0.5)) * COLOR_CONTRAST + vec3(0.5), 0.0, 1.0);
-    
-    // Saturation (luminance-based blend in LDR space)
+
     float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = clamp(mix(vec3(luma), color, COLOR_SATURATION), 0.0, 1.0);
 
-    // Apply standard sRGB gamma correction with a 5% boost for lighter midtones (2.09)
     color = pow(color, vec3(1.0 / 2.09));
 
-    // SPATIAL DITHERING (ANTI-BANDING)
-    // Apply low-frequency spatial noise to eliminate color banding in dark gradients
     color += vec3(dither) / 255.0;
 
     gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);

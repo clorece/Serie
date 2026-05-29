@@ -79,13 +79,9 @@ void main() {
     #endif
 
     #if defined(VOXEL_GI)
-        // ambientColor is a dim stylistic tint; scale it up to a usable sky irradiance.
         vec3 giSky = ambientColor * GI_SKY_BRIGHTNESS;
         vec3 rawGI = giSky; // sky fallback
         float lr   = luma(rawGI);
-
-        // Per-frame raw AO (RTAO). Default 1 = fully unoccluded for sky pixels.
-        // Temporal accumulation happens in d0_accum (-> colortex9.a).
         float rawAO = 1.0;
 
         if (depth0 < 1.0) {
@@ -94,15 +90,12 @@ void main() {
             vec3 sunDirWorld = normalize(mat3(gbufferModelViewInverse) * lightVector);
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
 
-            // RTAO: short cosine-weighted voxel rays. Uses a separate seed stream
-            // so AO noise doesn't correlate with GI ray noise (better temporal stability).
             #ifdef AO_RTAO
                 uint aoSeed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter * 37 + 9);
                 rawAO = computeRTAO(colortex7, worldAbs, normalWorld, aoSeed, cameraPosition,
                                     depthtex0, gbufferProjection, gbufferModelView);
             #endif
 
-            // Reproject into previous frame (avoid precision loss by staying relative)
             vec3 worldPrevRel = worldRel;
             bool isHand = depth0 < 0.56;
             
@@ -129,11 +122,9 @@ void main() {
             bool validReproj = all(greaterThanEqual(uvPrev, padding)) && all(lessThan(uvPrev, 1.0 - padding));
 
           #ifdef RESTIR_GI
-            // ReSTIR GI: spatio-temporal reservoir resampling
             vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
             vec3 origin = worldAbs + normalWorld * 0.15;
 
-            // Initial RIS over a few cosine-weighted candidate rays
             Reservoir res = newReservoir();
             for (int i = 0; i < RESTIR_INITIAL_SAMPLES; i++) {
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
@@ -147,7 +138,6 @@ void main() {
                     hitPos, hitNormal, wasHit, hitCategory, rayEmission, skyLightmap, dither
                 );
 
-                // Infinite multi-bounce logic (optimized lookup)
                 if (wasHit && hitCategory != VOXEL_EMISSIVE && hitCategory < 100u) {
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
                     vec4  viewHit    = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
@@ -170,8 +160,7 @@ void main() {
                     }
                 }
 
-                // Add emission from non-occluding blocklights the ray passed through. Done after
-                // the multi-bounce overwrite so it is never discarded.
+                // add emission from non-occluding blocklights the ray passed through, done after the multi-bounce overwrite so it is never discarded
                 if (isnan(rad.r) || isnan(rad.g) || isnan(rad.b) || isinf(rad.r) || isinf(rad.g) || isinf(rad.b)) {
                     rad = vec3(0.0);
                 }
@@ -183,7 +172,7 @@ void main() {
                 updateReservoir(res, rad, hitPos - cameraPosition, hitNormal, luma(rad), seed);
             }
 
-            // Temporal reuse from the reprojected reservoir (M-capped)
+            // temporal reuse from the reprojected reservoir (M-capped)
             if (validReproj) {
                 vec4  p9 = texture(colortex9, uvPrev);
                 float prevDepthRaw = p9.r;
@@ -205,15 +194,7 @@ void main() {
                 if (depthValid && normalSim > 0.5) {
                     Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev);
 
-                    // Geometry and Motion-based rejection for reservoirs.
-                    // We DO NOT use luminance rejection here because 1spp path tracing
-                    // noise makes luminance highly volatile. We rely on the AABB clamp
-                    // in d0_accum to handle lighting changes, and geometry to handle occlusions.
-
-                    // Aggressive normal-based rejection for reservoirs
                     float reject = 1.0 - pow(normalSim, 8.0);
-                    
-                    // Motion-aware reservoir rejection
                     float motion = length(cameraPosition - previousCameraPosition);
                     reject = max(reject, smoothstep(0.1, 1.0, motion) * 0.5);
 
@@ -225,9 +206,6 @@ void main() {
             }
             finalizeReservoir(res);
             
-            // Hard clamp the temporal reservoir's unbiased contribution before it goes into history.
-            // This prevents a single massive firefly from permanently poisoning the spatial 
-            // reuse passes in subsequent frames (which causes the "cloudy blotches").
             float unbiasedLuma = luma(res.radiance * res.W);
             if (unbiasedLuma > float(RESTIR_CLAMP)) {
                 res.W *= float(RESTIR_CLAMP) / unbiasedLuma;
@@ -238,21 +216,17 @@ void main() {
             resv11Out = vec4(res.samplePos, res.W);
             resv14Out = vec4(octEncodeNormal(res.sampleNormal), 0.0, 0.0);
 
-            // Spatial reuse moved to d0_accum to prevent buffer read/write conflicts.
             Reservoir shade = res;
-            
-            // Resolve GI estimate
+
             rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);
             lr    = luma(rawGI);
 
-            // Relative firefly clamp
             vec4 p9_tmp = validReproj ? textureCatmullRom(colortex9, uvPrev, vec2(viewWidth, viewHeight)) : vec4(0.0);
             if (validReproj && p9_tmp.g > 1e-3) {
                 float maxL = p9_tmp.g * GI_FIREFLY;
                 if (lr > maxL) { rawGI *= maxL / lr; lr = maxL; }
             }
           #else
-            // Plain single-bounce GI
             rawGI = computeGI(
                 colortex7, worldAbs, normalWorld, seed, cameraPosition,
                 sunDirWorld, lightColor, giSky, skyLightmap,
@@ -261,8 +235,7 @@ void main() {
             lr    = luma(rawGI);
           #endif
         }
-        
-        // Prevent NaNs or infinities from ever getting written to hist8Out/hist9Out (raw GI/moments)
+
         if (isnan(rawGI.r) || isnan(rawGI.g) || isnan(rawGI.b) || isinf(rawGI.r) || isinf(rawGI.g) || isinf(rawGI.b)) {
             rawGI = vec3(0.0);
         }
@@ -271,12 +244,10 @@ void main() {
 
         hist8Out = vec4(rawGI, 1.0);
         hist9Out = vec4(depth0, lr, lr * lr, 1.0);
-        // Stash raw per-frame AO into the spare .w of the sample-hit-normal output.
-        // d0_accum reads it back, temporal-blends it, and writes the result into c9.a.
+
         resv14Out.w = rawAO;
 
     #elif defined(VOXEL_AO)
-        // Voxel AO fallback (output raw for accumulation)
         float rawAO = 1.0;
         if (depth0 < 1.0) {
             vec3 normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);

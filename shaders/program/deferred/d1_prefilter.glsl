@@ -5,6 +5,8 @@
 //
 // Output: colortex3 = filtered GI (.rgb) + variance (.a)
 
+// TODO: optimizations
+
 #ifdef VERTEX
 
 out vec2 texCoord;
@@ -37,17 +39,13 @@ void main() {
     float histLen = c8.a;
     vec4  cm      = texture(colortex9, texCoord);
     
-    // Initial variance estimate from temporal moments
     float cVar = varFromMoments(cm.g, cm.b);
-    
-    // Bootstrap variance spatially if history is short
-    // This is CRITICAL for the denoiser to function properly when moving the camera.
+
     if (histLen < float(SVGF_VAR_BOOST)) {
         float sv = spatialLumaVariance(colortex8, texCoord);
         cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
     }
 
-    // Lightweight Prefilter & Variance Stabilization (3x3)
     vec3 sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
     
@@ -65,14 +63,11 @@ void main() {
             
             float nLuma = luma(n8.rgb);
             
-            // To properly bootstrap the neighborhood variance, we fall back to the 
-            // center's bootstrapped variance if the neighbor is also young.
             float nVar = varFromMoments(nm_sample.g, nm_sample.b);
             if (n8.a < float(SVGF_VAR_BOOST)) {
                 nVar = max(nVar, cVar);
             }
             
-            // Geometry-aware edge stopping to prevent bleeding
             float nDepthRaw = textureLod(depthtex0, nUV, 0.0).r;
             float nDepth = getDepth(nDepthRaw);
             vec3 nN = normalize(textureLod(colortex1, nUV, 0.0).rgb * 2.0 - 1.0);

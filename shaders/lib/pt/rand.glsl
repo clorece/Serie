@@ -14,7 +14,6 @@ float randFloat(inout uint seed) {
     return float(seed >> 8u) * (1.0 / float(1u << 24u));
 }
 
-// Per-pixel decorrelated seed from screen coordinate and frame index
 uint pixelSeed(ivec2 pixel, int frame) {
     return pcgHash(uint(pixel.x) ^ (uint(pixel.y) << 16u) ^ uint(frame) * 1664525u);
 }

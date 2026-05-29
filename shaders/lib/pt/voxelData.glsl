@@ -15,7 +15,7 @@
 
 #define VOXEL_ATLAS_ROWS (VOXEL_GRID_SIZE / VOXEL_ATLAS_COLS)
 
-// Block categories stored in voxel atlas (.r channel of each RGBA8UI texel)
+// block categories stored in voxel atlas (.r channel of each RGBA8UI texel)
 #define VOXEL_AIR      0u
 #define VOXEL_OPAQUE   1u
 #define VOXEL_FOLIAGE  2u

@@ -6,8 +6,6 @@
 
 #include "/lib/pt/ao.glsl"
 #include "/lib/blocklightColors.glsl"
-// Sky bounces use the flat per-frame skyColor (passed in) — no directional LUT.
-
 
 struct VoxelHit {
     bool  hit;
@@ -18,7 +16,6 @@ struct VoxelHit {
     vec3  emission;  // emission gathered from non-occluding blocklights the ray passed through
 };
 
-// DDA that returns hit position, face normal and voxel contents (for GI gathering).
 VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
     VoxelHit r;
     r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0); r.emission = vec3(0.0);
@@ -31,8 +28,6 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     ivec3 stepDir  = ivec3(sign(rayDir));
     vec3  tDelta   = abs(1.0 / (rayDir + 1e-8));
 
-    // Pre-calculate exact distance where the ray exits the voxel grid AABB.
-    // Eliminates per-step bounds checking.
     vec3 t0Box = (vec3(0.0) - localPos) / (rayDir + 1e-8);
     vec3 t1Box = (vec3(VOXEL_GRID_SIZE) - localPos) / (rayDir + 1e-8);
     vec3 tMaxBox = max(t0Box, t1Box);
@@ -53,8 +48,6 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 
         uvec4 v = texelFetch(atlas, voxelCoordToAtlas(vox), 0);
         if (i == 0) {
-            // At the starting cell, if it contains a blocklight (e.g. a torch mounted on the shading surface),
-            // gather its emission so the mounting face is illuminated. Then continue the ray.
             if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
                 vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
                                        : vec3(v.gba) / 255.0;
@@ -106,12 +99,8 @@ vec3 giRayRadiance(
 ) {
     VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
 
-    // Emission picked up from blocklights the ray passed through. Returned separately so the
-    // caller can add it AFTER any multi-bounce radiance overwrite (otherwise it gets discarded).
     rayEmission = h.emission;
 
-
-    // Scale down blocklight emission outdoors under the open sky during the day.
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
     float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
@@ -133,8 +122,6 @@ vec3 giRayRadiance(
             if (!occluded) rad += h.albedo * sunColor * ndl * skyOcc;
         }
 
-        // Sky probe: shoot one DDA ray from the bounce surface toward the sky.
-        // Optimization: Skip expensive DDA if sky lightmap is negligible.
         vec3  skyProbeRaw    = h.normal + vec3(0.0, 1.0, 0.0);
         float skyProbeLenSq  = dot(skyProbeRaw, skyProbeRaw);
         if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) {
@@ -150,9 +137,6 @@ vec3 giRayRadiance(
         return rad;
     }
     
-
-    // If the ray escapes the voxel bounds, seamlessly trace it against the screen-space
-    // depth buffer to pick up infinite-distance geometry (mountains, trees outside radius).
     vec3 ssrtHitNormal;
     vec2 ssrtHitUV;
     float remainingDist = max(0.0, float(GI_RADIUS) - distance(origin, h.pos));
@@ -174,8 +158,7 @@ vec3 giRayRadiance(
     hitPos      = h.pos;
     hitNormal   = -dir;
     vec3 skyRad = skyColor * skyOcc;
-    // Modulate the escaped sky light so downward rays return dark (simulating ground)
-    // rather than glowing brightly, keeping NdotL consistent outside the voxel grid.
+    
     return skyRad * smoothstep(-0.2, 0.4, dir.y);
 }
 

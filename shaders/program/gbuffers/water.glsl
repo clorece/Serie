@@ -58,10 +58,7 @@ void main() {
 
     #ifdef WATER_DISPLACEMENT
     if (isWater > 0.5) {
-        // Move the water mesh by the big swells (matches the wave normals' low octaves). The
-        // displacement is along world axes; rotate it into view space and add, then reproject --
-        // equivalent to ftransform() of the displaced vertex. worldPos carries the displaced
-        // position downstream so the fragment normal / parallax line up with the new geometry.
+
         vec3 worldDisp = waterDisplacement(worldPos.xz, frameTimeCounter * WATER_WAVE_SPEED);
         worldPos += worldDisp;
         viewPos  += mat3(gbufferModelView) * worldDisp;
@@ -96,9 +93,6 @@ in float tangentW;
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;
 
-    // Blend is off, so discard cutout/transparent texels (e.g. glass-pane holes)
-    // instead of writing them as occluding surfaces. Never discard water: its
-    // vertex-colour alpha can be low and the surface must always be present.
     if (isWater < 0.5 && albedo.a < 0.1) discard;
 
     if (isWater > 0.5) {
@@ -109,16 +103,12 @@ void main() {
         {
             float t = frameTimeCounter * WATER_WAVE_SPEED;
 
-            // Distance LOD: fade waves toward flat and widen the finite-difference footprint
-            // with range, so distant water doesn't alias / reveal the tiling pattern.
             float camDist = length(worldPos - cameraPosition);
             float lod = clamp(camDist / WATER_NORMAL_FADE, 0.0, 1.0);
             float fadeMin = WATER_NORMAL_FADE_MIN * 0.01;
             float strength = WATER_NORMAL_STRENGTH * mix(1.0, fadeMin, lod);
             float eps = mix(0.10, 0.45, lod);
 
-            // Tangent-plane perturbation works for any face orientation (flat tops, flowing
-            // water, and vertical water side faces all get waves).
             worldN = waterSurfaceNormal(worldPos, worldGeoN, t, WATER_WAVE_AMPLITUDE, strength, eps);
         }
         #endif
@@ -127,14 +117,7 @@ void main() {
         gl_FragData[0] = vec4(viewWaveN * 0.5 + 0.5, 1.0);     // colortex1: wave normal
         gl_FragData[1] = vec4(lightmapCoord, 1.0, 1.0);        // colortex2: .rg lightmap, .b=1 water flag
     } else {
-        // Glass / ice / other translucents: write a normal to colortex1 (so d7 still lights the
-        // see-through background), the per-material flag to colortex2.b, and pack the block albedo
-        // as RGB565 into colortex2.a so c_water can tint by the glass/ice colour.
-        //
-        // GENERATED NORMALS: perturb the flat face normal by the gradient of the texture's OWN
-        // luminance (tangent space) so the block's surface detail (ice cracks, glass frame) becomes
-        // real bumps -> c_water reflection + refraction follow the texture. Auto-mip sampling makes
-        // the detail LOD out with distance. Tune GEN_NORMAL_STRENGTH; flip its sign if inverted.
+
         const float GEN_NORMAL_STRENGTH = 2.0;
         const vec3  LUMA = vec3(0.2126, 0.7152, 0.0722);
         vec2  atlasTexel = 1.0 / vec2(textureSize(texture, 0));

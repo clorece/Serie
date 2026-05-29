@@ -3,7 +3,6 @@
 
 #include "/lib/pt/voxelData.glsl"
 
-// Screen-Space Ray Tracing Fallback (Optimized 2D Line March)
 bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, vec3 camPos, mat4 gbufferProj, mat4 gbufferMV, sampler2D depthtex0, float dither, out vec2 hitUV, out vec3 hitNormal, out vec3 hitPos) {
     vec3 viewOrigin = (gbufferMV * vec4(worldRayOrigin - camPos, 1.0)).xyz;
     vec3 viewDir = mat3(gbufferMV) * worldRayDir;
@@ -22,7 +21,6 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     
     vec3 rayDelta = uvEnd - uvOrigin;
     
-    // Pre-clip ray to screen boundaries to remove inner loop branching
     float tMax = 1.0;
     if (rayDelta.x > 0.0) tMax = min(tMax, (1.0 - uvOrigin.x) / rayDelta.x);
     else if (rayDelta.x < 0.0) tMax = min(tMax, -uvOrigin.x / rayDelta.x);
@@ -33,18 +31,15 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     
     if (tMax <= 0.0) return false;
     rayDelta *= tMax;
-    
-    // Scale steps by screen distance, max 16 steps due to dithering
+
     float screenDist = max(abs(rayDelta.x), abs(rayDelta.y));
     if (screenDist < 0.005) return false;
     
     float steps = clamp(screenDist * 100.0, 4.0, 16.0);
     vec3 stepDelta = rayDelta / steps;
     
-    // Dither the start position to hide stepping artifacts
     vec3 currentUV = uvOrigin + stepDelta * dither;
-    
-    // Set up linear depth interpolation for accurate thickness testing
+
     float invZOrigin = 1.0 / viewOrigin.z;
     float invZEnd = 1.0 / viewEnd.z;
     float invZDelta = (invZEnd - invZOrigin) * tMax;
@@ -64,15 +59,12 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
             continue;
         }
 
-        // Convert depth buffer to linear view space Z
         float ndcZ = depthBuffer * 2.0 - 1.0;
         float sceneViewZ = P32 / (-ndcZ - P22);
         
         float rayViewZ = 1.0 / currentInvZ;
         float prevRayViewZ = 1.0 / (currentInvZ - invZStep);
 
-        // Robust intersection: check if the ray crossed the surface in this step,
-        // or if it's within a depth-proportional thickness tolerance.
         float hitThickness = max(1.0, abs(sceneViewZ) * 0.05);
         if ((rayViewZ < sceneViewZ && prevRayViewZ >= sceneViewZ) || 
             (rayViewZ < sceneViewZ && rayViewZ > sceneViewZ - hitThickness)) {
@@ -88,15 +80,6 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     return false;
 }
 
-// Amanatides-Woo DDA traversal through the voxel grid.
-//
-// atlas:    voxel atlas sampler (colortex7, bound as usampler2D)
-// worldPos: ray origin in absolute world space (should be offset off the surface)
-// rayDir:   normalized ray direction in world space
-// maxDist:  maximum travel distance in blocks
-// camPos:   current cameraPosition uniform value (grid anchor)
-//
-// Returns true if the ray hits VOXEL_OPAQUE or VOXEL_FOLIAGE before maxDist.
 bool traceVoxelRay(
     usampler2D atlas,
     vec3 worldPos,
@@ -122,8 +105,6 @@ bool traceVoxelRay(
     vec3 invRayDir = 1.0 / (rayDir + 1e-8);
     vec3 tDelta = abs(invRayDir);
 
-    // Pre-calculate exact distance where the ray exits the voxel grid AABB.
-    // This eliminates the need to check 3D bounds on every single step of the loop.
     vec3 t0 = (vec3(0.0) - localPos) * invRayDir;
     vec3 t1 = (vec3(VOXEL_GRID_SIZE) - localPos) * invRayDir;
     vec3 tMaxBox = max(t0, t1);
@@ -133,7 +114,6 @@ bool traceVoxelRay(
     vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
 
     float tEntry = 0.0;
-    // Cap iterations to scale dynamically with the grid diameter
     for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
         if (tEntry >= maxDist) return false;
         
@@ -143,9 +123,9 @@ bool traceVoxelRay(
         }
 
         uint vt = sampleVoxel(atlas, vox);
-        // All non-air voxels (including all blocklights) act as solid occluders for shadow rays
+        
+        // all non-air voxels (including all blocklights) act as solid occluders for shadow rays
         if (vt != VOXEL_AIR && i > 0) return true;
-
 
         bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));
         tEntry = min(tMax.x, min(tMax.y, tMax.z));

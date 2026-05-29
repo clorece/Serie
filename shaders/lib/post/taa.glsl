@@ -5,9 +5,6 @@
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 
-
-
-// Box clamping in YCoCg space prevents color shifting (rainbow ghosting)
 vec3 RGBtoYCoCg(vec3 c) {
     return vec3(
          0.25 * c.r + 0.5 * c.g + 0.25 * c.b,
@@ -32,9 +29,6 @@ vec3 ReinhardInverse(vec3 color) {
     return color / max(1.0 - getLuminance(color), 0.0001);
 }
 
-
-// 5-tap Catmull-Rom filter for history sampling. Prevents the progressive
-// blur that occurs when using standard bilinear filtering across many frames.
 vec4 textureCatmullRom(sampler2D tex, vec2 uv, vec2 texSize) {
     vec2 texPixelSize = 1.0 / texSize;
     uv = uv * texSize;
@@ -100,9 +94,6 @@ vec3 clipAABB(vec3 avgColor, vec3 variance, vec3 prevColor, float aggression) {
     return avgColor + diff;
 }
 
-
-// Uses the closest depth in a 3x3 window to prevent foreground objects from
-// smearing their reprojection vectors onto the background.
 float getClosestDepth(vec2 uv, vec2 screenSize) {
     float closestDepth = 2.0;
     for (int y = -1; y <= 1; y++) {
@@ -171,11 +162,7 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
 
     bool isWater = textureLod(colortex2, uv, 0.0).b > 0.5;
 
-    // Aggression factor (lower = tighter clamp = less ghosting, more flicker)
-    // Relax history clamp for water to prevent the animated waves and high-frequency
-    // reflections/refractions from being clipped away (which disables TAA on water).
-    float aggression = isWater ? 3.0 : 1.0; 
-    
+    float aggression = isWater ? 3.0 : 1.0;     
 
     prevColorYCoCg = clipAABB(avgColorYCoCg, variance, prevColorYCoCg, aggression);
     vec3 prevColor = max(YCoCgtoRGB(prevColorYCoCg), 0.0);
@@ -184,7 +171,7 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
     float blendWeight = TAA_BLEND_WEIGHT;
     float velocityReject = clamp(pow(dot(velocityPixels.xy, velocityPixels.xy), 0.25) * 0.1, 0.0, 1.0);
     if (isWater) {
-        velocityReject *= 0.25; // Keep history blending stable for water during camera movement
+        velocityReject *= 0.25; // keep history blending stable for water during camera movement
     }
     blendWeight *= (1.0 - velocityReject);
 

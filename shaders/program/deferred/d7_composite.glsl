@@ -41,9 +41,6 @@ in vec3 lightVector;
 
 
 float depth0 = texture(depthtex0, texCoord).r;
-// Material code is packed into colortex1.a (RGB10_A2 -> 2-bit, 4 codes):
-// 0.0=normal, 1/3=foliage, 2/3=grass, 1.0=emissive. Point-sample (texelFetch)
-// so bilinear filtering can't blend two codes together.
 float material = texelFetch(colortex1, ivec2(gl_FragCoord.xy), 0).a;
 vec3 normal = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
 vec3 lightmap = texture(colortex2, texCoord).rgb;
@@ -56,7 +53,6 @@ vec3 clipSpace;
 vec3 getLightmap(vec3 l) {
     l.x = 1.0 * pow(l.x, 5.06);
 
-    // Scale down vanilla blocklights outdoors under the open sky during the day.
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
     float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
@@ -73,14 +69,9 @@ float getNdotL(vec3 n, vec3 l) {
 
 
     if (material > 0.16 && material < 0.83) {
-        // Wrap lighting for foliage/grass to simulate translucency
-        // and fix harsh shadows on crossed-quad models.
         return max(dotNL * 0.5 + 0.5, 0.0);
     }
 
-    // Opaque Disney (Burley) Diffuse
-    // Adds a retro-reflective peak and smoother falloff based on surface roughness.
-    // We use a fixed medium roughness (0.5) for general block cohesion.
     float roughness = 0.5;
     vec3 v = normalize(-getFragPosition().xyz);
     vec3 h = normalize(l + v);
@@ -103,12 +94,6 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
     if (isFoliage && isFar <= 0.0) {
         return 1.0;
     }
-    
-    // Contact Shadow vs Infinite Shadow
-    // Up close, we restrict this to a short-range contact shadow to prevent massive false positives 
-    // that smear across foreground geometry (e.g., doors, pillars).
-    // Beyond shadowDistance (where the real shadow map stops), we smoothly scale up the ray length
-    // to provide infinite shadows for distant mountains where these false positives are far less noticeable.
     
     float rayLength = mix(clamp(viewDist * 0.1, 0.25, 2.5), 128.0, isFar);
     int steps = int(mix(12.0, 32.0, isFar));
@@ -159,8 +144,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 
     float shadowResult = mix(1.0, sscs, edgeFade);
     if (isFoliage) {
-        // Fade in the shadow based on distance to prevent glowing distant trees,
-        // while preserving subsurface scattering up close.
+        // fade in the shadow based on distance to prevent glowing distant trees, while preserving subsurface scattering up close.
         shadowResult = mix(1.0, shadowResult, isFar);
     }
     return shadowResult;
@@ -186,12 +170,6 @@ void main() {
     vec3 color = texture(colortex0, texCoord).rgb;
 
     #ifdef SSPT_DEBUG
-        // SSPT-only view: gather the screen-space path tracer in isolation (no voxel
-        // fallback, no ReSTIR, no denoise, no albedo).
-        //   MODE 0 (radiance): bright = SSPT found bounce light; black = miss OR dark hit.
-        //   MODE 1 (coverage): GREEN = fraction of rays that HIT anything (ignores how
-        //                      dark the hit was), RED tint = all rays missed -> separates
-        //                      "rays escaped to sky" from "hit a dark surface".
         if (depth0 < 1.0) {
             vec3 viewPos = convertScreenSpaceToWorldSpace(unjitteredTexCoord, depth0); // view space
             vec3 originV = viewPos + normal * 0.15;                 // colortex1 is view normals
@@ -222,18 +200,15 @@ void main() {
         return;
     #endif
 
-    // Direct sunlight
     float diffuse = getNdotL(normal, lightVector);
-    float skyOcc = sqrt(lightmap.y); // Loosened modulation: allows leakage until nearly 0 lightmap
+    float skyOcc = sqrt(lightmap.y);
     
     vec3 directShadow = getShadow(material);
     #ifdef SCREENSPACE_SHADOWS
     if (depth0 < 1.0) {
         float ditherVal = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
         vec3 viewPos = getFragPosition().xyz;
-        // Combine standard shadow map with infinite screen-space shadows.
-        // Disabled on foliage for short range to allow shadow-map offset subsurface scattering,
-        // but enabled for infinite shadows to prevent glowing trees in the distance.
+
         directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal, material);
     }
     #endif
@@ -244,26 +219,16 @@ void main() {
         vec3 viewPos = getFragPosition().xyz;
         float VdotL = max(dot(normalize(-viewPos), lightVector), 0.0);
         
-        // Allium uses a very sharp highlight for SSS: pow(max(VdotL, 0.0), 10.0) * 0.6
         float sssPhase = pow(VdotL, 10.0) * 0.6;
         
-        // We only apply SSS to the unlit faces (backfaces). 
         float NdotL = max(dot(normal, lightVector), 0.0);
         float backfaceMask = clamp(1.0 - NdotL, 0.0, 1.0);
         
-        // directShadow here contains the offset shadow map. If it's > 0 on the backface,
-        // light is successfully passing through the leaf.
         vec3 sssLight = lightColor * directShadow * sssPhase * backfaceMask * (1.0 - rainStrength * 0.75);
         
-        // We multiply by lightmap.y (sky access) to prevent glowing deep in caves
-        direct += sssLight * lightmap.y * 2.5; // boosted to match Allium's lightHighlight * 2.5 multiplier
+        direct += sssLight * lightmap.y * 2.5;
     }
 
-    // Ray-traced contact AO
-    // Voxel GI captures macro occlusion; RTAO (short cosine rays in the voxel atlas, computed
-    // in d0_restir, temporally accumulated by d0_accum into colortex9.a) adds the sub-voxel
-    // contact darkening the 1-block grid cannot resolve. Multiplied onto the indirect term
-    // so it complements rather than double-counts the GI.
     float aoTerm = 1.0;
     #ifdef AO_RTAO
         if (depth0 < 1.0) {
@@ -271,20 +236,18 @@ void main() {
         }
     #endif
 
-    // Indirect (denoised)
     vec3 indirect;
     #if defined(VOXEL_GI)
         vec3 gi = texture(colortex3, texCoord).rgb;
         #ifdef AO_RTAO
             #ifdef LIGHTING_AO_FULL
-                gi *= aoTerm;                                       // ambient occlusion fully occludes the ambient term
+                gi *= aoTerm;
             #else
                 gi *= mix(1.0, aoTerm, float(AO_GI_STRENGTH) / 100.0);
             #endif
         #endif
 
-        // Prevent skylight illumination from the path tracer from illuminating sunlit terrain,
-        // but ensure that path-traced emissives (blocklight, warm bounces) ignore this restriction.
+        // prevent skylight illumination from the path tracer from illuminating sunlit terrain, but ensure that path-traced emissives (blocklight, warm bounces) ignore this restriction.
         float skyRatio = 0.22 / 0.4;
         float emissiveWeight = clamp((gi.r - gi.b * skyRatio) / max(gi.r, 1e-5), 0.0, 1.0);
         emissiveWeight = max(emissiveWeight, clamp(lightmap.x * 4.0, 0.0, 1.0));
@@ -297,7 +260,6 @@ void main() {
 
         indirect = gi;
     #elif defined(AO_RTAO)
-        // GI off, RTAO on: lightmap ambient occluded by contact AO. No bent normal (kept scalar).
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
     #elif defined(VOXEL_AO)
         float ao = texture(colortex3, texCoord).r;
@@ -307,12 +269,10 @@ void main() {
         indirect = getLightmap(lightmap) + vec3(ambientStrength);
     #endif
 
-    // Optional contact AO on direct sunlight
     #if defined(AO_RTAO) && (AO_DIRECT_STRENGTH > 0)
         direct *= mix(1.0, aoTerm, float(AO_DIRECT_STRENGTH) / 100.0);
     #endif
 
-    // Diagnostic: isolate one lighting component (PT_LIGHT_DEBUG in options.glsl)
     #if PT_LIGHT_DEBUG > 0
         if (depth0 < 1.0) {
             #if PT_LIGHT_DEBUG == 1
@@ -328,17 +288,11 @@ void main() {
         }
     #endif
 
-    // Total irradiance = direct sun + indirect fill, weighted to set the sun-vs-ambient
-    // contrast ratio, then modulated by albedo. Keeping ambient from matching the sun is
-    // what stops flat shading.
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
 
-    if (material > 0.83) { // emissive code = 1.0 in colortex1.a; threshold halfway between 2/3 and 1.0
-        // Ported philosophy from Allium: distinguish between the glowing light source itself
-        // (high albedo brightness) and its structural, non-glowing parts (like wooden sticks, metal frames,
-        // or stone crevices). Structural parts receive 100% standard direct sun, shadows, and NdotL shading,
-        // while the glowing parts receive the appropriate self-emission boost.
+    // TODO reimplement
+    if (material > 0.83) {
         float albedoBrightness = max(color.r, max(color.g, color.b));
         float isGlowing = smoothstep(0.3, 0.7, albedoBrightness);
 
@@ -351,7 +305,7 @@ void main() {
         color = color * (direct + indirect);
     }
 
-    // Voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl)
+    // voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl)
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {
         vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);

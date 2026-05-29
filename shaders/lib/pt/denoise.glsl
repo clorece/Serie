@@ -5,7 +5,6 @@
 #define FRAME_COUNTER_DECLARE
 #endif
 
-// common.glsl provides texelSize and getDepth; options.glsl provides the SVGF sigmas.
 #include "/lib/util/common.glsl"
 #include "/lib/options.glsl"
 
@@ -14,7 +13,6 @@
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 #endif
 
-// YCoCg conversion (reversible, better for box-clamping than RGB)
 vec3 RGBtoYCoCg(vec3 c) {
     return vec3(
          0.25 * c.r + 0.5 * c.g + 0.25 * c.b,
@@ -27,10 +25,6 @@ vec3 YCoCgtoRGB(vec3 c) {
     return vec3(tmp + c.y, c.x + c.z, tmp - c.y);
 }
 
-// Neighborhood clamping (box clamp) to kill ghosts at the temporal accumulation source.
-// We use a variance-based box clamp (mean +/- std * gamma).
-// This is more relaxed than a strict min/max bound, allowing the temporal
-// accumulation to actually build up a smooth signal from 1spp noise.
 vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
     vec3 m1 = vec3(0.0), m2 = vec3(0.0);
     for (int x = -1; x <= 1; x++) {
@@ -41,9 +35,7 @@ vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
     }
     m1 /= 9.0; m2 /= 9.0;
     vec3 std = sqrt(max(m2 - m1 * m1, 0.0));
-    
-    // SAFETY CLAMP: Prevent standard deviation from exploding due to 1spp fireflies.
-    // If std is infinite, the AABB is infinite, and stale history (ghosts) will never be rejected.
+
     std = min(std, m1 * 2.0);
     
     // Box clamp history to [mean - k*std, mean + k*std]
@@ -54,9 +46,6 @@ vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
     return YCoCgtoRGB(clamp(h, aabbMin, aabbMax));
 }
 
-// Custom 2x2 Bilateral History Fetch
-// Evaluates depth and normal similarity for each of the 4 neighboring texels in 
-// the history buffer and rejects those that belong to a different surface.
 bool fetchBilateralHistory(
     vec2 uv, float expectedClipZ, vec3 expectedNormalWorld, 
     sampler2D hist8, sampler2D hist9, sampler2D hist15, 
@@ -83,13 +72,12 @@ bool fetchBilateralHistory(
     vec4 c9_01 = texelFetch(hist9, i01, 0);
     vec4 c9_11 = texelFetch(hist9, i11, 0);
 
-    // Hybrid depth validation
     float expectedLinDepth = getDepth(expectedClipZ * 0.5 + 0.5);
-    bool isHand = (expectedLinDepth < 0.76); // Hand depth threshold
+    bool isHand = (expectedLinDepth < 0.76); // hand depth threshold
     
     vec4 validW;
     if (isHand) {
-        // For the hand, use relative linear depth check to accommodate bobbing/sway
+        // for the hand, use relative linear depth check to accommodate bobbing/sway
         vec4 linDepths = vec4(
             getDepth(c9_00.r),
             getDepth(c9_10.r),
@@ -97,14 +85,12 @@ bool fetchBilateralHistory(
             getDepth(c9_11.r)
         );
         vec4 relErr = abs(linDepths - vec4(expectedLinDepth)) / max(vec4(expectedLinDepth), vec4(1e-3));
-        validW = step(relErr, vec4(0.15)); // Robust 15% relative threshold for the hand
+        validW = step(relErr, vec4(0.15)); // change 0.15 (15%) relative threshold for the hand
     } else {
-        // For terrain, use the original high-precision clip-space check to avoid quantization stripes
         vec4 clipZ = vec4(c9_00.r, c9_10.r, c9_01.r, c9_11.r) * 2.0 - 1.0;
         validW = step(abs(clipZ - expectedClipZ), vec4(0.005));
     }
-    
-    // Normal rejection: use world-space normal similarity to identify surface boundaries.
+
     vec3 n00 = octDecodeNormal(texelFetch(hist15, i00, 0).xy);
     vec3 n10 = octDecodeNormal(texelFetch(hist15, i10, 0).xy);
     vec3 n01 = octDecodeNormal(texelFetch(hist15, i01, 0).xy);
@@ -116,7 +102,7 @@ bool fetchBilateralHistory(
         max(dot(n01, expectedNormalWorld), 0.0),
         max(dot(n11, expectedNormalWorld), 0.0)
     );
-    // Pow 16.0 provides a good balance between edge sharpness and noise stability.
+
     validW *= pow(normalW, vec4(16.0));
     
     w *= validW;
@@ -135,19 +121,6 @@ bool fetchBilateralHistory(
     return false;
 }
 
-// SVGF — Spatiotemporal Variance-Guided Filtering (Schied et al. 2017),
-// re-implemented from the published algorithm.
-//
-// The temporal stage (in d0_restir) integrates colour and the first two
-// luminance moments. Here we estimate per-pixel variance from those moments
-// (or spatially while history is short), then run an edge-aware a-trous
-// wavelet whose LUMINANCE edge-stopping is scaled by sqrt(variance): noisy
-// regions blur hard, converged regions keep detail. Variance is filtered
-// alongside colour (with weight^2) so later iterations stay guided.
-//
-// Buffer convention through the chain: .rgb = irradiance, .a = variance.
-
-// B3-spline (1,4,6,4,1)/16 a-trous kernel weight, indexed by |offset| in 0..2.
 float atrousW(int i) {
     return (i == 0) ? (6.0 / 16.0) : (i == 1) ? (4.0 / 16.0) : (1.0 / 16.0);
 }
@@ -156,8 +129,6 @@ float varFromMoments(float m1, float m2) {
     return max(m2 - m1 * m1, 0.0);
 }
 
-// Spatial luminance variance over a 5x5 window (used to bootstrap young pixels
-// that don't yet have enough temporal samples for a reliable moment estimate).
 float spatialLumaVariance(sampler2D colorTex, vec2 uv) {
     float s1 = 0.0, s2 = 0.0, count = 0.0;
     for (int x = -2; x <= 2; x++) {
@@ -170,8 +141,6 @@ float spatialLumaVariance(sampler2D colorTex, vec2 uv) {
     return max(s2 - s1 * s1, 0.0);
 }
 
-// 3x3 gaussian of the variance channel — stabilises the luminance weight so a
-// single noisy pixel doesn't punch a hole through the edge-stopping.
 float gauss3Var(sampler2D src, vec2 uv) {
     float v = 0.0, wsum = 0.0;
     for (int x = -1; x <= 1; x++) {
@@ -184,20 +153,13 @@ float gauss3Var(sampler2D src, vec2 uv) {
     return v / wsum;
 }
 
-// Jitter Helper (Cache-Friendly Tile Rotation)
-// By rounding the screen coordinate to 8x8 tiles, all pixels within a GPU warp
-// will share the exact same rotation matrix. This preserves texture cache coherency 
-// and keeps performance high, while still breaking the A-Trous ringing artifact.
+// might need to change this to just use TAAJitter (might fix some weird temporal artifacts that way)
 float getJitterRotation(vec2 uv, int frame) {
     vec2 p = floor(uv * vec2(viewWidth, viewHeight) / 8.0);
     p += float(frame % 64) * vec2(5.588238, 5.588238);
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * 6.2831853;
 }
 
-// First a-trous iteration
-// Colour comes from giTex (.rgb); variance is derived here from momentTex
-// (.g = m1, .b = m2) or estimated spatially while the history is short.
-// Returns vec4(filtered colour, filtered variance) to seed the chain.
 vec4 svgfAtrousFirst(
     sampler2D giTex, sampler2D momentTex, sampler2D depthTex, sampler2D normalTex,
     vec2 uv, float stepSize, float centerDepth, vec2 depthGrad, vec3 centerN, float histLen,
@@ -212,28 +174,24 @@ vec4 svgfAtrousFirst(
         cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
     }
     
-    // Increased epsilon (0.05 instead of 1e-3) prevents the denoiser from "freezing"
-    // when variance drops, which causes the painterly/blotchy artifacts.
     float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) + 0.05);
     float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
     float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
-    
-    // Accurately reconstruct the center pixel's view-space position for planar rejection
+
     float centerDepthRaw = textureLod(depthTex, uv, 0.0).r;
     vec4 centerClip = vec4(uv * 2.0 - 1.0, centerDepthRaw * 2.0 - 1.0, 1.0);
     vec4 centerView = gbufferProjectionInverse * centerClip;
     vec3 centerPos = centerView.xyz / centerView.w;
 
     mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
-    int tapRange = 2; // Default 5x5 kernel
+    int tapRange = 2;
 
     if (stepSize > 2.0) {
         float rotAngle = getJitterRotation(uv, frameCounter);
         rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
-        // Optimization: Use a 3x3 kernel for very large dilation steps to save performance
         tapRange = 1; 
     }
 
@@ -260,10 +218,6 @@ vec4 svgfAtrousFirst(
                 float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
 
-                // Strict Planar Rejection: Calculate the true distance from the neighbor's 3D position 
-                // to the mathematical plane defined by the center pixel's normal and position.
-                // This cleanly rejects disjoint surfaces (like a wall behind a floating block) 
-                // even if their depth gradients and normals match perfectly.
                 vec4 nClip = vec4(nUV * 2.0 - 1.0, nDepthRaw * 2.0 - 1.0, 1.0);
                 vec4 nView = gbufferProjectionInverse * nClip;
                 vec3 nPos = nView.xyz / nView.w;
@@ -287,7 +241,6 @@ vec4 svgfAtrousFirst(
     return vec4(sumC / max(wsum, 1e-5), sumV / max(wsum * wsum, 1e-5));
 }
 
-// Subsequent a-trous iterations
 vec4 svgfAtrous(
     sampler2D src, sampler2D depthTex, sampler2D normalTex,
     vec2 uv, float stepSize, float centerDepth, vec2 depthGrad, vec3 centerN,
@@ -304,19 +257,17 @@ vec4 svgfAtrous(
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
     
-    // Accurately reconstruct the center pixel's view-space position for planar rejection
     float centerDepthRaw = textureLod(depthTex, uv, 0.0).r;
     vec4 centerClip = vec4(uv * 2.0 - 1.0, centerDepthRaw * 2.0 - 1.0, 1.0);
     vec4 centerView = gbufferProjectionInverse * centerClip;
     vec3 centerPos = centerView.xyz / centerView.w;
 
     mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
-    int tapRange = 2; // Default 5x5 kernel
+    int tapRange = 2;
 
     if (stepSize > 2.0) {
         float rotAngle = getJitterRotation(uv, frameCounter);
         rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
-        // Optimization: Use a 3x3 kernel for very large dilation steps to save performance
         tapRange = 1; 
     }
 
@@ -342,8 +293,6 @@ vec4 svgfAtrous(
                 float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
 
-                // Strict Planar Rejection: Calculate the true distance from the neighbor's 3D position 
-                // to the mathematical plane defined by the center pixel's normal and position.
                 vec4 nClip = vec4(nUV * 2.0 - 1.0, nDepthRaw * 2.0 - 1.0, 1.0);
                 vec4 nView = gbufferProjectionInverse * nClip;
                 vec3 nPos = nView.xyz / nView.w;

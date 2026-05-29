@@ -96,73 +96,52 @@ flat in uint voxelBlockCategory;
 flat in int biomeTintedBlock;
 in float skyLight;
 
-
 // Image binding for writes MUST use the colorimgN alias, not colortexN.
 // colortexN is the sampler (read) name; imageStore to colortexN is a silent no-op in Iris.
 layout(rgba8ui) uniform writeonly uimage2D colorimg7;
 
 void main() {
-    // Check alpha for discard using per-fragment sampling (needed for leaves/foliage)
-    // to maintain the correct block shape in the voxel grid.
+    // check alpha for discard using per-fragment sampling (needed for leaves/foliage) to maintain the correct block shape in the voxel grid.
     vec4 texFrag = texture(texture, texCoord);
     if (texFrag.a < 0.1) {
         discard;
     }
 
-    // Sample at the middle of the texture tile for a stable, representative block color.
-    // This prevents the per-texel "rainbow" flicker and noise in the voxel grid.
-    // We use the stable color for EVERYTHING to ensure every fragment writes the same value.
     vec4 tex = texture(texture, vMidTexCoord);
     if (tex.a < 0.1) {
-        // If the tile center is transparent, use the fragment color as a fallback
-        // but this should be rare for solid blocks.
+        // if the tile center is transparent, use the fragment color as a fallback but this should be rare for solid blocks
         tex = texFrag;
     }
 
-    // Pack: .r = block category, .gba = block albedo color (for GI color bleed).
-    // gl_Color carries biome/vertex tint, but some Iris shadow configs don't supply it
-    // (it comes back as 0, which would zero the whole albedo). Fall back to the untinted
-    // texture colour when no tint is present so the grid never stores black.
     vec3 tint = gl_Color.rgb;
     vec3 albedo = tex.rgb * (all(lessThan(tint, vec3(0.004))) ? vec3(1.0) : tint);
 
     if (biomeTintedBlock == 1) {
-        // For grass blocks, use the biome tint directly as the albedo (averaged color).
-        // Fall back to a default grass green if the tint is missing.
+
         albedo = all(lessThan(tint, vec3(0.004))) ? vec3(0.48, 0.61, 0.28) : tint;
     } else if (biomeTintedBlock == 2) {
-        // For leaves, we use the texture color * biome tint.
-        // If tint is missing (black) or default (white) in the shadow pass, 
-        // use a fallback foliage green to ensure they aren't grey.
+
         vec3 leafTint = (all(lessThan(tint, vec3(0.004))) || all(greaterThan(tint, vec3(0.999)))) ? vec3(0.38, 0.58, 0.18) : tint;
         albedo = tex.rgb * leafTint;
     }
 
     uint finalCategory = voxelBlockCategory;
 
-    // Scale down blocklight emission outdoors under the open sky during the day.
+    // scale down blocklight emission outdoors under the open sky during the day.
     if (finalCategory == 3u || finalCategory >= 100u) {
         vec3 sunVec = normalize(sunPosition);
         vec3 upVec  = normalize(upPosition);
         float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
         if (sunUp > 0.001 && skyLight > 0.8) {
-            finalCategory = 0u; // Exclude from voxelization / set as AIR (no emission)
+            finalCategory = 0u; // exclude from voxelization / set as AIR (no emission)
         }
     }
 
     uvec4 voxelData = uvec4(finalCategory, uvec3(clamp(albedo, 0.0, 1.0) * 255.0 + 0.5));
 
-    // For biome-tinted ground (grass_block): skip untinted faces (dirt sides/bottom)
-    // so only the green-tinted top face writes its color to the voxel atlas.
-    // Use the world-space normal to identify the top face (upward pointing).
-    // Leaves (biomeTintedBlock == 2) should not skip faces.
     bool isTopFace = voxelNormal.y > 0.5;
     bool skipVoxelWrite = ((biomeTintedBlock == 1) && !isTopFace) || (finalCategory == 0u);
 
-    // Write this fragment into the voxel atlas.
-    // The atlas is cleared to VOXEL_AIR (0) each frame by colortex7Clear.
-    // Using 'flat' voxelCenter and 'flat' vMidTexCoord ensures all fragments of a block
-    // write the EXACT same data to the EXACT same voxel coordinate.
     ivec3 voxelCoord;
     vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
     if (!skipVoxelWrite && worldToVoxel(voxelCenter, gridOrigin, voxelCoord)) {

@@ -32,10 +32,6 @@ float waterOctave(vec2 uv, float choppy) {
 }
 
 
-// FBM surface height. `octaves` lets callers request only the LARGE swells (the first, lowest-
-// frequency octaves): the vertex displacement uses a few big octaves while the fragment normal
-// uses the full set, so the displaced geometry and the shading normals are built from the SAME
-// field and stay consistent.
 float waterHeightOctaves(vec2 worldXZ, float t, int octaves) {
     const mat2 octM = mat2(1.6, 1.2, -1.2, 1.6);
     vec2  wind   = normalize(vec2(0.86, 0.52)); // dominant wave travel direction
@@ -48,14 +44,14 @@ float waterHeightOctaves(vec2 worldXZ, float t, int octaves) {
     float totalAmp = 0.0;
 
     for (int i = 0; i < WATER_WAVE_OCTAVES; i++) {
-        if (i >= octaves) break; // constant loop bound (unrollable), dynamic octave count
+        if (i >= octaves) break;
         float ti = t * (1.0 + float(i) * 0.35);
         float d  = waterOctave((uv + wind * ti) * freq, choppy);
         d       += waterOctave((uv - wind * ti) * freq, choppy);
         h        += d * amp;
         totalAmp += amp;
 
-        uv      = octM * uv + 113.97; // rotate AND translate -> break grid alignment
+        uv      = octM * uv + 113.97;
         freq   *= 1.35;
         amp    *= 0.2;
         choppy  = mix(choppy, 1.4, 0.2);
@@ -68,25 +64,17 @@ float waterHeight(vec2 worldXZ, float t) {
 }
 
 #ifdef WATER_DISPLACEMENT
-// Trochoidal (Gerstner-like) vertex displacement for the big swells. The vertical height is the
-// shared FBM field (big octaves only); the horizontal pull toward crests -- along that same field's
-// gradient -- sharpens crests and broadens troughs for an ocean silhouette. Pure function of the
-// REST world XZ, so vertices shared between adjacent water quads always agree -> no cracks/seams.
+
 vec3 waterDisplacement(vec2 worldXZ, float t) {
     float h = waterHeightOctaves(worldXZ, t, WATER_DISPLACEMENT_OCTAVES);
 
-    // Gradient of the same field (points uphill -> toward crests) via finite differences.
     const float e = 0.25; // sampling step (blocks)
     float hx = waterHeightOctaves(worldXZ + vec2(e, 0.0), t, WATER_DISPLACEMENT_OCTAVES);
     float hz = waterHeightOctaves(worldXZ + vec2(0.0, e), t, WATER_DISPLACEMENT_OCTAVES);
     vec2  grad = vec2(hx - h, hz - h) / e;
 
-    // Pull vertices toward crests (scaled by height so taller swells lean more). Clamp the pull so
-    // an over-cranked steepness can't fold the surface back on itself.
     vec2  pull  = clamp(grad * (WATER_DISPLACEMENT_STEEPNESS * WATER_DISPLACEMENT_HEIGHT), vec2(-0.5), vec2(0.5));
-    // Oscillate around the rest plane, then sink the whole surface by _OFFSET so the highest crests
-    // sit at/below the vanilla waterline -> they never poke above it (the "floating water" look at
-    // grazing angles), which lets _HEIGHT be cranked up freely.
+
     float dispY = (h - 0.5) * WATER_DISPLACEMENT_HEIGHT - WATER_DISPLACEMENT_OFFSET;
 
     return vec3(pull.x, dispY, pull.y);
