@@ -229,8 +229,8 @@ void main() {
     // tint + refraction + frosted (moderate opacity); solid ice = tint + NO refraction + opaque.
     // All three get a Fresnel reflection (sky + SSR) from the stored normal.
     if (isTranslucent) {
-        const float GLASS_OPACITY     = 0.05; // see-through
-        const float CLEAR_ICE_OPACITY = 0.35; // frosted
+        const float GLASS_OPACITY     = 0.1; // see-through
+        const float CLEAR_ICE_OPACITY = 0.3; // frosted
         const float SOLID_ICE_OPACITY = 0.80; // mostly solid
         const float TRANSLUCENT_REFRACTION_DEPTH = 0.6;
 
