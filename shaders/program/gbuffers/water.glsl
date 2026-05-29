@@ -26,8 +26,12 @@ out vec3 viewNormal;
 out vec3 worldPos;
 out vec4 color;
 flat out float isWater;
+flat out float matFlag; // colortex2.b material code: 0.25 solid ice / 0.5 clear ice / 0.75 glass / 1.0 water
+out vec3 viewTangent;
+out float tangentW;
 
 attribute vec4 mc_Entity;
+attribute vec4 at_tangent;
 
 void main() {
     gl_Position = ftransform();
@@ -35,12 +39,20 @@ void main() {
 
     color = gl_Color;
     viewNormal = normalize(gl_NormalMatrix * gl_Normal);
+    viewTangent = normalize(gl_NormalMatrix * at_tangent.xyz);
+    tangentW = at_tangent.w;
     lightmapCoord = mat2(gl_TextureMatrix[1]) * gl_MultiTexCoord1.st;
 
     vec3 viewPos = (gl_ModelViewMatrix * gl_Vertex).xyz;
     worldPos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz + cameraPosition;
 
-    isWater = (mc_Entity.x == 10006.0) ? 1.0 : 0.0;
+    float eid = mc_Entity.x;
+    isWater = (eid == 10006.0) ? 1.0 : 0.0;
+    matFlag = (eid == 10006.0) ? 1.0 :   // water
+              (eid == 10004.0) ? 0.75 :  // glass / stained glass / panes
+              (eid == 10007.0) ? 0.5  :  // clear ice (ice, frosted_ice)
+              (eid == 10008.0) ? 0.25 :  // solid ice (packed_ice, blue_ice)
+              0.75;                       // fallback: unknown translucent -> glass
 
     #ifdef TAA
         gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);
@@ -60,6 +72,9 @@ in vec3 viewNormal;
 in vec3 worldPos;
 in vec4 color;
 flat in float isWater;
+flat in float matFlag;
+in vec3 viewTangent;
+in float tangentW;
 
 /* DRAWBUFFERS:12 */
 
@@ -83,7 +98,8 @@ void main() {
             // with range, so distant water doesn't alias / reveal the tiling pattern.
             float camDist = length(worldPos - cameraPosition);
             float lod = clamp(camDist / WATER_NORMAL_FADE, 0.0, 1.0);
-            float strength = WATER_NORMAL_STRENGTH * (1.0 - 0.85 * lod);
+            float fadeMin = WATER_NORMAL_FADE_MIN * 0.01;
+            float strength = WATER_NORMAL_STRENGTH * mix(1.0, fadeMin, lod);
             float eps = mix(0.10, 0.45, lod);
 
             // Tangent-plane perturbation works for any face orientation (flat tops, flowing
@@ -96,8 +112,26 @@ void main() {
         gl_FragData[0] = vec4(viewWaveN * 0.5 + 0.5, 1.0);     // colortex1: wave normal
         gl_FragData[1] = vec4(lightmapCoord, 1.0, 1.0);        // colortex2: .rg lightmap, .b=1 water flag
     } else {
-        gl_FragData[0] = vec4(viewNormal * 0.5 + 0.5, 0.5);    // colortex1: glass/ice normal
-        gl_FragData[1] = vec4(lightmapCoord, 0.0, 1.0);        // colortex2: .rg lightmap, .b=0 (not water)
+        // Glass / ice / other translucents: write a normal to colortex1 (so d7 still lights the
+        // see-through background), the per-material flag to colortex2.b, and pack the block albedo
+        // as RGB565 into colortex2.a so c_water can tint by the glass/ice colour.
+        //
+        // GENERATED NORMALS: perturb the flat face normal by the gradient of the texture's OWN
+        // luminance (tangent space) so the block's surface detail (ice cracks, glass frame) becomes
+        // real bumps -> c_water reflection + refraction follow the texture. Auto-mip sampling makes
+        // the detail LOD out with distance. Tune GEN_NORMAL_STRENGTH; flip its sign if inverted.
+        const float GEN_NORMAL_STRENGTH = 2.0;
+        const vec3  LUMA = vec3(0.2126, 0.7152, 0.0722);
+        vec2  atlasTexel = 1.0 / vec2(textureSize(texture, 0));
+        float l  = dot(albedo.rgb, LUMA);
+        float lu = dot((texture(texture, texCoord + vec2(atlasTexel.x, 0.0)) * color).rgb, LUMA);
+        float lv = dot((texture(texture, texCoord + vec2(0.0, atlasTexel.y)) * color).rgb, LUMA);
+        vec3 T = normalize(viewTangent);
+        vec3 B = normalize(cross(viewNormal, T) * tangentW);
+        vec3 fN = normalize(viewNormal - GEN_NORMAL_STRENGTH * ((lu - l) * T + (lv - l) * B));
+
+        gl_FragData[0] = vec4(fN * 0.5 + 0.5, 0.5);                          // colortex1: generated normal
+        gl_FragData[1] = vec4(lightmapCoord, matFlag, packColor565(albedo.rgb)); // colortex2: lightmap, flag, packed colour
     }
 }
 

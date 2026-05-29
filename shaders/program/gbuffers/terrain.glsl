@@ -11,8 +11,12 @@ out vec2 texCoord;
 out vec2 lightmapCoord;
 out vec3 normal;
 out vec4 color;
+flat out float isSolidIce;
+out vec3 viewTangent;
+out float tangentW;
 
 attribute vec4 mc_Entity;
+attribute vec4 at_tangent;
 
 vec3 wind(vec3 position) {
     position.xy -= abs(sin(2.0 * PI * (frameTimeCounter * 0.7 + position.x /  11.0 + position.y / 5.0)) * 0.015);
@@ -41,6 +45,9 @@ void main() {
     https://github.com/saada2006/MinecraftShaderProgramming
     */
     normal = normalize(gl_NormalMatrix * gl_Normal);
+    isSolidIce = (mc_Entity.x == 10008.0) ? 1.0 : 0.0; // packed_ice / blue_ice (opaque)
+    viewTangent = normalize(gl_NormalMatrix * at_tangent.xyz);
+    tangentW = at_tangent.w;
     lightmapCoord = mat2(gl_TextureMatrix[1]) * gl_MultiTexCoord1.st;
 
     #ifdef TAA
@@ -62,6 +69,9 @@ in vec2 texCoord;
 in vec2 lightmapCoord;
 in vec3 normal;
 in vec4 color;
+flat in float isSolidIce;
+in vec3 viewTangent;
+in float tangentW;
 
 
 void main() {
@@ -79,10 +89,28 @@ void main() {
                    : (material >= 0.95) ? (1.0 / 3.0)
                    :                       0.0;
 
+    // Packed/blue ice (opaque, id 10008): GENERATED NORMALS from the texture luminance gradient
+    // (tangent space) for surface relief, and colortex2.b = 0.25 so c_water adds a glossy reflection
+    // on top of the lit ice. All other opaque blocks are unchanged.
+    vec3  outNormal = normal;
+    float iceFlag   = 0.0;
+    if (isSolidIce > 0.5) {
+        const float ICE_NORMAL_STRENGTH = 2.0;
+        const vec3  LUMA = vec3(0.2126, 0.7152, 0.0722);
+        vec2  atlasTexel = 1.0 / vec2(textureSize(texture, 0));
+        float l  = dot(albedo.rgb, LUMA);
+        float lu = dot((texture(texture, texCoord + vec2(atlasTexel.x, 0.0)) * color).rgb, LUMA);
+        float lv = dot((texture(texture, texCoord + vec2(0.0, atlasTexel.y)) * color).rgb, LUMA);
+        vec3 T = normalize(viewTangent);
+        vec3 B = normalize(cross(normal, T) * tangentW);
+        outNormal = normalize(normal - ICE_NORMAL_STRENGTH * ((lu - l) * T + (lv - l) * B));
+        iceFlag = 0.25;
+    }
+
     /* DRAWBUFFERS:012 */
     gl_FragData[0] = albedo;
-    gl_FragData[1] = vec4(normal * 0.5 + 0.5, matAlpha);
-    gl_FragData[2] = vec4(lightmapCoord, 0.0, 1.0);
+    gl_FragData[1] = vec4(outNormal * 0.5 + 0.5, matAlpha);
+    gl_FragData[2] = vec4(lightmapCoord, iceFlag, 1.0);
 }
 
 #endif

@@ -47,11 +47,15 @@
 
 // --- Water (deferred surface shading: waves + refraction + reflections) ---
 #define WATER_WAVES
+#define WATER_PARALLAX
+#define WATER_PARALLAX_STEPS 8 // [4 6 8 10 12 14 16 18 20 22 24 26 28 30 32]
+#define WATER_PARALLAX_HEIGHT 3.00 // [0.25 0.50 0.75 1.00 1.25 1.50 2.00 3.00] Multiplier for the visual depth of the parallax waves
 #define WATER_WAVE_OCTAVES 4 // [2 3 4 5 6] FBM octaves for the surface height field
 #define WATER_WAVE_AMPLITUDE 0.24 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24 0.32] bump height (blocks)
 #define WATER_WAVE_SPEED 1.5 // [0.1 0.2 0.3 0.45 0.6 0.8 1.0 1.4] wave advection speed
-#define WATER_NORMAL_STRENGTH 0.8 // [0.2 0.35 0.5 0.65 0.8 0.85 1.0] 0 = flat, 1 = full waves
+#define WATER_NORMAL_STRENGTH 0.95 // [0.25 0.5 0.75 1.0 1.25 1.5 1.75 2.0] 0 = flat, 1 = full waves
 #define WATER_NORMAL_FADE 64.0 // [0.0 1.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 48.0 64.0 96.0 128.0] distance (blocks) over which wave normals LOD back toward flat (anti-aliases / hides tiling at range)
+#define WATER_NORMAL_FADE_MIN 16.0 // [0.0 1.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 48.0 64.0 96.0 100.0] Minimum normal strength percentage at the fade distance. 0 = fully flat, 50 = 50% less strength.
 
 #define WATER_REFRACTION
 #define WATER_REFRACTION_STRENGTH 0.32 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24 0.32 0.35 0.40 0.50] screen-space refraction offset

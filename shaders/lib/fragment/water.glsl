@@ -63,14 +63,41 @@ vec3 waterSurfaceNormal(vec3 worldPos, vec3 geoN, float t, float amplitude, floa
     vec3 T = normalize(cross(ref, geoN));
     vec3 B = cross(geoN, T);
 
-    vec2 p  = vec2(dot(worldPos, T), dot(worldPos, B));
+    vec2 p0 = vec2(dot(worldPos, T), dot(worldPos, B));
+    vec2 p = p0;
+
+    #ifdef WATER_PARALLAX
+    vec3 V = normalize(cameraPosition - worldPos);
+    vec3 viewTan = vec3(dot(V, T), dot(V, B), dot(V, geoN));
+    vec2 parallaxDir = viewTan.xy / max(viewTan.z, 0.05); // cap at grazing angles
+    float max_h = amplitude * strength * WATER_PARALLAX_HEIGHT;
+
+    float currentHeight = 1.0;
+    float stepSize = 1.0 / WATER_PARALLAX_STEPS;
+    vec2 p_delta = -parallaxDir * max_h * stepSize;
+    vec2 p_current = p0 + parallaxDir * max_h;
+
+    for (int i = 0; i < WATER_PARALLAX_STEPS; i++) {
+        float h_current = waterHeight(p_current, t);
+        if (h_current >= currentHeight) break;
+        currentHeight -= stepSize;
+        p_current += p_delta;
+    }
+
+    vec2 p_prev = p_current - p_delta;
+    float h_prev = waterHeight(p_prev, t) - (currentHeight + stepSize);
+    float h_curr = waterHeight(p_current, t) - currentHeight;
+    float weight = clamp(h_curr / (h_curr - h_prev), 0.0, 1.0);
+    p = mix(p_current, p_prev, weight);
+    #endif
+
     float h  = waterHeight(p,                  t) * amplitude;
     float hx = waterHeight(p + vec2(eps, 0.0), t) * amplitude;
     float hy = waterHeight(p + vec2(0.0, eps), t) * amplitude;
 
     vec2 grad = vec2(h - hx, h - hy) / eps;          // tangent-plane slope
     vec3 perturb = grad.x * T + grad.y * B;          // tilt the geometric normal in-plane
-    return normalize(geoN + perturb * clamp(strength, 0.0, 1.0));
+    return normalize(geoN + perturb * strength);
 }
 
 #endif

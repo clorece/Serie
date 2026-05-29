@@ -54,7 +54,7 @@ void main() {
     else if (eid >= 10100.0 && eid <= 10199.0) voxelBlockCategory = 100u + uint(round(eid - 10100.0)); // special block light (mat stored as 100 + mat)
     #endif
     else if (eid == 10001.0) voxelBlockCategory = 3u; // emissive (fallback)
-    else if (eid == 10002.0 || eid == 10004.0 || eid == 10005.0 || eid == 10006.0 || entityId == 10002 || blockEntityId == 10002) voxelBlockCategory = 0u; // excluded (entities, grass, flowers, transparents, water, etc.) -> VOXEL_AIR
+    else if (eid == 10002.0 || eid == 10004.0 || eid == 10005.0 || eid == 10006.0 || eid == 10007.0 || entityId == 10002 || blockEntityId == 10002) voxelBlockCategory = 0u; // excluded (entities, grass, flowers, transparents, water, etc.) -> VOXEL_AIR
     else                     voxelBlockCategory = 1u; // opaque (default)
 
     // Flag blocks that need special voxel coloring or face skipping.

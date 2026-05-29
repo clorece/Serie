@@ -75,7 +75,7 @@ bool waterReflectSSR(vec3 viewOrigin, vec3 viewDir, float dither, out vec2 hitUV
 
         float sceneDepth = texture(depthtex1, rayPos.xy).r;
         if (sceneDepth < rayPos.z && (rayPos.z - sceneDepth) < depthTol) {
-            if (texture(colortex2, rayPos.xy).b > 0.5) continue; // skim over water, keep going
+            if (texture(colortex2, rayPos.xy).b > 0.125) continue; // skim over any translucent, keep going
             if (sceneDepth >= 1.0) return false;                  // sky
 
 
@@ -100,8 +100,15 @@ void main() {
     vec4  c1 = texture(colortex1, uv);
     vec3  scene = texture(colortex0, uv).rgb;
 
-    vec4  c2 = texture(colortex2, uv);      // .rg = lightmap, .b = water flag
-    bool  isWater  = c2.b > 0.5;
+    vec4  c2 = texture(colortex2, uv);      // .rg = lightmap, .b = flag, .a = packed glass colour
+    // 4-state flag, POINT-sampled (texelFetch) so bilinear can't blend states at edges:
+    //   0 opaque / 0.25 solid ice (packed,blue) / 0.5 clear ice / 0.75 glass / 1.0 water.
+    float flag       = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
+    bool  isWater    = flag > 0.875;
+    bool  isGlass    = flag > 0.625 && flag <= 0.875;
+    bool  isClearIce = flag > 0.375 && flag <= 0.625;
+    bool  isSolidIce = flag > 0.125 && flag <= 0.375;
+    bool  isTranslucent = isGlass || isClearIce || isSolidIce;
     float skylight = clamp(c2.g, 0.0, 1.0); // ~0 in caves, partial under cover, ~1 under open sky
     // Allium-style hard remap: only near-full sky access reflects sky / in-scatters. Skylight below
     // the threshold (caves, rooms, covered/partial water — which still carry a non-zero lightmap)
@@ -216,6 +223,84 @@ void main() {
     }
     #endif
 
+    // --- Translucents: glass / clear ice / solid (packed,blue) ice ---
+    // Shared inputs: face normal (colortex1), RGB565 block colour (colortex2.a), lightmap
+    // (colortex2.rg). Per-material: glass = colour tint + refraction + see-through; clear ice =
+    // tint + refraction + frosted (moderate opacity); solid ice = tint + NO refraction + opaque.
+    // All three get a Fresnel reflection (sky + SSR) from the stored normal.
+    if (isTranslucent) {
+        const float GLASS_OPACITY     = 0.05; // see-through
+        const float CLEAR_ICE_OPACITY = 0.35; // frosted
+        const float SOLID_ICE_OPACITY = 0.80; // mostly solid
+        const float TRANSLUCENT_REFRACTION_DEPTH = 0.6;
+
+        float ior; float opacity; bool doRefract;
+        if (isSolidIce)      { ior = 1.31; opacity = SOLID_ICE_OPACITY; doRefract = false; }
+        else if (isClearIce) { ior = 1.31; opacity = CLEAR_ICE_OPACITY; doRefract = true;  }
+        else                 { ior = 1.50; opacity = GLASS_OPACITY;     doRefract = true;  }
+
+        vec2 unjitT = uv;
+        #ifdef TAA
+        unjitT -= getTaaJitter() / vec2(viewWidth, viewHeight);
+        #endif
+        vec3 viewSurf = screenToView(unjitT, d0);
+        vec3 tN = normalize(c1.rgb * 2.0 - 1.0);
+        vec3 tV = normalize(-viewSurf);
+        vec3 albedoT = unpackColor565(texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).a);
+
+        // Refraction (glass + clear ice only): bend the view ray through the face, reproject, accept
+        // only if it stays on a translucent pixel. Solid ice is not see-through so it skips this.
+        vec3 bg = scene;
+        #ifdef WATER_REFRACTION
+        if (doRefract) {
+            vec3 rDir = refract(normalize(viewSurf), tN, 1.0 / ior);
+            if (dot(rDir, rDir) > 1e-6) {
+                vec2 rUV = viewToScreen(viewSurf + rDir * TRANSLUCENT_REFRACTION_DEPTH).xy;
+                if (clamp(rUV, 0.0, 1.0) == rUV &&
+                    texelFetch(colortex2, ivec2(rUV * vec2(viewWidth, viewHeight)), 0).b > 0.125) {
+                    bg = textureLod(colortex0, rUV, 0.0).rgb;
+                }
+            }
+        }
+        #endif
+
+        // Base colour. Solid ice (packed/blue) is OPAQUE -> gbuffers_terrain already wrote its
+        // albedo and d7 lit it, so colortex0 = the lit ice; just reflect on top (no re-tint). Glass /
+        // clear ice are see-through: tint the background, blend toward own lit colour by opacity.
+        vec3 base;
+        if (isSolidIce) {
+            base = bg; // colortex0 already holds the lit opaque ice
+        } else {
+            vec3 seeThrough = bg * albedoT;
+            vec3 ownColor   = albedoT * (0.2 + 0.8 * skylight + 0.5 * c2.r); // ambient floor + sky + blocklight
+            base = mix(seeThrough, ownColor, opacity);
+        }
+
+        // Fresnel reflection (sky gated by sky access; SSR hit otherwise).
+        vec3 viewReflDir = reflect(normalize(viewSurf), tN);
+        vec3 worldRefl   = mat3(gbufferModelViewInverse) * viewReflDir;
+        vec3 wSunT  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+        vec3 wMoonT = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
+        float eyeAltT = cameraPosition.y - 64.0;
+        vec3 reflectColor = getSky(worldRefl, wSunT, wMoonT, eyeAltT) * skyVis;
+        #ifdef WATER_REFLECTIONS
+        {
+            float nz = waterDither(gl_FragCoord.xy, frameCounter);
+            vec2 hUV;
+            if (waterReflectSSR(viewSurf + tN * 0.1, viewReflDir, nz, hUV)) {
+                reflectColor = textureLod(colortex0, hUV, 0.0).rgb;
+            }
+        }
+        #endif
+
+        float cosV = clamp(dot(tV, tN), 0.0, 1.0);
+        float F0t  = (isClearIce || isSolidIce) ? 0.12 : 0.04; // ice glossier so reflections read; glass dielectric
+        float fres = F0t + (1.0 - F0t) * pow(1.0 - cosV, 5.0);
+
+        gl_FragData[0] = vec4(mix(base, reflectColor, fres), 1.0);
+        return;
+    }
+
     if (!isWater) {
         gl_FragData[0] = vec4(scene, 1.0);
         return;
@@ -292,7 +377,7 @@ void main() {
     // wave pushed the offset toward nearer surface -> patchy unrefracted HOLES. The flag test has no
     // depth-comparison failure: interior offsets stay in water (always refract -> no holes), and an
     // offset crossing a shoreline onto land/foreground (flag 0) falls back to the unrefracted bg.
-    if (texture(colortex2, refrUV).b > 0.5) {
+    if (texture(colortex2, refrUV).b > 0.875) {
         refractColor = textureLod(colortex0, refrUV, 0.0).rgb;
         float dR = texture(depthtex1, refrUV).r;
         thickness = min(distance(screenToView(refrUV, d0), screenToView(refrUV, dR)), WATER_THICKNESS_MAX);

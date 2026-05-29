@@ -39,4 +39,22 @@ vec3 octDecodeNormal(vec2 f) {
     return normalize(n);
 }
 
+// Pack an RGB colour into a single RGBA16-UNORM channel (RGB565: 32/64/32 levels). Exact because a
+// 16-bit UNORM holds integers 0..65535. MUST be point-sampled (texelFetch) on read -- a bit-packed
+// value can't be bilinear-filtered. Used to carry glass/ice block colour in colortex2.a -> c_water.
+float packColor565(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    uint r = uint(c.r * 31.0 + 0.5);
+    uint g = uint(c.g * 63.0 + 0.5);
+    uint b = uint(c.b * 31.0 + 0.5);
+    return float((r << 11) | (g << 5) | b) / 65535.0;
+}
+
+vec3 unpackColor565(float v) {
+    uint p = uint(v * 65535.0 + 0.5);
+    return vec3(float((p >> 11) & 31u) / 31.0,
+                float((p >>  5) & 63u) / 63.0,
+                float( p        & 31u) / 31.0);
+}
+
 #endif
