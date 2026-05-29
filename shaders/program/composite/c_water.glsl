@@ -126,7 +126,7 @@ void main() {
 
     #if WATER_DEBUG == 2
     // Visualize water thickness = depthtex1(opaque behind) - depthtex0(water surface), view-space
-    // blocks, greyscale (black = 0, white = >=8). This is what Allium/robobo/iterationRP scale
+    // blocks, greyscale (black = 0, white = >=8). This is what Allium scales
     // refraction by. If water reads near-BLACK everywhere -> depthtex1 is collapsed (no translucent
     // separation) and we genuinely can't depth-scale. If it ramps dark-at-shore -> bright-in-deep
     // water -> depthtex1 works and the refraction/absorption should use it (kills the edge outline).
@@ -246,6 +246,10 @@ void main() {
         vec3 viewSurf = screenToView(unjitT, d0);
         vec3 tN = normalize(c1.rgb * 2.0 - 1.0);
         vec3 tV = normalize(-viewSurf);
+        
+        // Prevent normal from pointing away from the view vector at grazing angles
+        tN = normalize(tN + tV * clamp(-dot(tN, tV) + 1e-5, 0.0, 1.0));
+        
         vec3 albedoT = unpackColor565(texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).a);
 
         // Refraction (glass + clear ice only): bend the view ray through the face, reproject, accept
@@ -276,8 +280,14 @@ void main() {
             base = mix(seeThrough, ownColor, opacity);
         }
 
+        vec3 tGeoCross = cross(dFdx(viewSurf), dFdy(viewSurf));
+        vec3 tGeoN = (dot(tGeoCross, tGeoCross) > 1e-12) ? normalize(tGeoCross) : tN;
+        if (dot(tGeoN, tN) < 0.0) tGeoN = -tGeoN;
+
         // Fresnel reflection (sky gated by sky access; SSR hit otherwise).
         vec3 viewReflDir = reflect(normalize(viewSurf), tN);
+        // Prevent reflection vector from plunging below the surface
+        viewReflDir = normalize(viewReflDir + tGeoN * clamp(-dot(viewReflDir, tGeoN) + 1e-5, 0.0, 1.0));
         vec3 worldRefl   = mat3(gbufferModelViewInverse) * viewReflDir;
         vec3 wSunT  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
         vec3 wMoonT = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
@@ -292,8 +302,8 @@ void main() {
             }
         }
         #endif
-
-        float cosV = clamp(dot(tV, tN), 0.0, 1.0);
+        
+        float cosV = clamp(max(dot(tV, tN), dot(tV, tGeoN)), 0.0, 1.0);
         float F0t  = (isClearIce || isSolidIce) ? 0.12 : 0.04; // ice glossier so reflections read; glass dielectric
         float fres = F0t + (1.0 - F0t) * pow(1.0 - cosV, 5.0);
 
@@ -319,7 +329,7 @@ void main() {
     vec3  viewOpaque = screenToView(unjit, d1);
     // Real water thickness (optical depth). depthtex1 DOES separate translucents here (verified via
     // WATER_DEBUG 2): this is ~0 at shorelines, ramping up in deep water -- which is exactly how
-    // Allium/robobo/iterationRP scale refraction. NO `<0.05 -> 1.5` fallback: that fallback (a
+    // Allium scales refraction. NO `<0.05 -> 1.5` fallback: that fallback (a
     // leftover from a stale "depthtex1 is collapsed" belief) forced FULL thickness onto the thin
     // shoreline water, so refraction ran at full strength right at the edge -> the bright OUTLINE.
     // Cap so water with sky/void behind it (d1==1.0 -> huge distance) doesn't over-absorb to black.
@@ -327,6 +337,9 @@ void main() {
 
     vec3 viewNormal = normalize(c1.rgb * 2.0 - 1.0);
     vec3 V = normalize(-viewWater); // surface -> camera, view space
+    
+    // Prevent normal from pointing away from the view vector at grazing angles
+    viewNormal = normalize(viewNormal + V * clamp(-dot(viewNormal, V) + 1e-5, 0.0, 1.0));
 
     // Refraction is driven by the wave normal's DEVIATION from the FACE's geometric normal,
     // reconstructed from depth via screen-space derivatives. This yields zero screen offset for
@@ -411,6 +424,8 @@ void main() {
 
     // Reflection: dedicated view-space SSR, sky fallback gated by skylight
     vec3 viewReflDir = reflect(normalize(viewWater), viewNormal); // incident = camera->surface
+    // Prevent reflection vector from plunging below the surface (fixes underworld reflection on peaks)
+    viewReflDir = normalize(viewReflDir + geoViewN * clamp(-dot(viewReflDir, geoViewN) + 1e-5, 0.0, 1.0));
     vec3 worldRefl   = mat3(gbufferModelViewInverse) * viewReflDir;
 
     // Sky fallback is scaled by skyVis so water in caves / enclosed rooms doesn't reflect bright
@@ -457,18 +472,19 @@ void main() {
     float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
     float D = a2 / (PI * denom * denom);
 
-    // Smith-GGX geometry (Schlick-GGX approximation, k = alpha/2 for direct)
-    float k   = a * 0.5;
-    float G1V = NdotV / (NdotV * (1.0 - k) + k);
-    float G1L = NdotL / (NdotL * (1.0 - k) + k);
-    float G   = G1V * G1L;
+    // Height-correlated Smith GGX Visibility (replaces separated G and the 1 / 4*NdotV*NdotL term)
+    // This formulation avoids division by near-zero at wave peaks and perfectly conserves energy,
+    // which prevents the analytical sun reflection from blowing out.
+    float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
+    float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
+    float Vis = 0.5 / max(GGXV + GGXL, 1e-5);
 
     // Schlick Fresnel for the specular lobe
     float F0 = 0.02;
     float Fspec = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 
-    // Cook-Torrance: D * G * F / (4 * NdotV * NdotL)
-    float specBRDF = (D * G * Fspec) / max(4.0 * NdotV * NdotL, 1e-6);
+    // Cook-Torrance: D * Vis * F
+    float specBRDF = D * Vis * Fspec;
     vec3  specular = specBRDF * NdotL * lightCol * (1.0 - rainStrength * 0.75);
 
     // Gate by sky access so caves don't get a specular highlight
@@ -476,7 +492,9 @@ void main() {
 
     // Roughness-corrected Schlick Fresnel for reflection/refraction blend.
     // Caps grazing-angle reflectance at (1 - roughness) instead of 1.0.
-    float cosT = clamp(dot(V, viewNormal), 0.0, 1.0);
+    // Use the maximum of the wave normal dot and the geometric normal dot to prevent
+    // steep wave peaks from over-reflecting (acting like grazing angles).
+    float cosT = clamp(max(dot(V, viewNormal), dot(V, geoViewN)), 0.0, 1.0);
     float Fmax = max(1.0 - WATER_ROUGHNESS, F0);
     float fresnel = F0 + (Fmax - F0) * pow(1.0 - cosT, 5.0);
 

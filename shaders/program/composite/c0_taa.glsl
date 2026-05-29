@@ -53,12 +53,12 @@ void main() {
                 float distToCenter = distance(uv, vec2(0.5)) * 2.0; // 0 to ~1.4
                 float weight = mix(1.0, exp(-distToCenter * distToCenter * 2.0), AUTO_EXPOSURE_CENTER_WEIGHT);
                 
-                sumLuma += luma * weight;
+                sumLuma += log2(max(luma, 0.0001)) * weight;
                 totalWeight += weight;
             }
         }
         
-        float avgLuma = sumLuma / totalWeight;
+        float avgLuma = exp2(sumLuma / totalWeight);
         avgLuma = clamp(avgLuma, 0.001, 10.0);
         
         // Calibration constant target for middle-gray exposure balance
