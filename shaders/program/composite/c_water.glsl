@@ -117,6 +117,21 @@ void main() {
     return;
     #endif
 
+    #if WATER_DEBUG == 2
+    // Visualize water thickness = depthtex1(opaque behind) - depthtex0(water surface), view-space
+    // blocks, greyscale (black = 0, white = >=8). This is what Allium/robobo/iterationRP scale
+    // refraction by. If water reads near-BLACK everywhere -> depthtex1 is collapsed (no translucent
+    // separation) and we genuinely can't depth-scale. If it ramps dark-at-shore -> bright-in-deep
+    // water -> depthtex1 works and the refraction/absorption should use it (kills the edge outline).
+    if (isWater) {
+        float tdbg = distance(screenToView(uv, d0), screenToView(uv, d1));
+        gl_FragData[0] = vec4(vec3(clamp(tdbg / 8.0, 0.0, 1.0)), 1.0);
+    } else {
+        gl_FragData[0] = vec4(scene, 1.0);
+    }
+    return;
+    #endif
+
     #ifdef WATER_FOG
     // Underwater: everything is seen through water -> tint by absorption/scatter; the water
     // SURFACE seen from below additionally does total internal reflection + a Snell-window of sky.
@@ -166,7 +181,7 @@ void main() {
                 float nz = waterDither(gl_FragCoord.xy, frameCounter);
                 vec2 hUV;
                 if (waterReflectSSR(viewWater + Nb * 0.1, reflect(I, Nb), nz, hUV)) {
-                    vec3 rawRefl = texture(colortex0, hUV).rgb;
+                    vec3 rawRefl = textureLod(colortex0, hUV, 0.0).rgb;
                     // Tint the reflected scene by water absorption + scatter for the round trip.
                     reflColor = rawRefl * reflTrans + scatter * (1.0 - reflTrans);
                 }
@@ -213,12 +228,17 @@ void main() {
     unjit -= getTaaJitter() / vec2(viewWidth, viewHeight);
     #endif
 
+    const float WATER_THICKNESS_MAX = 16.0; // cap optical depth (blocks)
+
     vec3  viewWater  = screenToView(unjit, d0);
     vec3  viewOpaque = screenToView(unjit, d1);
-    float thickness  = distance(viewWater, viewOpaque);
-    // depthtex1 may not separate translucents in this pack -> thickness collapses to ~0.
-    // Fall back to a default depth so water still gets an absorption tint.
-    if (thickness < 0.05) thickness = 1.5;
+    // Real water thickness (optical depth). depthtex1 DOES separate translucents here (verified via
+    // WATER_DEBUG 2): this is ~0 at shorelines, ramping up in deep water -- which is exactly how
+    // Allium/robobo/iterationRP scale refraction. NO `<0.05 -> 1.5` fallback: that fallback (a
+    // leftover from a stale "depthtex1 is collapsed" belief) forced FULL thickness onto the thin
+    // shoreline water, so refraction ran at full strength right at the edge -> the bright OUTLINE.
+    // Cap so water with sky/void behind it (d1==1.0 -> huge distance) doesn't over-absorb to black.
+    float thickness = min(distance(viewWater, viewOpaque), WATER_THICKNESS_MAX);
 
     vec3 viewNormal = normalize(c1.rgb * 2.0 - 1.0);
     vec3 V = normalize(-viewWater); // surface -> camera, view space
@@ -228,7 +248,14 @@ void main() {
     // still water on ANY orientation, so the refracted scene doesn't slide as the camera moves.
     // (Using world-up as the reference only worked for flat tops; vertical side faces have a
     // horizontal geo-normal, so subtracting world-up sheared them.)
-    vec3 geoViewN = normalize(cross(dFdx(viewWater), dFdy(viewWater)));
+    // NaN GUARD: at water silhouettes / degenerate pixels the depth-derivative cross product
+    // collapses to ~0, so normalize() returns NaN -> distortN is NaN -> `distortN * STRENGTH` stays
+    // NaN even when STRENGTH==0 (NaN*0 == NaN) -> refrUV = clamp(uv + NaN) is garbage -> samples a
+    // stray bright pixel = the edge OUTLINE. (That is exactly why setting STRENGTH to 0 did NOT kill
+    // the lines but disabling the macro did.) When the cross collapses, fall back to the wave normal
+    // so distortN is exactly 0.
+    vec3 geoCross = cross(dFdx(viewWater), dFdy(viewWater));
+    vec3 geoViewN = (dot(geoCross, geoCross) > 1e-12) ? normalize(geoCross) : viewNormal;
     if (dot(geoViewN, viewNormal) < 0.0) geoViewN = -geoViewN;
     vec2 distortN = (viewNormal - geoViewN).xy;
 
@@ -259,16 +286,21 @@ void main() {
 
     float depthFade = clamp(thickness * 0.5, 0.0, 1.0);
     vec2  refrUV = clamp(uv + distortN * (WATER_REFRACTION_STRENGTH * depthFade * distFade * edgeFade), vec2(0.0), vec2(1.0));
-    // Reject the offset if it lands on foreground geometry in front of the water.
-    if (getDepth(texture(depthtex0, refrUV).r) >= getDepth(d0) - 0.05) {
-        refractColor = texture(colortex0, refrUV).rgb;
+    // Accept the offset only if it stayed inside the water body (colortex2.b water flag at the
+    // refracted location), the way Allium gates refraction by material. The old test compared
+    // depthtex0 (the water SURFACE) at refrUV to the current surface depth, which FAILED wherever a
+    // wave pushed the offset toward nearer surface -> patchy unrefracted HOLES. The flag test has no
+    // depth-comparison failure: interior offsets stay in water (always refract -> no holes), and an
+    // offset crossing a shoreline onto land/foreground (flag 0) falls back to the unrefracted bg.
+    if (texture(colortex2, refrUV).b > 0.5) {
+        refractColor = textureLod(colortex0, refrUV, 0.0).rgb;
         float dR = texture(depthtex1, refrUV).r;
-        thickness = distance(screenToView(refrUV, d0), screenToView(refrUV, dR));
+        thickness = min(distance(screenToView(refrUV, d0), screenToView(refrUV, dR)), WATER_THICKNESS_MAX);
     }
     #endif
 
-    // Beer-Lambert absorption + in-scatter tint
-    if (thickness < 0.05) thickness = 1.5; // re-apply fallback after the refraction recompute
+    // Beer-Lambert absorption + in-scatter tint, using the real thickness -> shallow shore water is
+    // nearly clear, deep water tinted. No 1.5 fallback (see thickness note above).
     vec3 absorption = vec3(WATER_ABSORPTION_R, WATER_ABSORPTION_G, WATER_ABSORPTION_B);
     // In-scatter is skylight scattered in the water -> gate by skylight (caves/rooms dark) and
     // by the day/night factor, so it doesn't glow bright in shadowed or enclosed water.
@@ -288,7 +320,7 @@ void main() {
         float nz = waterDither(gl_FragCoord.xy, frameCounter);
         vec2 hitUV;
         if (waterReflectSSR(viewWater + viewNormal * 0.1, viewReflDir, nz, hitUV)) {
-            reflectColor = texture(colortex0, hitUV).rgb;
+            reflectColor = textureLod(colortex0, hitUV, 0.0).rgb;
         }
     }
     #endif

@@ -54,7 +54,7 @@
 #define WATER_NORMAL_FADE 64.0 // [0.0 1.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 48.0 64.0 96.0 128.0] distance (blocks) over which wave normals LOD back toward flat (anti-aliases / hides tiling at range)
 
 #define WATER_REFRACTION
-#define WATER_REFRACTION_STRENGTH 0.3 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24] screen-space refraction offset
+#define WATER_REFRACTION_STRENGTH 0.32 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24 0.32 0.35 0.40 0.50] screen-space refraction offset
 
 #define WATER_REFLECTIONS
 #define WATER_REFLECTION_STEPS 32 // [16 20 24 32 48 64] screen-space SSR march steps (higher = sharper / catches more)
@@ -63,7 +63,9 @@
 // Diagnostic. 0 = off (normal shading).
 // 1 = c_water paints water solid RED wherever the colortex2.b water flag is set (sanity check
 //     that water is detected). Everything else is unaffected.
-#define WATER_DEBUG 0 // [0 1]
+// 2 = water thickness (depthtex1 - depthtex0) as greyscale (black=0, white=>=8 blocks). Checks
+//     whether depthtex1 separates translucents so refraction can be depth-scaled like other packs.
+#define WATER_DEBUG 0 // [0 1 2]
 
 // Underwater fog: when the camera is submerged, tint the whole view with the same absorption /
 // scatter as the through-water look, accumulated by distance (so being underwater matches the
@@ -90,7 +92,7 @@
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
 #define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] max blocks the sky-probe DDA ray travels from a bounce surface
 #define GI_FLOOR 100    // [0 50 100 150 200] TODO probably dont need this as a macro
-#define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
+#define GI_EMISSION 0.25   // [1 2 3 4 5 6 7 8] emissive block glow strength
 //#define EXCLUDE_BLOCKLIGHTS_VOXELIZATION // Excludes custom blocklights (torches, lanterns, etc.) from the path-traced GI voxel grid entirely.
 #define GI_FIREFLY 4.0  // TODO might be dead macro
 #define GI_TEMPORAL_REJECT 4.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
