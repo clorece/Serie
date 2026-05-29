@@ -1,4 +1,4 @@
-// SVGF a-trous iteration 4: colortex6 -> colortex3, dilation 8
+
 #define DENOISE_SRC  colortex6
 #define DENOISE_STEP 8.0
 /* RENDERTARGETS: 3 */

@@ -28,9 +28,7 @@ void main() {
         vec4 finalColor = texture(colortex0, texCoord);
     #endif
     
-    // ----------------------------------------------------
     // CAMERA-LIKE TEMPORAL AUTO EXPOSURE (Pass 0)
-    // ----------------------------------------------------
     float prevExposure = texelFetch(colortex5, ivec2(0), 0).a;
     if (prevExposure <= 0.001 || isnan(prevExposure) || isinf(prevExposure)) {
         prevExposure = 1.0;
@@ -66,7 +64,7 @@ void main() {
         // Calibration constant target for middle-gray exposure balance
         float targetExposure = AUTO_EXPOSURE_TARGET / avgLuma;
         
-        // Enforce physical constraints on exposure scale
+
         targetExposure = clamp(targetExposure, AUTO_EXPOSURE_MIN, AUTO_EXPOSURE_MAX);
         
         // Adapt faster when going dark -> bright than bright -> dark to simulate eye pupils

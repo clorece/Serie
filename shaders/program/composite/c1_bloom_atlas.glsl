@@ -1,13 +1,10 @@
-// ============================================================================
-//  c1_bloom_atlas : multi-scale bloom atlas + TAA / exposure persistence
-// ----------------------------------------------------------------------------
-//  Replaces the old soft-threshold extract. Builds the 7-tile mip atlas via
-//  mip-sampled colortex0 (LODs 2..8) and stores it in colortex3. Also carries
-//  the TAA-resolved HDR scene + exposure into colortex5 for the next frame's
-//  d0_restir / temporal radiance cache.
+// c1_bloom_atlas : multi-scale bloom atlas + TAA / exposure persistence
+// Replaces the old soft-threshold extract. Builds the 7-tile mip atlas via
+// mip-sampled colortex0 (LODs 2..8) and stores it in colortex3. Also carries
+// the TAA-resolved HDR scene + exposure into colortex5 for the next frame's
+// d0_restir / temporal radiance cache.
 //
-//  Tile layout, packing and unpack live in lib/post/bloom.glsl.
-// ============================================================================
+// Tile layout, packing and unpack live in lib/post/bloom.glsl.
 
 #include "/lib/options.glsl"
 

@@ -12,6 +12,7 @@ uniform float viewWidth;
 uniform int blockEntityId;
 uniform int entityId;
 uniform int frameCounter;
+uniform int isEyeInWater;
 uniform int worldTime;
 
 uniform ivec2 eyeBrightnessSmooth;

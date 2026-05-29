@@ -6,15 +6,14 @@
 
 
 
-// Build an orthonormal tangent frame from a surface normal
+
 void buildTBN(vec3 n, out vec3 t, out vec3 b) {
     vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
     t = normalize(cross(up, n));
     b = cross(n, t);
 }
 
-// Sample a cosine-weighted direction in the hemisphere oriented around n.
-// r1, r2: uniform random numbers in [0, 1)
+
 vec3 cosHemisphereDir(vec3 n, float r1, float r2) {
     float phi      = 2.0 * PI * r1;
     float sinTheta = sqrt(r2);        // cosine-weighted: pdf = cos(theta)/pi
@@ -40,6 +39,9 @@ float computeRTAO(
     mat4        gbufferMV
 ) {
     vec3 origin = worldPos + normalWorld * 0.05;
+    if (normalWorld.y > 0.5) {
+        origin.y = max(origin.y, floor(worldPos.y - 0.01) + 1.05);
+    }
     float unoccluded = 0.0;
     for (int i = 0; i < RTAO_SAMPLES; i++) {
         vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
@@ -50,8 +52,7 @@ float computeRTAO(
     return unoccluded / float(RTAO_SAMPLES);
 }
 
-// Cast AO_SAMPLES short rays in the hemisphere of normalWorld and return
-// the unoccluded fraction in [0, 1]. 1 = fully lit, 0 = fully occluded.
+
 float computeAO(
     usampler2D atlas,
     vec3        worldPos,
@@ -65,6 +66,9 @@ float computeAO(
 ) {
     // Offset slightly off the surface so the first voxel is the air above it
     vec3 origin = worldPos + normalWorld * 0.1;
+    if (normalWorld.y > 0.5) {
+        origin.y = max(origin.y, floor(worldPos.y - 0.01) + 1.10);
+    }
 
     float unoccluded = 0.0;
     for (int i = 0; i < AO_SAMPLES; i++) {

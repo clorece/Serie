@@ -8,7 +8,7 @@ uint pcgHash(uint v) {
     return (word >> 22u) ^ word;
 }
 
-// Advance a PCG seed and return a uniform float in [0, 1)
+
 float randFloat(inout uint seed) {
     seed = pcgHash(seed);
     return float(seed >> 8u) * (1.0 / float(1u << 24u));

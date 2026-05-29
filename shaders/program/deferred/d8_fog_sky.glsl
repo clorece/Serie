@@ -1,10 +1,7 @@
-// ============================================================================
-//  d8_fog_sky : atmosphere — applied AFTER the path-tracing chain
-// ----------------------------------------------------------------------------
-//  Replaces sky pixels with the procedural sky and (optionally) applies fog to
-//  the composited scene colour. Runs last in the deferred stage so the GI/denoise
-//  passes operate on geometry only and never have to fight the sky.
-// ============================================================================
+// d8_fog_sky : atmosphere — applied AFTER the path-tracing chain
+// Replaces sky pixels with the procedural sky and (optionally) applies fog to
+// the composited scene colour. Runs last in the deferred stage so the GI/denoise
+// passes operate on geometry only and never have to fight the sky.
 
 #ifdef VERTEX
 
@@ -33,7 +30,7 @@ void main() {
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 
-const int gcolorFormat	= RGBA16;
+const int gcolorFormat	= RGBA16F;
 
 in vec2 texCoord;
 in vec3 lightColor;
@@ -61,7 +58,7 @@ void main() {
 
     vec3 color = texture(colortex0, texCoord).rgb;
 
-    // --- Space Transformation ---
+
 	vec3 fragPosition = getFragPosition().xyz;
     vec3 viewDir = normalize(fragPosition);
     vec3 worldDir = mat3(gbufferModelViewInverse) * viewDir;

@@ -1,12 +1,9 @@
-// ============================================================================
-//  d1_prefilter : firefly suppression and variance estimation
-// ----------------------------------------------------------------------------
-//  Reads the accumulated GI (colortex8) and moments (colortex9).
-//  Suppresses fireflies with a 3x3 filter and bootstraps the variance channel
-//  for the SVGF a-trous chain.
+// d1_prefilter : firefly suppression and variance estimation
+// Reads the accumulated GI (colortex8) and moments (colortex9).
+// Suppresses fireflies with a 3x3 filter and bootstraps the variance channel
+// for the SVGF a-trous chain.
 //
-//  Output: colortex3 = filtered GI (.rgb) + variance (.a)
-// ============================================================================
+// Output: colortex3 = filtered GI (.rgb) + variance (.a)
 
 #ifdef VERTEX
 
@@ -40,17 +37,17 @@ void main() {
     float histLen = c8.a;
     vec4  cm      = texture(colortex9, texCoord);
     
-    // 1. Initial variance estimate from temporal moments
+    // Initial variance estimate from temporal moments
     float cVar = varFromMoments(cm.g, cm.b);
     
-    // 2. Bootstrap variance spatially if history is short
+    // Bootstrap variance spatially if history is short
     // This is CRITICAL for the denoiser to function properly when moving the camera.
     if (histLen < float(SVGF_VAR_BOOST)) {
         float sv = spatialLumaVariance(colortex8, texCoord);
         cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
     }
 
-    // 3. Lightweight Prefilter & Variance Stabilization (3x3)
+    // Lightweight Prefilter & Variance Stabilization (3x3)
     vec3 sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
     

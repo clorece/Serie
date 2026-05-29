@@ -3,12 +3,12 @@
 
 #include "/lib/pt/rand.glsl"
 #include "/lib/pt/ddaTrace.glsl"
-// ao.glsl provides cosHemisphereDir, buildTBN and PI
+
 #include "/lib/pt/ao.glsl"
 #include "/lib/blocklightColors.glsl"
 // Sky bounces use the flat per-frame skyColor (passed in) — no directional LUT.
 
-// Result of a GI ray traversal through the voxel grid.
+
 struct VoxelHit {
     bool  hit;
     vec3  pos;       // world-space entry point of the hit voxel
@@ -65,14 +65,14 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
                 r.emission += e * float(GI_EMISSION) * 0.35;
             }
         } else if (v.r != VOXEL_AIR) {
-            // Any non-air voxel at i > 0 stops the ray.
+
             r.hit      = true;
             r.category = v.r;
             r.albedo   = vec3(v.gba) / 255.0;
             r.pos      = worldPos + rayDir * tEntry;
             r.normal   = -vec3(stepDir) * lastMask; // face we entered through
 
-            // If the hit voxel is a blocklight, gather its emission and stop!
+
             if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
                 vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
                                        : vec3(v.gba) / 255.0;
@@ -96,7 +96,7 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 }
 
 
-// Trace ONE GI ray and return the incoming radiance from that direction.
+
 vec3 giRayRadiance(
     usampler2D atlas, vec3 camPos, vec3 gridOrigin,
     vec3 origin, vec3 dir, vec3 sunDir, vec3 sunColor, vec3 skyColor,
@@ -110,7 +110,7 @@ vec3 giRayRadiance(
     // caller can add it AFTER any multi-bounce radiance overwrite (otherwise it gets discarded).
     rayEmission = h.emission;
 
-    // --- Adaptive Blocklight Reduction ---
+
     // Scale down blocklight emission outdoors under the open sky during the day.
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
@@ -119,7 +119,7 @@ vec3 giRayRadiance(
     float blocklightSuppression = mix(1.0, 0.0, sunUp * skyExposure);
     rayEmission *= blocklightSuppression;
 
-    // Smooth the lightmap to avoid harsh transitions in the PT
+
     float skyOcc = max(skyLightmap, 0.0);
 
     if (h.hit) {
@@ -150,7 +150,7 @@ vec3 giRayRadiance(
         return rad;
     }
     
-    // --- Hybrid Screen-Space Fallback ---
+
     // If the ray escapes the voxel bounds, seamlessly trace it against the screen-space
     // depth buffer to pick up infinite-distance geometry (mountains, trees outside radius).
     vec3 ssrtHitNormal;
@@ -161,7 +161,7 @@ vec3 giRayRadiance(
         hitCategory = VOXEL_OPAQUE;
         hitNormal = ssrtHitNormal;
         
-        // Sample previous frame HDR scene for Screen-Space Global Illumination (SSGI)
+
         vec3 ssgiColor = texture(colortex5, ssrtHitUV).rgb;
         if (isnan(ssgiColor.r) || isnan(ssgiColor.g) || isnan(ssgiColor.b) || isinf(ssgiColor.r) || isinf(ssgiColor.g) || isinf(ssgiColor.b)) {
             ssgiColor = vec3(0.0);
@@ -179,7 +179,7 @@ vec3 giRayRadiance(
     return skyRad * smoothstep(-0.2, 0.4, dir.y);
 }
 
-// Multi-sample diffuse GI for the non-ReSTIR path.
+
 vec3 computeGI(
     usampler2D atlas, vec3 worldPos, vec3 normal, inout uint seed, vec3 camPos,
     vec3 sunDir, vec3 sunColor, vec3 skyColor, float skyLightmap,

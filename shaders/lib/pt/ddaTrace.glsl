@@ -13,7 +13,7 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     
     vec3 viewEnd = viewOrigin + viewDir * maxDist;
     vec4 clipEnd = gbufferProj * vec4(viewEnd, 1.0);
-    if (clipEnd.w <= 0.0) return false; // Behind camera
+
     
     vec3 ndcEnd = clipEnd.xyz / clipEnd.w;
     
@@ -22,7 +22,7 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     
     vec3 rayDelta = uvEnd - uvOrigin;
     
-    // 1. Pre-clip ray to screen boundaries to remove inner loop branching
+    // Pre-clip ray to screen boundaries to remove inner loop branching
     float tMax = 1.0;
     if (rayDelta.x > 0.0) tMax = min(tMax, (1.0 - uvOrigin.x) / rayDelta.x);
     else if (rayDelta.x < 0.0) tMax = min(tMax, -uvOrigin.x / rayDelta.x);
@@ -41,17 +41,17 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     float steps = clamp(screenDist * 100.0, 4.0, 16.0);
     vec3 stepDelta = rayDelta / steps;
     
-    // 2. Dither the start position to hide stepping artifacts
+    // Dither the start position to hide stepping artifacts
     vec3 currentUV = uvOrigin + stepDelta * dither;
     
-    // 3. Set up linear depth interpolation for accurate thickness testing
+    // Set up linear depth interpolation for accurate thickness testing
     float invZOrigin = 1.0 / viewOrigin.z;
     float invZEnd = 1.0 / viewEnd.z;
     float invZDelta = (invZEnd - invZOrigin) * tMax;
     float invZStep = invZDelta / steps;
     float currentInvZ = invZOrigin + invZStep * dither;
     
-    // World space thickness tolerance (e.g. 1.0 meters/blocks)
+
     float hitThickness = 1.0; 
     float P22 = gbufferProj[2][2];
     float P32 = gbufferProj[3][2];
@@ -76,7 +76,7 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
         float hitThickness = max(1.0, abs(sceneViewZ) * 0.05);
         if ((rayViewZ < sceneViewZ && prevRayViewZ >= sceneViewZ) || 
             (rayViewZ < sceneViewZ && rayViewZ > sceneViewZ - hitThickness)) {
-            hitPos = worldRayOrigin + worldRayDir * maxDist * tMax * (float(i) / steps); // approximate
+            hitPos = worldRayOrigin + worldRayDir * maxDist * tMax * (float(i) / steps);
             hitNormal = -worldRayDir; // Better fallback normal than vec3(0,1,0)
             hitUV = currentUV.xy;
             return true;
@@ -110,9 +110,7 @@ bool traceVoxelRay(
     vec3 gridOrigin = floor(camPos) - vec3(VOXEL_RADIUS);
     vec3 localPos   = worldPos - gridOrigin;
 
-    // Fast check: if the origin is far outside the grid, skip the trace entirely.
     if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) {
-        // Fallback to screen-space for rays starting outside voxel volume
         vec2 dummyUV; vec3 dummyN, dummyP;
         return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
     }
@@ -120,7 +118,7 @@ bool traceVoxelRay(
     ivec3 vox     = ivec3(floor(localPos));
     ivec3 stepDir = ivec3(sign(rayDir));
 
-    // Per-axis step size
+
     vec3 invRayDir = 1.0 / (rayDir + 1e-8);
     vec3 tDelta = abs(invRayDir);
 
@@ -131,18 +129,15 @@ bool traceVoxelRay(
     vec3 tMaxBox = max(t0, t1);
     float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
 
-    // Distance to the first boundary crossing
+
     vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
 
     float tEntry = 0.0;
     // Cap iterations to scale dynamically with the grid diameter
     for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
-        // Exit if we exceed the requested distance
         if (tEntry >= maxDist) return false;
         
-        // Exit if we leave the active grid volume
         if (tEntry > tExit) {
-            // Escape to screen-space fallback
             vec2 dummyUV; vec3 dummyN, dummyP;
             return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
         }
@@ -151,7 +146,7 @@ bool traceVoxelRay(
         // All non-air voxels (including all blocklights) act as solid occluders for shadow rays
         if (vt != VOXEL_AIR && i > 0) return true;
 
-        // Step to the nearest axis boundary
+
         bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));
         tEntry = min(tMax.x, min(tMax.y, tMax.z));
         tMax  += vec3(mask) * tDelta;

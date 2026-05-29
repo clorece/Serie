@@ -20,21 +20,21 @@
 #define TAA
 #define TAA_JITTER_AMOUNT 1.0
 #define TAA_JITTER_SPREAD 1.0
-#define TAA_BLEND_WEIGHT 0.94 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
+#define TAA_BLEND_WEIGHT 0.92 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
 
 #define BLOOM
 #define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
-#define EXPOSURE 4.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
-#define AUTO_EXPOSURE_TARGET 0.065 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
-#define AUTO_EXPOSURE_SPEED 1.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
+#define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
+#define AUTO_EXPOSURE_TARGET 0.18 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
+#define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.001 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
-#define AUTO_EXPOSURE_MAX 128.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
+#define AUTO_EXPOSURE_MAX 6.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
-#define COLOR_CONTRAST 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_SATURATION 1.1 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 //#define VIGNETTE
@@ -45,11 +45,45 @@
 
 //#define WIND_MOVEMENT // WIP
 
+// --- Water (deferred surface shading: waves + refraction + reflections) ---
+#define WATER_WAVES
+#define WATER_WAVE_OCTAVES 4 // [2 3 4 5 6] FBM octaves for the surface height field
+#define WATER_WAVE_AMPLITUDE 0.24 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24 0.32] bump height (blocks)
+#define WATER_WAVE_SPEED 1.5 // [0.1 0.2 0.3 0.45 0.6 0.8 1.0 1.4] wave advection speed
+#define WATER_NORMAL_STRENGTH 0.8 // [0.2 0.35 0.5 0.65 0.8 0.85 1.0] 0 = flat, 1 = full waves
+#define WATER_NORMAL_FADE 64.0 // [0.0 1.0 2.0 4.0 6.0 8.0 12.0 16.0 24.0 32.0 48.0 64.0 96.0 128.0] distance (blocks) over which wave normals LOD back toward flat (anti-aliases / hides tiling at range)
+
+#define WATER_REFRACTION
+#define WATER_REFRACTION_STRENGTH 0.3 // [0.02 0.04 0.06 0.08 0.10 0.14 0.18 0.24] screen-space refraction offset
+
+#define WATER_REFLECTIONS
+#define WATER_REFLECTION_STEPS 32 // [16 20 24 32 48 64] screen-space SSR march steps (higher = sharper / catches more)
+#define WATER_SKYLIGHT_THRESHOLD 0.7 // [0.0 0.3 0.5 0.6 0.7 0.8 0.9] min sky access before water reflects sky / in-scatters (higher = caves & covered water stay dark)
+
+// Diagnostic. 0 = off (normal shading).
+// 1 = c_water paints water solid RED wherever the colortex2.b water flag is set (sanity check
+//     that water is detected). Everything else is unaffected.
+#define WATER_DEBUG 0 // [0 1]
+
+// Underwater fog: when the camera is submerged, tint the whole view with the same absorption /
+// scatter as the through-water look, accumulated by distance (so being underwater matches the
+// colour of water seen from outside).
+#define WATER_FOG
+
+// Per-channel Beer-Lambert absorption (1/blocks). Higher = water clears faster to scatter tint.
+#define WATER_ABSORPTION_R 0.45 // [0.10 0.20 0.30 0.45 0.60 0.80 1.00]
+#define WATER_ABSORPTION_G 0.13 // [0.05 0.08 0.13 0.18 0.25 0.35]
+#define WATER_ABSORPTION_B 0.08 // [0.03 0.05 0.08 0.12 0.18 0.25]
+// In-scatter colour reached for thick water (linear, gets tonemapped/exposed downstream).
+#define WATER_SCATTER_R 0.015 // [0.0 0.005 0.010 0.015 0.025 0.04 0.06]
+#define WATER_SCATTER_G 0.045 // [0.0 0.02 0.03 0.045 0.06 0.09 0.12]
+#define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
+
 #define VOXEL_GI
 #define VOXEL_GRID_SIZE 128 // [64 128 256 512 1024 2048]
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  24   // [12 16 24 32 48 64 96 128] TODO might also be dead due to ReSTIR
-#define GI_STRENGTH 200 // [25 50 75 100 150 200]
+#define GI_STRENGTH 150 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 50      // [0 10 15 20 25 30 40 50] Tilt skylight hue toward the sun TODO rework this so that it is only daytime
 #define SKY_LUT_STEPS 4       // [4 6 8 12] atmosphere primary-march steps (used by lib/fragment/sky.glsl for the main sky render)

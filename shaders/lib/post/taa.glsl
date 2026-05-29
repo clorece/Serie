@@ -6,7 +6,7 @@
 #include "/lib/util/jitter.glsl"
 
 
-// ---- Color Space Utilities (YCoCg) ----
+
 // Box clamping in YCoCg space prevents color shifting (rainbow ghosting)
 vec3 RGBtoYCoCg(vec3 c) {
     return vec3(
@@ -32,7 +32,7 @@ vec3 ReinhardInverse(vec3 color) {
     return color / max(1.0 - getLuminance(color), 0.0001);
 }
 
-// ---- High-Fidelity History Sampling ----
+
 // 5-tap Catmull-Rom filter for history sampling. Prevents the progressive
 // blur that occurs when using standard bilinear filtering across many frames.
 vec4 textureCatmullRom(sampler2D tex, vec2 uv, vec2 texSize) {
@@ -64,12 +64,12 @@ vec4 textureCatmullRom(sampler2D tex, vec2 uv, vec2 texSize) {
     return color / max(w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y, 0.0001);
 }
 
-// ---- Variance & Neighborhood Calculation ----
+
 void getVariance3x3(sampler2D currentFrame, vec2 uv, vec2 screenSize, vec3 currentColor, out vec3 avgColor, out vec3 variance) {
     vec3 m1 = vec3(0.0);
     vec3 m2 = vec3(0.0);
     
-    // Cross-neighborhood for stable averaging
+
     vec3 c0 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2(-1, -1) / screenSize, 0.0).rgb);
     vec3 c1 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 0, -1) / screenSize, 0.0).rgb);
     vec3 c2 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 1, -1) / screenSize, 0.0).rgb);
@@ -87,7 +87,7 @@ void getVariance3x3(sampler2D currentFrame, vec2 uv, vec2 screenSize, vec3 curre
     variance = sqrt(max(m2 / 9.0 - avgColor * avgColor, 0.0));
 }
 
-// Variance-based clipping (AABB in YCoCg space)
+
 vec3 clipAABB(vec3 avgColor, vec3 variance, vec3 prevColor, float aggression) {
     vec3 clipMin = avgColor - variance * aggression;
     vec3 clipMax = avgColor + variance * aggression;
@@ -100,7 +100,7 @@ vec3 clipAABB(vec3 avgColor, vec3 variance, vec3 prevColor, float aggression) {
     return avgColor + diff;
 }
 
-// ---- Robust Reprojection ----
+
 // Uses the closest depth in a 3x3 window to prevent foreground objects from
 // smearing their reprojection vectors onto the background.
 float getClosestDepth(vec2 uv, vec2 screenSize) {
@@ -147,12 +147,12 @@ bool inScreen(vec2 uv) {
 vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D historyFrame) {
     vec2 uv = currentPos / screenSize;
     
-    // Sample current color + exposure
+
     vec4 currentColorData = textureLod(currentFrame, uv, 0.0);
     vec3 currentColor = currentColorData.rgb;
     float exposureData = currentColorData.a; // Preserve auto-exposure state
 
-    // Reproject
+
     vec3 velocityPixels;
     vec2 prevUV = getPreviousUV(uv, screenSize, velocityPixels);
     
@@ -160,27 +160,35 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
         return currentColorData;
     }
     
-    // History Sampling (Catmull-Rom)
+
     vec4 prevColorData = textureCatmullRom(historyFrame, prevUV, screenSize);
     vec3 prevColorYCoCg = RGBtoYCoCg(max(prevColorData.rgb, 0.0));
     
-    // Variance calculation
+
     vec3 avgColorYCoCg, variance;
     getVariance3x3(currentFrame, uv, screenSize, currentColor, avgColorYCoCg, variance);
     
+
+    bool isWater = textureLod(colortex2, uv, 0.0).b > 0.5;
+
     // Aggression factor (lower = tighter clamp = less ghosting, more flicker)
-    float aggression = 1.0; 
+    // Relax history clamp for water to prevent the animated waves and high-frequency
+    // reflections/refractions from being clipped away (which disables TAA on water).
+    float aggression = isWater ? 3.0 : 1.0; 
     
-    // Clip history to valid bounds
+
     prevColorYCoCg = clipAABB(avgColorYCoCg, variance, prevColorYCoCg, aggression);
     vec3 prevColor = max(YCoCgtoRGB(prevColorYCoCg), 0.0);
     
-    // Velocity-based temporal rejection
+
     float blendWeight = TAA_BLEND_WEIGHT;
     float velocityReject = clamp(pow(dot(velocityPixels.xy, velocityPixels.xy), 0.25) * 0.1, 0.0, 1.0);
+    if (isWater) {
+        velocityReject *= 0.25; // Keep history blending stable for water during camera movement
+    }
     blendWeight *= (1.0 - velocityReject);
 
-    // Blending in Tonemapped Space
+
     vec3 tonemappedHistory = ReinhardTonemap(prevColor);
     vec3 tonemappedCurrent = ReinhardTonemap(currentColor);
     vec3 blended = mix(tonemappedCurrent, tonemappedHistory, blendWeight);

@@ -21,16 +21,14 @@
 #define VOXEL_FOLIAGE  2u
 #define VOXEL_EMISSIVE 3u
 
-// Convert a voxel grid coordinate [0, VOXEL_GRID_SIZE) to a 2D atlas texel
+
 ivec2 voxelCoordToAtlas(ivec3 c) {
     int col = c.z % VOXEL_ATLAS_COLS;
     int row = c.z / VOXEL_ATLAS_COLS;
     return ivec2(col * VOXEL_GRID_SIZE + c.x, row * VOXEL_GRID_SIZE + c.y);
 }
 
-// Convert absolute world position to an integer voxel grid coordinate.
-// gridOrigin = floor(cameraPosition) - VOXEL_RADIUS
-// Returns true and writes coord when inside the grid, false otherwise.
+
 bool worldToVoxel(vec3 worldPos, vec3 gridOrigin, out ivec3 coord) {
     vec3 local = worldPos - gridOrigin;
     coord = ivec3(floor(local));
@@ -38,12 +36,12 @@ bool worldToVoxel(vec3 worldPos, vec3 gridOrigin, out ivec3 coord) {
            all(lessThan(coord, ivec3(VOXEL_GRID_SIZE)));
 }
 
-// Sample voxel type at an integer coordinate using a usampler2D (deferred read path).
+
 uint sampleVoxel(usampler2D atlas, ivec3 coord) {
     return texelFetch(atlas, voxelCoordToAtlas(coord), 0).r;
 }
 
-// Full voxel contents: block category + stored albedo color.
+
 struct VoxelSample {
     uint category;
     vec3 albedo;

@@ -1,13 +1,10 @@
-// ============================================================================
-//  d_denoise_common : one SVGF a-trous iteration
-// ----------------------------------------------------------------------------
-//  The including pass sets:
-//      DENOISE_SRC         - colour+variance input from prev iteration
-//      DENOISE_STEP        - kernel dilation for this iteration
-//      DENOISE_LAST_ITER   - (optional) write to history (colortex8)
-//  and the .fsh wrapper picks the output via its DRAWBUFFERS comment.
-//  Output: .rgb = filtered irradiance, .a = filtered variance.
-// ============================================================================
+// d_denoise_common : one SVGF a-trous iteration
+// The including pass sets:
+//     DENOISE_SRC         - colour+variance input from prev iteration
+//     DENOISE_STEP        - kernel dilation for this iteration
+//     DENOISE_LAST_ITER   - (optional) write to history (colortex8)
+// and the .fsh wrapper picks the output via its DRAWBUFFERS comment.
+// Output: .rgb = filtered irradiance, .a = filtered variance.
 
 #ifndef DENOISE_SRC
     #error "d_denoise_common.glsl: define DENOISE_SRC"
@@ -65,7 +62,7 @@ void main() {
         vec4  c8      = texture(colortex8, texCoord);
         float histLen = c8.a;
 
-        // ---- Displayed result (colortex6 or colortex8 via DRAWBUFFERS) ----
+        // Displayed result (colortex6 or colortex8 via DRAWBUFFERS)
         vec3 displayColor = outv.rgb;
         #ifdef SVGF_DETAIL_PRESERVE
             float preserve = clamp(histLen / float(SVGF_PRESERVE_FRAMES), 0.0, 1.0)
@@ -74,7 +71,7 @@ void main() {
         #endif
         gl_FragData[0] = vec4(displayColor, outv.a);
 
-        // ---- Temporal history feedback (colortex8) ----
+        // Temporal history feedback (colortex8)
         #ifdef SVGF_RAW_HISTORY
             // Keep the history as the RAW accumulated GI.
             gl_FragData[1] = vec4(c8.rgb, histLen);

@@ -1,13 +1,9 @@
 #ifndef ATMOSPHERE_GLSL
 #define ATMOSPHERE_GLSL
 
-/*
 
-*/
-
-// --- Constants ---
 #define SUN_ILLUMINANCE 10.0
-#define MOON_ILLUMINANCE 0.05
+#define MOON_ILLUMINANCE 0.025
 
 #define SUN_COLOR_BASE (vec3(1.0, 0.9, 0.81) * SUN_ILLUMINANCE)
 #define MOON_COLOR_BASE (vec3(0.25, 0.65, 1.0) * MOON_ILLUMINANCE)
@@ -116,7 +112,7 @@ vec3 GetAtmosphere(
 		return vec3(0.0);
 	}
 
-	// Planet intersection
+	
 	vec2 pid = GetRaySphereIntersection(viewPos, nViewPos, PLANET_RADIUS * 0.998);
 	bool planetIntersected = pid.y >= 0.0;
 

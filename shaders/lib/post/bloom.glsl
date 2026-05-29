@@ -1,20 +1,17 @@
 #ifndef BLOOM_GLSL
 #define BLOOM_GLSL
 
-// ============================================================================
-//  Multi-scale bloom atlas (industry-standard for Iris)
-// ----------------------------------------------------------------------------
-//  Seven mip tiles (LOD 2..8) of the TAA-resolved HDR scene are packed into
-//  colortex3 by c1_bloom_atlas. final.glsl reads the tiles back, unpacks them
-//  and blends with the scene. Mip-sampling colortex0 means the heavy spatial
-//  averaging is done by the GPU's mipmap unit; the explicit 7-tap binomial
-//  kernel below is the final smoothing on top of the mip.
+// Multi-scale bloom atlas (industry-standard for Iris)
+// Seven mip tiles (LOD 2..8) of the TAA-resolved HDR scene are packed into
+// colortex3 by c1_bloom_atlas. final.glsl reads the tiles back, unpacks them
+// and blends with the scene. Mip-sampling colortex0 means the heavy spatial
+// averaging is done by the GPU's mipmap unit; the explicit 7-tap binomial
+// kernel below is the final smoothing on top of the mip.
 //
-//  HDR range compression: tiles are stored as pow(x/128, 0.25). The fourth-
-//  power unpack on read restores linear radiance AND acts as an implicit
-//  highlight bias (dim pixels collapse toward zero), removing the need for a
-//  classic luma threshold.
-// ============================================================================
+// HDR range compression: tiles are stored as pow(x/128, 0.25). The fourth-
+// power unpack on read restores linear radiance AND acts as an implicit
+// highlight bias (dim pixels collapse toward zero), removing the need for a
+// classic luma threshold.
 
 const float bloomTileLods[7] = float[](2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0);
 const vec2  bloomTileOffsets[7] = vec2[](
@@ -36,8 +33,7 @@ vec2 bloomAtlasRescale() {
     return max(vec2(viewWidth, viewHeight) / vec2(1920.0, 1080.0), vec2(1.0));
 }
 
-// Build one tile of the atlas. Pixels outside the tile's footprint return 0.
-// `scaledCoord` is texCoord * bloomAtlasRescale() (caller-precomputed).
+
 vec3 BuildBloomTile(float lod, vec2 offset, vec2 scaledCoord) {
     float scale = exp2(lod);
     vec2 coord = (scaledCoord - offset) * scale;
@@ -73,7 +69,7 @@ vec3 BuildBloomAtlas(vec2 scaledCoord) {
     return atlas;
 }
 
-// Read one tile of the atlas. Reverses the gamma-4 pack and applies tile weight.
+
 vec3 SampleBloomTile(sampler2D atlasTex, float lod, vec2 tileOffset, vec2 coord, vec2 rescale) {
     float scale = exp2(lod);
     vec2 bloomCoord = coord / scale + tileOffset;

@@ -2,6 +2,6 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-/* DRAWBUFFERS:35 */
+/* DRAWBUFFERS:0 */
 
-#include "/program/composite/c1_bloom_atlas.glsl"
+#include "/program/composite/c0_taa.glsl"

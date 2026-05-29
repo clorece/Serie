@@ -135,19 +135,17 @@ bool fetchBilateralHistory(
     return false;
 }
 
-// ============================================================================
-//  SVGF — Spatiotemporal Variance-Guided Filtering (Schied et al. 2017),
-//  re-implemented from the published algorithm.
+// SVGF — Spatiotemporal Variance-Guided Filtering (Schied et al. 2017),
+// re-implemented from the published algorithm.
 //
-//  The temporal stage (in d0_restir) integrates colour and the first two
-//  luminance moments. Here we estimate per-pixel variance from those moments
-//  (or spatially while history is short), then run an edge-aware a-trous
-//  wavelet whose LUMINANCE edge-stopping is scaled by sqrt(variance): noisy
-//  regions blur hard, converged regions keep detail. Variance is filtered
-//  alongside colour (with weight^2) so later iterations stay guided.
+// The temporal stage (in d0_restir) integrates colour and the first two
+// luminance moments. Here we estimate per-pixel variance from those moments
+// (or spatially while history is short), then run an edge-aware a-trous
+// wavelet whose LUMINANCE edge-stopping is scaled by sqrt(variance): noisy
+// regions blur hard, converged regions keep detail. Variance is filtered
+// alongside colour (with weight^2) so later iterations stay guided.
 //
-//  Buffer convention through the chain: .rgb = irradiance, .a = variance.
-// ============================================================================
+// Buffer convention through the chain: .rgb = irradiance, .a = variance.
 
 // B3-spline (1,4,6,4,1)/16 a-trous kernel weight, indexed by |offset| in 0..2.
 float atrousW(int i) {
@@ -186,7 +184,7 @@ float gauss3Var(sampler2D src, vec2 uv) {
     return v / wsum;
 }
 
-// ---- Jitter Helper (Cache-Friendly Tile Rotation) --------------------------
+// Jitter Helper (Cache-Friendly Tile Rotation)
 // By rounding the screen coordinate to 8x8 tiles, all pixels within a GPU warp
 // will share the exact same rotation matrix. This preserves texture cache coherency 
 // and keeps performance high, while still breaking the A-Trous ringing artifact.
@@ -196,7 +194,7 @@ float getJitterRotation(vec2 uv, int frame) {
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * 6.2831853;
 }
 
-// ---- First a-trous iteration -------------------------------------------------
+// First a-trous iteration
 // Colour comes from giTex (.rgb); variance is derived here from momentTex
 // (.g = m1, .b = m2) or estimated spatially while the history is short.
 // Returns vec4(filtered colour, filtered variance) to seed the chain.
@@ -289,7 +287,7 @@ vec4 svgfAtrousFirst(
     return vec4(sumC / max(wsum, 1e-5), sumV / max(wsum * wsum, 1e-5));
 }
 
-// ---- Subsequent a-trous iterations ------------------------------------------
+// Subsequent a-trous iterations
 vec4 svgfAtrous(
     sampler2D src, sampler2D depthTex, sampler2D normalTex,
     vec2 uv, float stepSize, float centerDepth, vec2 depthGrad, vec3 centerN,

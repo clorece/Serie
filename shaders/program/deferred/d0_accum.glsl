@@ -1,13 +1,10 @@
-// ============================================================================
-//  d0_accum : spatiotemporal accumulation for indirect light
-// ----------------------------------------------------------------------------
-//  Reads the noisy raw GI from d0_restir (colortex3) and blends it with the
-//  history (colortex8) using bilateral reprojection and YCoCg neighborhood
-//  clamping to suppress ghosting.
+// d0_accum : spatiotemporal accumulation for indirect light
+// Reads the noisy raw GI from d0_restir (colortex3) and blends it with the
+// history (colortex8) using bilateral reprojection and YCoCg neighborhood
+// clamping to suppress ghosting.
 //
-//  Output: colortex8 = accumulated GI (.rgb) + history length (.a)
-//          colortex9 = linear depth (.r) + luminance moments (.g, .b)
-// ============================================================================
+// Output: colortex8 = accumulated GI (.rgb) + history length (.a)
+//         colortex9 = linear depth (.r) + luminance moments (.g, .b)
 
 #ifdef VERTEX
 
@@ -108,7 +105,6 @@ void main() {
     // (carried in c9.a) using the same reproject/rejection as the GI accumulation.
     float rawAO = texture(colortex14, texCoord).w;
     
-    // --- Pre-Accumulation Firefly / Outlier Rejection ---
     // We must check depth and normals so we don't accidentally blur
     // the dark background into the bright foreground edges.
     vec3 neighborSum = vec3(0.0);
@@ -118,24 +114,21 @@ void main() {
             if (x == 0 && y == 0) continue;
             vec2 nUV = texCoord + vec2(x, y) * texelSize;
             
-            // Screen bounds check
+
             if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
             
             float nDepth0 = textureLod(depthtex0, nUV, 0.0).r;
             float nLinDepth = getDepth(nDepth0);
             vec3 nNormal = normalize(textureLod(colortex1, nUV, 0.0).rgb * 2.0 - 1.0);
             
-            // Strictly reject pixels on different depth planes or surfaces
             if (abs(nLinDepth - linDepth) < 0.1 * linDepth && dot(normal, nNormal) > 0.8) {
                 neighborSum += textureLod(colortex3, nUV, 0.0).rgb;
                 neighborWeight += 1.0;
             }
         }
     }
-    
     float centerLumaRaw = dot(rawGI, vec3(0.2126, 0.7152, 0.0722));
-    float neighborLuma = centerLumaRaw; // Default to center if no neighbors valid
-    
+    float neighborLuma = centerLumaRaw;
     if (neighborWeight > 0.1) {
         vec3 neighborAvg = neighborSum / neighborWeight;
         neighborLuma = dot(neighborAvg, vec3(0.2126, 0.7152, 0.0722));
@@ -146,7 +139,6 @@ void main() {
         }
     }
     
-    // --- ReSTIR Spatial Reuse (Current Frame) ---
     // By doing spatial reuse in this pass, we can read the reservoirs written
     // by d0_restir.glsl on the CURRENT frame, fixing the geometric misalignment bug.
     #if defined(VOXEL_GI) && defined(RESTIR_GI) && defined(RESTIR_SPATIAL)
@@ -161,7 +153,6 @@ void main() {
         // Screen padding to prevent sampling garbage at the very edges of the screen
         vec2 paddingSpatial = 2.0 * texelSize;
         
-        // --- Adaptive Spatial Reuse Optimization ---
         // If the temporal history is already highly converged (M is near maximum),
         // we can dynamically reduce or entirely skip the expensive spatial reuse.
         // This saves immense memory bandwidth across large stable areas of the screen.
@@ -177,7 +168,6 @@ void main() {
             vec2 uniformOffset = getUniformOffset(i, frameCounter);
             ivec2 delta = ivec2(round(uniformOffset));
             
-            // Avoid choosing ourselves
             if (delta.x == 0 && delta.y == 0) {
                 delta.x = 1;
             }
@@ -191,12 +181,12 @@ void main() {
             if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x || 
                 nUV.y < paddingSpatial.y || nUV.y > 1.0 - paddingSpatial.y) continue;
 
-            // Depth rejection
+
             float nDepthRaw = textureLod(depthtex0, nUV, 0.0).r;
             float actualNDepth = getDepth(nDepthRaw);
             if (abs(actualNDepth - linDepth) / max(linDepth, 0.001) > spDepthGate) continue;
 
-            // Normal rejection
+
             vec3 nNormal = normalize(textureLod(colortex1, nUV, 0.0).rgb * 2.0 - 1.0);
             if (dot(normal, nNormal) < spNormalGate) continue;
 
@@ -215,9 +205,9 @@ void main() {
 
     float lr    = dot(rawGI, vec3(0.2126, 0.7152, 0.0722)); // Use clamped luma for moments
 
-    // Reproject
+
     vec3 worldPrevRel = worldRel;
-    bool isHand = depth0 < 0.56; // Standard hand depth threshold
+    bool isHand = depth0 < 0.56;
     
     vec2 uvPrev;
     float expectedClipZ;
@@ -251,10 +241,10 @@ void main() {
             if (prev8.a > 0.5) {
                 giHist = min(prev8.a + 1.0, float(GI_ACCUM_FRAMES));
 
-                // 1. Box Clamping (YCoCg) - Modern anti-ghosting
+                // Box Clamping (YCoCg) - Modern anti-ghosting
                 vec3 clampedHistory = clipHistory(prev8.rgb, rawGI, colortex3, texCoord);
 
-                // 2. Variance-based rejection (Controlled by GI_TEMPORAL_REJECT)
+                // Variance-based rejection (Controlled by GI_TEMPORAL_REJECT)
                 // We use the 'neighborLuma' (3x3 spatial average) to detect lighting changes.
                 // Comparing raw 1spp noise to the history will constantly trigger false rejections,
                 // preventing the accumulation from ever smoothing out.
@@ -262,22 +252,19 @@ void main() {
                 float tol     = prevStd * GI_TEMPORAL_REJECT + 0.05 * p9_tmp.g + 0.01;
                 float reject  = clamp((abs(neighborLuma - p9_tmp.g) - tol) / (tol + 1e-3), 0.0, 1.0);
 
-                // Motion-based history rejection
+
                 float motion = length(cameraPosition - previousCameraPosition);
                 reject = max(reject, smoothstep(0.1, 1.0, motion) * 0.75);
                 
-                // If the history was heavily clamped (meaning a massive lighting change occurred),
-                // we should reduce the history length so the variance moments can adapt faster.
                 float clampDiff = length(prev8.rgb - clampedHistory) / max(luma(prev8.rgb), 0.001);
                 reject = max(reject, clamp(clampDiff * 0.5, 0.0, 0.8));
                 
-                reject *= reject; // Smooth the rejection curve
+                reject *= reject; 
 
                 giHist = mix(giHist, 1.0, reject);
                 float a = 1.0 / giHist;
 
                 blendedGI = mix(clampedHistory, rawGI, a);
-                // Track the raw variance so the GI_TEMPORAL_REJECT macro works properly
                 giM1 = mix(p9_tmp.g, lr, a);
                 giM2 = mix(p9_tmp.b, lr * lr, a);
                 // AO uses the same temporal alpha as GI. p9_tmp.a is the previous-frame

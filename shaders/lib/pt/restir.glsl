@@ -3,7 +3,7 @@
 
 #include "/lib/pt/rand.glsl"
 #include "/lib/options.glsl"
-// common.glsl provides viewWidth/viewHeight + octEncode/DecodeNormal
+
 #include "/lib/util/common.glsl"
 
 #ifndef LUMA_FN

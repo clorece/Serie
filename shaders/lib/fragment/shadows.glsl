@@ -17,7 +17,7 @@ float shadow2DLinear(sampler2D shadowTex, vec2 uv, float receiverDepth) {
     vec4 depths = textureGather(shadowTex, uv);
     vec4 comparisons = step(receiverDepth, depths);
     
-    // Bilinear interpolation
+
     float shadowBottom = mix(comparisons.w, comparisons.z, f.x);
     float shadowTop = mix(comparisons.x, comparisons.y, f.x);
     return mix(shadowBottom, shadowTop, f.y);
@@ -55,29 +55,29 @@ vec3 getShadow(float material) {
 
     vec4 shadowPos = toShadowSpace(worldPos);
     
-    // Out of bounds check
+
     if (shadowPos.x < 0.0 || shadowPos.x > 1.0 || shadowPos.y < 0.0 || shadowPos.y > 1.0 || shadowPos.z < 0.0 || shadowPos.z > 1.0) {
         return vec3(1.0);
     }
 
-    // 1. Solve the non-linear shadow map distortion factor closed-form directly from distorted coordinates.
+    // Solve the non-linear shadow map distortion factor closed-form directly from distorted coordinates.
     float distortedDist = length(shadowPos.xy * 2.0 - 1.0);
     float distortFactor = (1.0 - SHADOW_MAP_BIAS) / max(1.0 - distortedDist * SHADOW_MAP_BIAS, 0.0001);
 
-    // 2. Small constant depth bias only. The positional normal + edge bias above prevent
+    // Small constant depth bias only. The positional normal + edge bias above prevent
     // acne; adding a large slope-scaled depth bias on top peter-pans and leaks light
     // through block seams, so it is intentionally kept tiny here.
     float resolutionScale = 4096.0 / float(shadowMapResolution);
     float receiverDepth = shadowPos.z - 0.00006 * resolutionScale;
 
-    // Subsurface scattering offset for foliage.
+
     if (material > 0.16 && material < 0.83) {
         receiverDepth -= 0.000175;
     }
 
     #ifdef SHADOW_FILTER
-        // 3. High-Frequency Temporal Dither using Interleaved Gradient Noise (perfect for TAA blending)
-        // Snap to pixel coordinates. IGN requires integer coordinates to prevent moiré patterns.
+        // High-Frequency Temporal Dither using Interleaved Gradient Noise (perfect for TAA blending)
+        // IGN requires integer coordinates to prevent moiré patterns.
         vec2 ditherCoord = floor(gl_FragCoord.xy);
         float ditherVal = interleavedGradientNoise(ditherCoord, frameCounter);
         float phi = ditherVal * 6.283185307179586;
@@ -91,9 +91,8 @@ vec3 getShadow(float material) {
         float minFilterRadius = 0.375 / (float(shadowMapResolution) * max(distortFactor, 0.001)); 
         float maxFilterRadius = 0.0015 / max(distortFactor, 0.001); 
 
-        // 4. Blocker Search
-        // Blocker search radius MUST match maxFilterRadius to prevent sharp cutoffs at the edge 
-        // of wide penumbrae, otherwise the filter snaps to minimum radius when the search misses.
+        // Blocker Search: Blocker search radius MUST match maxFilterRadius to prevent sharp cutoffs
+        // at the edge of wide penumbrae, otherwise the filter snaps to minimum radius when the search misses.
         int blockerSearchSteps = 16; // Increased to 16 (64 taps) to prevent missing thin objects in the wide search area
         float blockerSum = 0.0;
         int numBlockers = 0;
@@ -107,7 +106,7 @@ vec3 getShadow(float material) {
             vec2 offset = bDir * r * searchRadius;
             vec4 gatheredDepths = textureGather(shadowtex0, shadowPos.xy + offset);
             
-            // Check all 4 gathered depths per tap (total 64 samples)
+
             if (gatheredDepths.x < receiverDepth) { blockerSum += gatheredDepths.x; numBlockers++; }
             if (gatheredDepths.y < receiverDepth) { blockerSum += gatheredDepths.y; numBlockers++; }
             if (gatheredDepths.z < receiverDepth) { blockerSum += gatheredDepths.z; numBlockers++; }
@@ -116,7 +115,7 @@ vec3 getShadow(float material) {
             bDir = vec2(bDir.x * cosGold - bDir.y * sinGold, bDir.x * sinGold + bDir.y * cosGold);
         }
 
-        // 5. Penumbra Estimation & PCF Filtering
+        // Penumbra Estimation & PCF Filtering
         float filterRadius = minFilterRadius;
         
         if (numBlockers > 0) {
@@ -124,7 +123,6 @@ vec3 getShadow(float material) {
             float penumbra = max(receiverDepth - avgBlockerDepth, 0.0);
             
             // Calculate absolute radius in UV space, clamped to our limits.
-            // My previous attempt incorrectly mapped this to a 0-1 ratio, breaking the physics.
             float calculatedRadius = penumbra * penumbraScale / max(distortFactor, 0.001);
             filterRadius = clamp(calculatedRadius, minFilterRadius, maxFilterRadius);
             
@@ -132,7 +130,7 @@ vec3 getShadow(float material) {
             filterRadius *= mix(0.65, 1.35, ditherVal);
         }
 
-        // Artistic Foliage adjustment
+
         if (material > 0.16 && material < 0.83) {
             // Force a large minimum blur radius for subsurface scattering
             // to prevent sharp self-shadowing from nearby leaves.
@@ -144,8 +142,6 @@ vec3 getShadow(float material) {
         // the moment the center sample finds no blockers, even if the edge of the shadow 
         // should be smoothly blending.
         if (numBlockers == blockerSearchSteps * 4) {
-            // Completely shadowed near-contact early-out is still relatively safe, 
-            // but we must be careful. We'll leave it but make it stricter.
             float avgBlockerDepth = blockerSum / float(numBlockers);
             float penumbra = max(receiverDepth - avgBlockerDepth, 0.0);
             if (penumbra < 0.0001) {
@@ -156,12 +152,12 @@ vec3 getShadow(float material) {
             }
         }
 
-        // 6. PCF Filter Loop using perfectly distributed Vogel Disk with smooth Gaussian-like weight falloff
+        // PCF Filter Loop using perfectly distributed Vogel Disk with smooth Gaussian-like weight falloff
         int pcfSamples = SHADOW_FILTER_QUALITY;
         vec3 finalShading = vec3(0.0);
         float weightSum = 0.0;
 
-        // Initialize direction vector rotated by the dither angle
+
         vec2 dir = vec2(cos(phi), sin(phi));
         float rcpSqrtSamples = 1.0 / sqrt(float(pcfSamples));
 
@@ -178,7 +174,7 @@ vec3 getShadow(float material) {
             finalShading += mix(shadowCol.rgb * shadow1, vec3(1.0), shadow0) * weight;
             weightSum += weight;
 
-            // Rotate the direction vector by the golden angle for the next sample
+
             dir = vec2(dir.x * cosGold - dir.y * sinGold, dir.x * sinGold + dir.y * cosGold);
         }
 

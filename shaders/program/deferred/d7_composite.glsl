@@ -1,11 +1,8 @@
-// ============================================================================
-//  d7_composite : final scene lighting
-// ----------------------------------------------------------------------------
-//  Combines raw albedo (colortex0, untouched since the gbuffers) with direct
-//  sunlight (shadows + contact shadows) and the denoised indirect term
-//  (colortex6, produced by d0_restir -> d1..d6 denoise). Writes colortex0.
-//  Sky pixels are left as-is here and replaced by d8_fog_sky.
-// ============================================================================
+// d7_composite : final scene lighting
+// Combines raw albedo (colortex0, untouched since the gbuffers) with direct
+// sunlight (shadows + contact shadows) and the denoised indirect term
+// (colortex6, produced by d0_restir -> d1..d6 denoise). Writes colortex0.
+// Sky pixels are left as-is here and replaced by d8_fog_sky.
 
 #ifdef VERTEX
 
@@ -59,7 +56,6 @@ vec3 clipSpace;
 vec3 getLightmap(vec3 l) {
     l.x = 1.0 * pow(l.x, 5.06);
 
-    // --- Adaptive Blocklight Reduction ---
     // Scale down vanilla blocklights outdoors under the open sky during the day.
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
@@ -75,7 +71,7 @@ vec3 getLightmap(vec3 l) {
 float getNdotL(vec3 n, vec3 l) {
     float dotNL = dot(n, l);
 
-    // Foliage check (material codes 1/3 = leaves, 2/3 = grass)
+
     if (material > 0.16 && material < 0.83) {
         // Wrap lighting for foliage/grass to simulate translucency
         // and fix harsh shadows on crossed-quad models.
@@ -120,16 +116,16 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
     vec3 stepVec = lightDir * (rayLength / float(steps));
     float stepLen = length(stepVec);
 
-    // Normal bias to prevent acne
+
     float nBias = mix(0.05 + viewDist * 0.005, 0.2, isFar);
     vec3 rayPos = viewPos + normalView * nBias + stepVec * dither;
 
     float sscs = 1.0;
     
-    // Dynamic thickness scales up in the distance to catch large mountains
+
     float thickness = max(stepLen * 1.5, mix(0.15, 8.0, isFar));
     
-    // Adaptive depth tolerance
+
     float distTolerance = mix(0.005, 0.002, isFar) + abs(viewPos.z) * 0.001;
 
     for (int i = 0; i < steps; i++) {
@@ -148,7 +144,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
         vec4 sampleView = gbufferProjectionInverse * sampleClip;
         float sampleZ = sampleView.z / sampleView.w;
 
-        // Depth test
+
         float zDiff = sampleZ - rayPos.z;
         if (zDiff > distTolerance && zDiff < thickness) {
             sscs = smoothstep(0.6, 1.0, float(i) / float(steps));
@@ -156,7 +152,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
         }
     }
 
-    // Fade the effect out near the screen edges
+
     vec4 startClip = gbufferProjection * vec4(viewPos, 1.0);
     vec2 startUV = (startClip.xy / startClip.w) * 0.5 + 0.5;
     float edgeFade = smoothstep(0.0, 0.1, min(min(startUV.x, 1.0 - startUV.x), min(startUV.y, 1.0 - startUV.y)));
@@ -226,7 +222,7 @@ void main() {
         return;
     #endif
 
-    // ---- Direct sunlight ----
+    // Direct sunlight
     float diffuse = getNdotL(normal, lightVector);
     float skyOcc = sqrt(lightmap.y); // Loosened modulation: allows leakage until nearly 0 lightmap
     
@@ -243,7 +239,7 @@ void main() {
     #endif
     vec3 direct = diffuse * lightColor * directShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
 
-    // Shadowmap-based Subsurface Scattering for foliage
+
     if (material > 0.16 && material < 0.83 && depth0 < 1.0) {
         vec3 viewPos = getFragPosition().xyz;
         float VdotL = max(dot(normalize(-viewPos), lightVector), 0.0);
@@ -263,7 +259,7 @@ void main() {
         direct += sssLight * lightmap.y * 2.5; // boosted to match Allium's lightHighlight * 2.5 multiplier
     }
 
-    // ---- Ray-traced contact AO ----
+    // Ray-traced contact AO
     // Voxel GI captures macro occlusion; RTAO (short cosine rays in the voxel atlas, computed
     // in d0_restir, temporally accumulated by d0_accum into colortex9.a) adds the sub-voxel
     // contact darkening the 1-block grid cannot resolve. Multiplied onto the indirect term
@@ -275,7 +271,7 @@ void main() {
         }
     #endif
 
-    // ---- Indirect (denoised) ----
+    // Indirect (denoised)
     vec3 indirect;
     #if defined(VOXEL_GI)
         vec3 gi = texture(colortex3, texCoord).rgb;
@@ -311,22 +307,22 @@ void main() {
         indirect = getLightmap(lightmap) + vec3(ambientStrength);
     #endif
 
-    // ---- Optional contact AO on direct sunlight ----
+    // Optional contact AO on direct sunlight
     #if defined(AO_RTAO) && (AO_DIRECT_STRENGTH > 0)
         direct *= mix(1.0, aoTerm, float(AO_DIRECT_STRENGTH) / 100.0);
     #endif
 
-    // ---- Diagnostic: isolate one lighting component (PT_LIGHT_DEBUG in options.glsl) ----
+    // Diagnostic: isolate one lighting component (PT_LIGHT_DEBUG in options.glsl)
     #if PT_LIGHT_DEBUG > 0
         if (depth0 < 1.0) {
             #if PT_LIGHT_DEBUG == 1
-                gl_FragData[0] = vec4(vec3(aoTerm), 1.0);        // RTAO / AO term
+                gl_FragData[0] = vec4(vec3(aoTerm), 1.0);
             #elif PT_LIGHT_DEBUG == 2
-                gl_FragData[0] = vec4(indirect, 1.0);            // indirect (voxel GI)
+                gl_FragData[0] = vec4(indirect, 1.0);
             #elif PT_LIGHT_DEBUG == 3
-                gl_FragData[0] = vec4(directShadow, 1.0);        // direct-light visibility (shadow)
+                gl_FragData[0] = vec4(directShadow, 1.0);
             #else
-                gl_FragData[0] = vec4(color, 1.0);               // raw albedo
+                gl_FragData[0] = vec4(color, 1.0);
             #endif
             return;
         }
@@ -355,7 +351,7 @@ void main() {
         color = color * (direct + indirect);
     }
 
-    // ---- Voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl) ----
+    // Voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl)
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {
         vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);

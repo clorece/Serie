@@ -57,7 +57,7 @@ vec3 Uncharted2(vec3 color) {
     return clamp(curr * whiteScale, 0.0, 1.0);
 }
 
-// Master tonemapping operator router
+
 vec3 applyTonemap(vec3 color) {
     #if TONEMAP_OPERATOR == 0
         return ACESFilmic(color);

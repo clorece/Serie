@@ -3,7 +3,6 @@
 
 // Complementary blocklight colors for special light-emitting blocks, pre-rewrite of SerieVX
 
-// Fallbacks for macros
 #ifndef XLIGHT_R
 #define XLIGHT_R 1.0
 #endif
@@ -18,7 +17,7 @@
 #define GLOWING_LICHEN 0
 #endif
 
-// Utility functions
+
 float GetLuminance(vec3 color) {
     return dot(color, vec3(0.299, 0.587, 0.114));
 }
@@ -40,7 +39,7 @@ void AddSpecialLightDetail(inout vec3 light, vec3 albedo, float emission) {
 	light += pow2(lightM / (albedo + 0.1));
 }
 
-vec3 fireSpecialLightColor = vec3(1.5, 0.9, 0.4) * 2.0;
+vec3 fireSpecialLightColor = vec3(1.5, 0.9, 0.4) * 1.0;
 vec3 lavaSpecialLightColor = vec3(3.0, 0.9, 0.2) * 1.25;
 
 vec3 netherPortalSpecialLightColor = vec3(1.8, 0.4, 2.2) * 0.8;
@@ -60,7 +59,7 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					#else
 						if (mat == 3) return vec4(vec3(1.25, 0.5, 1.25) * 0.1, 0.0); // End Rod in the End dimension
 					#endif
-					if (mat == 4) return vec4(vec3(0.7, 1.5, 2.0) * 3.0, 0.0); // Beacon
+					if (mat == 4) return vec4(vec3(0.7, 1.5, 2.0) * 2.0, 0.0); // Beacon
 					if (mat == 5) return vec4(fireSpecialLightColor, 0.0); // Fire
 					if (mat == 6) return vec4(vec3(0.7, 1.5, 1.5) * 1.7, 0.0); // Sea Pickle:Waterlogged
 					if (mat == 7) return vec4(vec3(1.1, 0.85, 0.35) * 5.0, 0.0); // Ochre Froglight
@@ -97,14 +96,14 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					if (mat == 28) return soulFireSpecialColor; // Soul Torch
 					if (mat == 29) return soulFireSpecialColor; // Soul Lantern
 					if (mat == 30) return soulFireSpecialColor; // Soul Campfire:Lit
-					if (mat == 31) return vec4(redstoneSpecialLightColor * 0.5, 0.1); // Redstone Ores:Lit
+					if (mat == 31) return vec4(redstoneSpecialLightColor * 0.05, 0.1); // Redstone Ores:Lit
 				} else {
-					if (mat == 32) return vec4(redstoneSpecialLightColor * 0.3, 0.1); // Redstone Ores:Unlit
+					if (mat == 32) return vec4(redstoneSpecialLightColor * 0.03, 0.1); // Redstone Ores:Unlit
 					if (mat == 33) return vec4(vec3(1.4, 1.1, 0.5), 0.0); // Enchanting Table
                     #if GLOWING_LICHEN > 0
-						if (mat == 34) return vec4(vec3(0.8, 1.1, 1.1), 0.05); // Glow Lichen with IntegratedPBR
+						if (mat == 34) return vec4(vec3(0.8, 1.1, 1.1) * 0.5, 0.05); // Glow Lichen with IntegratedPBR
 					#else
-						if (mat == 34) return vec4(vec3(0.4, 0.55, 0.55), 0.0); // Glow Lichen vanilla
+						if (mat == 34) return vec4(vec3(0.4, 0.55, 0.55) * 0.5, 0.0); // Glow Lichen vanilla
 					#endif
 					if (mat == 35) return vec4(redstoneSpecialLightColor * 0.05, 0.0); // Redstone Torch
 					if (mat == 36) return vec4(vec3(0.325, 0.15, 0.425) * 5.0, 0.05); // Amethyst Cluster, Amethyst Buds, Calibrated Sculk Sensor
@@ -117,14 +116,14 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					if (mat == 40) return vec4(vec3(2.5, 1.2, 0.4) * 0.1, 0.1); // Brewing Stand
 					if (mat == 41) return vec4(redstoneSpecialLightColor * 0.4, 0.15); // Redstone Block
 					if (mat == 42) return vec4(vec3(0.75, 0.75, 3.0) * 0.277, 0.15); // Lapis Block
-					if (mat == 43) return vec4(vec3(1.7, 0.9, 0.4) * 0.45, 0.05); // Iron Ores
+					if (mat == 43) return vec4(vec3(1.7, 0.9, 0.4) * 0.045, 0.05); // Iron Ores
 				} else {
-					if (mat == 44) return vec4(vec3(1.7, 1.1, 0.2) * 0.45, 0.1); // Gold Ores
-					if (mat == 45) return vec4(vec3(1.7, 0.8, 0.4) * 0.45, 0.05); // Copper Ores
-					if (mat == 46) return vec4(vec3(0.75, 0.75, 3.0) * 0.2, 0.1); // Lapis Ores
-					if (mat == 47) return vec4(vec3(0.5, 3.5, 0.5) * 0.3, 0.1); // Emerald Ores
-					if (mat == 48) return vec4(vec3(0.5, 2.0, 2.0) * 0.4, 0.15); // Diamond Ores
-					if (mat == 49) return vec4(vec3(1.5, 1.5, 1.5) * 0.3, 0.05); // Nether Quartz Ore
+					if (mat == 44) return vec4(vec3(1.7, 1.1, 0.2) * 0.045, 0.1); // Gold Ores
+					if (mat == 45) return vec4(vec3(1.7, 0.8, 0.4) * 0.045, 0.05); // Copper Ores
+					if (mat == 46) return vec4(vec3(0.75, 0.75, 3.0) * 0.02, 0.1); // Lapis Ores
+					if (mat == 47) return vec4(vec3(0.5, 3.5, 0.5) * 0.03, 0.1); // Emerald Ores
+					if (mat == 48) return vec4(vec3(0.5, 2.0, 2.0) * 0.04, 0.15); // Diamond Ores
+					if (mat == 49) return vec4(vec3(1.5, 1.5, 1.5) * 0.03, 0.05); // Nether Quartz Ore
 				}
 			}
 		}
@@ -132,7 +131,7 @@ vec4 GetSpecialBlocklightColor(int mat) {
 		if (mat < 74) {
 			if (mat < 62) {
 				if (mat < 56) {
-					if (mat == 50) return vec4(vec3(1.7, 1.1, 0.2) * 0.45, 0.05); // Nether Gold Ore
+					if (mat == 50) return vec4(vec3(1.7, 1.1, 0.2) * 0.045, 0.05); // Nether Gold Ore
 					if (mat == 51) return vec4(vec3(1.7, 1.1, 0.2) * 0.45, 0.05); // Gilded Blackstone
 					if (mat == 52) return vec4(vec3(1.8, 0.8, 0.4) * 0.6, 0.15); // Ancient Debris
 					if (mat == 53) return vec4(vec3(1.4, 0.2, 1.4) * 0.3, 0.05); // Spawner
@@ -176,7 +175,7 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					if (mat == 80) return vec4(vec3(1.0, 0.4, 1.0) * candleColorMult, candleExtraLight); // Pink Candles:Lit
 					if (mat == 81) return vec4(vec3(2.8, 1.1, 0.2) * 0.125, 0.0125); // Open Eyeblossom
 					if (mat == 82) return vec4(vec3(2.8, 1.1, 0.2) * 0.3, 0.05); // Creaking Heart: Active
-					if (mat == 83) return vec4(vec3(1.6, 1.6, 0.7) * 0.3, 0.05); // Firefly Bush
+					if (mat == 83) return vec4(vec3(1.6, 1.6, 0.7) * 0.03, 0.05); // Firefly Bush
 					if (mat == 84) return vec4(0.0);
 					if (mat == 85) return vec4(0.0);
 				}

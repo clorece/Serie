@@ -1,16 +1,13 @@
-// ============================================================================
-//  d0_restir : indirect-light estimation (ReSTIR GI / plain GI / voxel AO)
-// ----------------------------------------------------------------------------
-//  Produces the NOISY indirect estimate + temporal history. It does NOT light
-//  the scene or touch colortex0 (raw albedo is preserved for d7_composite).
-//    colortex8  = resolved indirect (.rgb) + history length (.a)
-//    colortex9  = linear depth (.r)                 [reprojection validation]
-//    colortex10 = ReSTIR reservoir radiance (.rgb) + M (.a)
-//    colortex11 = ReSTIR reservoir samplePos (.xyz) + W (.a)
-//    colortex15 = surface normal history (.xy octahedral world-space)
-//  The denoise chain (d1..d3) reads colortex8; nothing else writes 8/9/10/11/15,
-//  so they survive the frame and become "previous frame" history next frame.
-// ============================================================================
+// d0_restir : indirect-light estimation (ReSTIR GI / plain GI / voxel AO)
+// Produces the NOISY indirect estimate + temporal history. It does NOT light
+// the scene or touch colortex0 (raw albedo is preserved for d7_composite).
+//   colortex8  = resolved indirect (.rgb) + history length (.a)
+//   colortex9  = linear depth (.r)                 [reprojection validation]
+//   colortex10 = ReSTIR reservoir radiance (.rgb) + M (.a)
+//   colortex11 = ReSTIR reservoir samplePos (.xyz) + W (.a)
+//   colortex15 = surface normal history (.xy octahedral world-space)
+// The denoise chain (d1..d3) reads colortex8; nothing else writes 8/9/10/11/15,
+// so they survive the frame and become "previous frame" history next frame.
 
 #ifdef VERTEX
 
@@ -55,7 +52,7 @@ vec3 clipSpace;
 #include "/lib/pt/restir.glsl"
 #include "/lib/pt/denoise.glsl"
 
-// Voxel atlas + persistent history
+
 
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
@@ -69,7 +66,7 @@ void main() {
     clipSpace = vec3(uvUnjittered, depth0) * 2.0 - 1.0;
     float linDepth = getDepth(depth0);
 
-    // History outputs are written every frame so the persistent buffers stay valid.
+
     vec4 hist8Out  = vec4(0.0);
     vec4 hist9Out  = vec4(depth0, 0.0, 0.0, 1.0);
     vec4 resv10Out = vec4(0.0);
@@ -132,17 +129,17 @@ void main() {
             bool validReproj = all(greaterThanEqual(uvPrev, padding)) && all(lessThan(uvPrev, 1.0 - padding));
 
           #ifdef RESTIR_GI
-            // ---- ReSTIR GI: spatio-temporal reservoir resampling ----
+            // ReSTIR GI: spatio-temporal reservoir resampling
             vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
             vec3 origin = worldAbs + normalWorld * 0.15;
 
-            // 1. Initial RIS over a few cosine-weighted candidate rays
+            // Initial RIS over a few cosine-weighted candidate rays
             Reservoir res = newReservoir();
             for (int i = 0; i < RESTIR_INITIAL_SAMPLES; i++) {
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory; vec3 rayEmission;
 
-                // Hybrid Voxel/SSRT Raytrace
+
                 float dither = randFloat(seed);
                 vec3 rad = giRayRadiance(
                     colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
@@ -186,7 +183,7 @@ void main() {
                 updateReservoir(res, rad, hitPos - cameraPosition, hitNormal, luma(rad), seed);
             }
 
-            // 2. Temporal reuse from the reprojected reservoir (M-capped)
+            // Temporal reuse from the reprojected reservoir (M-capped)
             if (validReproj) {
                 vec4  p9 = texture(colortex9, uvPrev);
                 float prevDepthRaw = p9.r;
@@ -201,7 +198,7 @@ void main() {
                     depthValid = (abs(expectedClipZ - actualClipZ) < 0.002);
                 }
                 
-                // Normal similarity check for reservoir reuse
+
                 vec3 prevNormalWorld = octDecodeNormal(texture(colortex15, uvPrev).xy);
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
 
@@ -236,26 +233,26 @@ void main() {
                 res.W *= float(RESTIR_CLAMP) / unbiasedLuma;
             }
 
-            // Store the temporal reservoir (pre-spatial) for next frame
+
             resv10Out = vec4(res.radiance, res.M);
             resv11Out = vec4(res.samplePos, res.W);
             resv14Out = vec4(octEncodeNormal(res.sampleNormal), 0.0, 0.0);
 
-            // 3. Spatial reuse moved to d0_accum to prevent buffer read/write conflicts.
+            // Spatial reuse moved to d0_accum to prevent buffer read/write conflicts.
             Reservoir shade = res;
             
-            // 4. Resolve GI estimate
+            // Resolve GI estimate
             rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);
             lr    = luma(rawGI);
 
-            // 4b. Relative firefly clamp
+            // Relative firefly clamp
             vec4 p9_tmp = validReproj ? textureCatmullRom(colortex9, uvPrev, vec2(viewWidth, viewHeight)) : vec4(0.0);
             if (validReproj && p9_tmp.g > 1e-3) {
                 float maxL = p9_tmp.g * GI_FIREFLY;
                 if (lr > maxL) { rawGI *= maxL / lr; lr = maxL; }
             }
           #else
-            // ---- Plain single-bounce GI ----
+            // Plain single-bounce GI
             rawGI = computeGI(
                 colortex7, worldAbs, normalWorld, seed, cameraPosition,
                 sunDirWorld, lightColor, giSky, skyLightmap,
@@ -279,7 +276,7 @@ void main() {
         resv14Out.w = rawAO;
 
     #elif defined(VOXEL_AO)
-        // ---- Voxel AO fallback (output raw for accumulation) ----
+        // Voxel AO fallback (output raw for accumulation)
         float rawAO = 1.0;
         if (depth0 < 1.0) {
             vec3 normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
