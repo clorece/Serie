@@ -19,6 +19,8 @@
 #ifdef VERTEX
 
 #include "/lib/util/jitter.glsl"
+// pure FBM height + trochoidal displacement (no fragment-only deps)
+#include "/lib/fragment/water.glsl"
 
 out vec2 texCoord;
 out vec2 lightmapCoord;
@@ -53,6 +55,19 @@ void main() {
               (eid == 10007.0) ? 0.5  :  // clear ice (ice, frosted_ice)
               (eid == 10008.0) ? 0.25 :  // solid ice (packed_ice, blue_ice)
               0.75;                       // fallback: unknown translucent -> glass
+
+    #ifdef WATER_DISPLACEMENT
+    if (isWater > 0.5) {
+        // Move the water mesh by the big swells (matches the wave normals' low octaves). The
+        // displacement is along world axes; rotate it into view space and add, then reproject --
+        // equivalent to ftransform() of the displaced vertex. worldPos carries the displaced
+        // position downstream so the fragment normal / parallax line up with the new geometry.
+        vec3 worldDisp = waterDisplacement(worldPos.xz, frameTimeCounter * WATER_WAVE_SPEED);
+        worldPos += worldDisp;
+        viewPos  += mat3(gbufferModelView) * worldDisp;
+        gl_Position = gl_ProjectionMatrix * vec4(viewPos, 1.0);
+    }
+    #endif
 
     #ifdef TAA
         gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);

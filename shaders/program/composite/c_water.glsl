@@ -342,6 +342,22 @@ void main() {
     vec3 geoCross = cross(dFdx(viewWater), dFdy(viewWater));
     vec3 geoViewN = (dot(geoCross, geoCross) > 1e-12) ? normalize(geoCross) : viewNormal;
     if (dot(geoViewN, viewNormal) < 0.0) geoViewN = -geoViewN;
+    
+    // Snap the faceted depth-derivative normal to the nearest cardinal axis in world space.
+    // This perfectly reconstructs the flat, un-displaced block face normal (since water blocks
+    // are axis-aligned), preventing per-triangle refraction jumps on displaced water.
+    vec3 geoWorldN = mat3(gbufferModelViewInverse) * geoViewN;
+    vec3 absN = abs(geoWorldN);
+    vec3 flatWorldN;
+    if (absN.x > absN.y && absN.x > absN.z) {
+        flatWorldN = vec3(sign(geoWorldN.x), 0.0, 0.0);
+    } else if (absN.z > absN.y) {
+        flatWorldN = vec3(0.0, 0.0, sign(geoWorldN.z));
+    } else {
+        flatWorldN = vec3(0.0, sign(geoWorldN.y), 0.0);
+    }
+    geoViewN = mat3(gbufferModelView) * flatWorldN;
+
     vec2 distortN = (viewNormal - geoViewN).xy;
 
     // Lighting context: sky direction (for the reflection sky fallback) + a cheap day/night
@@ -411,12 +427,60 @@ void main() {
     #endif
 
 
-    // Schlick dielectric Fresnel (water F0 = 0.02), evaluated in view space
-    float cosT = clamp(dot(V, viewNormal), 0.0, 1.0);
-    float F0 = 0.02;
-    float fresnel = F0 + (1.0 - F0) * pow(1.0 - cosT, 5.0);
+    // --- GGX sun/moon specular highlight (Cook-Torrance microfacet BRDF) ---
+    // Analytical per-pixel evaluation against the wave normal — produces the
+    // dancing sun glint that makes normals visually pronounced without relying
+    // on noisy SSR. Perfectly stable regardless of normal strength.
+    vec3  sunDir  = normalize(sunPosition);       // view-space
+    vec3  moonDir = normalize(-sunPosition);
 
-    vec3 result = mix(refractColor, reflectColor, fresnel);
+    // Pick the active celestial light (same logic as vectors.glsl)
+    vec3 L = (worldTime < 12700 || worldTime > 23250) ? sunDir : moonDir;
+
+    // Reconstruct light colour (same maths as colors.glsl, inlined here)
+    float sunUp     = max(dot(worldSunDir, vec3(0.0, 1.0, 0.0)), 0.0);
+    vec3  sunCol    = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 1.0, 1.1), sunUp);
+    float moonUp    = max(dot(worldMoonDir, vec3(0.0, 1.0, 0.0)), 0.0);
+    vec3  moonCol   = vec3(0.65, 0.85, 1.0) * 0.02;
+    float moonVis   = pow(clamp(dot(worldMoonDir, vec3(0.0, 1.0, 0.0)) + 0.1, 0.0, 0.1) / 0.1, 2.0);
+    vec3  lightCol  = mix(sunCol, moonCol, moonVis);
+
+    // GGX NDF (Trowbridge-Reitz)
+    vec3  H     = normalize(V + L);
+    float NdotH = max(dot(viewNormal, H), 0.0);
+    float NdotL = max(dot(viewNormal, L), 0.0);
+    float NdotV = max(dot(viewNormal, V), 1e-5);
+    float VdotH = max(dot(V, H), 0.0);
+
+    float a  = WATER_ROUGHNESS * WATER_ROUGHNESS;   // alpha = roughness²
+    float a2 = a * a;
+    float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    float D = a2 / (PI * denom * denom);
+
+    // Smith-GGX geometry (Schlick-GGX approximation, k = alpha/2 for direct)
+    float k   = a * 0.5;
+    float G1V = NdotV / (NdotV * (1.0 - k) + k);
+    float G1L = NdotL / (NdotL * (1.0 - k) + k);
+    float G   = G1V * G1L;
+
+    // Schlick Fresnel for the specular lobe
+    float F0 = 0.02;
+    float Fspec = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+
+    // Cook-Torrance: D * G * F / (4 * NdotV * NdotL)
+    float specBRDF = (D * G * Fspec) / max(4.0 * NdotV * NdotL, 1e-6);
+    vec3  specular = specBRDF * NdotL * lightCol * (1.0 - rainStrength * 0.75);
+
+    // Gate by sky access so caves don't get a specular highlight
+    specular *= skyVis;
+
+    // Roughness-corrected Schlick Fresnel for reflection/refraction blend.
+    // Caps grazing-angle reflectance at (1 - roughness) instead of 1.0.
+    float cosT = clamp(dot(V, viewNormal), 0.0, 1.0);
+    float Fmax = max(1.0 - WATER_ROUGHNESS, F0);
+    float fresnel = F0 + (Fmax - F0) * pow(1.0 - cosT, 5.0);
+
+    vec3 result = mix(refractColor, reflectColor, fresnel) + specular;
 
     gl_FragData[0] = vec4(result, 1.0);
 }
