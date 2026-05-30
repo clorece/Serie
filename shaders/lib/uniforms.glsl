@@ -57,4 +57,11 @@ uniform sampler2D shadowcolor0;
 uniform sampler2D shadowtex0;
 uniform sampler2D shadowtex1;
 uniform sampler2D texture;
+
+// NOTE: cloudNoiseBase / cloudNoiseDetail (sampler3D) are NOT declared here.
+// Iris's TextureTransformer crashes if a sampler is declared in a stage without
+// a binding — and shadow/gbuffers/final stages have no cloud-noise binding.
+// They are declared inside lib/fragment/clouds.glsl, which is only included by
+// p1_cloud_shadow (prepare stage) and d7_composite (deferred stage), both of
+// which DO have the binding.
 #endif // UNIFORMS_GLSL_INCLUDED

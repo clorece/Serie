@@ -210,6 +210,62 @@ void main() {
         vec3 trans = exp(-absorption * dist);
         vec3 foggedScene = sceneCaustic * trans + scatter * (1.0 - trans);
 
+        #ifdef WATER_GODRAYS
+        // Additive sun-shaft raymarch through the underwater volume. The
+        // analytic Beer-Lambert above gives uniform scatter; this layer
+        // adds the *directional* contribution — light that pierces the
+        // surface, is focused by waves into caustic bands, and scatters
+        // into the camera ray. Caustic banding sampled per step propagates
+        // visibly along each shaft.
+        if (wSun.y > 0.02) {
+            const float pi_local = 3.14159265359;
+            vec3  viewDirW   = normalize(mat3(gbufferModelViewInverse) * screenToView(unjitU, d0));
+            float gStepLen   = dist / float(WATER_GODRAY_STEPS);
+            float gDither    = waterDither(gl_FragCoord.xy, frameCounter);
+            float surfaceY   = cameraPosition.y + 1.0;
+
+            // Henyey-Greenstein phase: forward-peaked for water particle scattering.
+            float gHG     = WATER_GODRAY_PHASE_G;
+            float gHG2    = gHG * gHG;
+            float cosT    = dot(viewDirW, wSun);
+            float phase   = (1.0 - gHG2) / (4.0 * pi_local
+                          * pow(max(1.0 + gHG2 - 2.0 * gHG * cosT, 1e-4), 1.5));
+
+            // Sun reaching the water surface (T-LUT at sea level).
+            vec3 sunAtSurface = SUN_COLOR_BASE
+                              * sampleTransmittanceLUT_fast(wSun.y, PLANET_RADIUS)
+                              * dayFactor;
+
+            vec3 godray = vec3(0.0);
+            for (int gi = 0; gi < WATER_GODRAY_STEPS; ++gi) {
+                float t          = gStepLen * (float(gi) + gDither);
+                vec3  samplePos  = cameraPosition + viewDirW * t;
+                float depthBelow = max(surfaceY - samplePos.y, 0.0);
+
+                // Caustic banding focused by the water surface waves above.
+                // Reuses the same analytic-Jacobian eval used on terrain — the
+                // function returns 0 below the wave troughs, peaks where wave
+                // crests focus light into bands. Sampling per step propagates
+                // the bands visibly along the shaft.
+                float caustic = 1.0;
+                #ifdef WATER_CAUSTICS
+                vec3 sampleScaled = samplePos
+                                  * vec3(WATER_CAUSTICS_SCALE, 1.0, WATER_CAUSTICS_SCALE);
+                caustic = 1.0 + computeWaterCaustics(sampleScaled, depthBelow, wSun,
+                                                     frameTimeCounter * WATER_WAVE_SPEED)
+                              * WATER_CAUSTICS_STRENGTH;
+                #endif
+
+                vec3 lightAtSample = sunAtSurface * caustic * exp(-absorption * depthBelow);
+                vec3 transCam      = exp(-absorption * t);
+
+                godray += lightAtSample * phase * scatter * gStepLen * transCam;
+            }
+
+            foggedScene += godray * WATER_GODRAY_STRENGTH;
+        }
+        #endif
+
         float we0 = textureLod(colortex2, uv + vec2(-1.5, 0.0) * texelSize, 0.0).b;
         float we1 = textureLod(colortex2, uv + vec2( 1.5, 0.0) * texelSize, 0.0).b;
         float we2 = textureLod(colortex2, uv + vec2(0.0, -1.5) * texelSize, 0.0).b;

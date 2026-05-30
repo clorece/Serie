@@ -19,11 +19,13 @@ float bayer32(vec2 a){
 }
 
 #define dither32(p)  (bayer32( p)-.499511719)
+#ifdef FRAGMENT
 float dither = dither32(gl_FragCoord.xy);
 
 float cosTheta = cos(dither);
 float sinTheta = sin(dither);
 mat2 rotation =  mat2(cosTheta, -sinTheta, sinTheta, cosTheta);
+#endif
 
 float interleavedGradientNoise(vec2 position, int frame) {
     float n = 52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715)));

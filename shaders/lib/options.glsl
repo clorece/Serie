@@ -19,7 +19,7 @@
 #define VL_SUN_RISE_SET_STRENGTH 50.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at sunrise and sunset.
 #define VL_NIGHT_STRENGTH 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at night.
 
-#define SKY_LUT_STEPS 8       // [4 6 8 12] atmosphere primary-march steps (used by lib/fragment/sky.glsl for the main sky render)
+#define SKY_LUT_STEPS 10       // [4 6 8 10 12 14 16 20 24 28 32 40 48] uniform raymarching steps for the SkyView LUT build (lib/fragment/atmosphereLUT.glsl)
 #define SUN_ILLUMINANCE 10.0  // [1.0 2.5 5.0 7.5 10.0 12.5 15.0 20.0] Sun light intensity multiplier for atmospheric scattering
 #define MOON_ILLUMINANCE 0.02 // [0.005 0.01 0.02 0.04 0.06 0.08 0.10] Moon light intensity multiplier for atmospheric scattering
 #define MIE_G 0.80            // [0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95] Mie phase function asymmetry factor (controls sun glow size/sharpness)
@@ -37,18 +37,37 @@
 // Ozone concentration peak (scaled by 1e-6, default: 8e-6)
 #define OZONE_PEAK 8.0 // [0.0 2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0] Peak ozone concentration
 
+// --- Volumetric clouds (see shaderpacks/serievx_atmosphere_plan.md §5) ---
+#define CLOUDS // master toggle; cloud raymarch (Phase 6) and cloud-shadow build (Phase 5) both gated on this
+#define CLOUDS_COVERAGE 0.50          // [0.20 0.30 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.80 0.90] global cumulus coverage (0 = clear sky, 1 = overcast)
+#define CLOUDS_DENSITY 0.05           // [0.01 0.02 0.03 0.05 0.08 0.12 0.18 0.25] cloud extinction coefficient (higher = denser/darker interiors)
+#define CLOUDS_LAYER_BOTTOM 1500.0    // [600.0 900.0 1200.0 1500.0 1800.0 2400.0 3000.0] cumulus base altitude (m above planet surface)
+#define CLOUDS_LAYER_TOP    4500.0    // [2400.0 3000.0 3600.0 4500.0 5400.0 6400.0 7500.0] cumulus top altitude (m above planet surface)
+#define CLOUDS_WIND_SPEED 6.0         // [0.0 1.0 2.0 4.0 6.0 9.0 12.0 18.0 25.0] m/s — cloud advection speed
+#define CLOUDS_WIND_DIR_X 1.0         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction X
+#define CLOUDS_WIND_DIR_Z 0.3         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction Z
+//#define CLOUDS_SHADOW                 // cloud shadow on terrain (Phase 5); cheap, free terrain shadowing under clouds
+#define CLOUDS_SHADOW_STEPS 6         // [2 3 4 6 8 12] light-march steps along sun ray when building the cloud shadow map
+#define CLOUDS_SHADOW_EXTENT 2048.0   // [512.0 1024.0 1536.0 2048.0 3072.0 4096.0] world extent (m, half-width) covered by the 512² distortion-warped shadow projection
+// Phase 6 — primary cloud raymarch (only fires when CLOUDS is defined above)
+#define CLOUDS_PRIMARY_STEPS 32       // [8 16 24 32 48 64 96] primary raymarch steps through the cloud layer (lerped horizon→zenith)
+#define CLOUDS_LIGHT_STEPS 4          // [2 3 4 6 8] cone-march taps along sun ray for self-shadowing
+#define CLOUDS_MS_OCTAVES 6           // [1 2 3 4 6] Wrenninge multiple-scattering octaves (each octave attenuates scatter/extinction)
+#define CLOUDS_MAX_DISTANCE 16000.0   // [4000.0 8000.0 12000.0 16000.0 24000.0 32000.0] hard cap on cloud-layer ray distance (m); skip far cloud sampling
+#define CLOUDS_MIN_TRANSMITTANCE 0.01 // [0.001 0.005 0.01 0.02 0.05] early-out when accumulated transmittance falls below this
+#define CLOUDS_DEBUG 0
 
 #define TAA
 #define TAA_JITTER_AMOUNT 1.0
 #define TAA_JITTER_SPREAD 1.0
-#define TAA_BLEND_WEIGHT 0.92 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
+#define TAA_BLEND_WEIGHT 0.95 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
 
 #define BLOOM
 #define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
 #define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
-#define AUTO_EXPOSURE_TARGET 0.18 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
+#define AUTO_EXPOSURE_TARGET 0.22 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.001 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
@@ -93,6 +112,14 @@
 #define WATER_ROUGHNESS 0.02 // [0.0 0.005 0.01 0.02 0.04 0.08 0.16] surface roughness for reflections (higher = blurrier/more diffuse reflections, lower = sharper/mirror-like reflections)
 
 #define WATER_FOG
+
+// Underwater sun-shaft godray raymarch (Phase 7). Additive on top of the
+// analytic Beer-Lambert fog. Samples computeWaterCaustics() at each volume
+// step so caustic banding propagates along the visible shafts.
+//#define WATER_GODRAYS
+#define WATER_GODRAY_STEPS 12     // [4 6 8 10 12 16 20 24] dithered raymarch steps from camera to fragment
+#define WATER_GODRAY_STRENGTH 0.6 // [0.0 0.1 0.2 0.4 0.6 0.8 1.0 1.5 2.0] overall scatter intensity
+#define WATER_GODRAY_PHASE_G 0.7  // [0.0 0.3 0.5 0.7 0.8 0.9] Henyey-Greenstein asymmetry (forward-peak strength)
 
 #define WATER_CAUSTICS
 #define WATER_CAUSTICS_STRENGTH 2.0 // [0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.6 2.0 2.5 3.0] brightness of caustic bands on submerged terrain

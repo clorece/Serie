@@ -1,5 +1,5 @@
 // Day / night transition curves. Softened to match the wider transition
-// windows used by Photon / Bliss / Complementary — the legacy code transitioned
+// windows used by other shaders — the legacy code transitioned
 // `moonVisibility` over ~5.7° of celestial movement (MdotU = -0.1 → 0) and
 // then snapped, which caused (a) the sun-to-moon light-color flip to happen
 // in a few frames, (b) celestial shadows to start/stop at very different
@@ -9,7 +9,7 @@
 float sunUp  = dot(sunVector,  upVector);  //  +1 = sun at zenith,  -1 = nadir
 float moonUp = dot(moonVector, upVector);
 
-// Sun activity: 0 well below horizon, 1 well above. Photon uses (-0.1, 0.5);
+// Sun activity: 0 well below horizon, 1 well above. Some shaders use (-0.1, 0.5);
 // the wider second arg lets the sunlit term keep its warm colour longer past
 // the geometric sunset (atmospheric scattering does the rest of the visuals).
 float sunActivity  = smoothstep(-0.1, 0.16, sunUp);
@@ -22,7 +22,7 @@ float moonActivity = smoothstep(-0.1, 0.10, moonUp);
 // Sun colour: warm-amber sunset → near-white noon, gated by activity so the
 // sun term cleanly fades out (no abrupt cutoff) as the sun sinks below the
 // horizon.
-vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 1.0, 1.1), max(sunUp, 0.0));
+vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.25) * 0.15, vec3(1.0, 1.0, 1.1), max(sunUp, 0.0));
 vec3 sunColor      = sunColorBase * sunActivity;
 
 // Moon colour: cool blue, scaled to ~0.02 of sun illuminance (matches the

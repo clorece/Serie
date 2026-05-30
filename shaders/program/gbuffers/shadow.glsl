@@ -132,7 +132,7 @@ void main() {
         vec3 sunVec = normalize(sunPosition);
         vec3 upVec  = normalize(upPosition);
         float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
-        if (sunUp > 0.001 && skyLight > 0.8) {
+        if (sunUp > 0.1 && skyLight > 0.85) {
             finalCategory = 0u; // exclude from voxelization / set as AIR (no emission)
         }
     }

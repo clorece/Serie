@@ -47,6 +47,7 @@ vec3 clipSpace;
 
 #include "/lib/util/positions.glsl"
 #include "/lib/fragment/sky.glsl"
+#include "/lib/fragment/clouds.glsl"
 // fog.glsl + atmosphere.glsl deleted — legacy raymarch superseded by the LUT path.
 
 void main() {
@@ -73,6 +74,33 @@ void main() {
 
     if (depth0 == 1.0) {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
+
+        #ifdef CLOUDS
+        // Pick the active celestial light. At night the sun is below the
+        // horizon — feeding worldSunDir + SUN_COLOR_BASE into the per-step
+        // T-LUT inside raymarchClouds samples the atmosphere at negative
+        // cosLightZenith, which returns the boundary-extrapolated sunset
+        // tint → clouds end up red at midnight. Switch to moon below the
+        // horizon, and scale by the existing sun/moon activity factors so
+        // direct cloud light fades smoothly through twilight.
+        float cloudMidAlt = (CLOUDS_LAYER_BOTTOM + CLOUDS_LAYER_TOP) * 0.5;
+        vec3  ambient     = getSkyAmbient(cloudMidAlt);
+
+        // Activity factors mirror colors.glsl (which lives in vertex scope —
+        // its `sunActivity` / `moonActivity` aren't accessible here, so we
+        // compute the same smoothstep curves inline. worldSunDir.y is
+        // equivalent to sunUp = dot(sunVector, upVector).
+        bool  moonlit       = worldSunDir.y < -0.04;
+        float cloudSunAct   = smoothstep(-0.1, 0.16, worldSunDir.y);
+        float cloudMoonAct  = smoothstep(-0.1, 0.10, worldMoonDir.y);
+        vec3  lightDir      = moonlit ? worldMoonDir : worldSunDir;
+        vec3  lightCol      = moonlit
+                            ? MOON_COLOR_BASE * cloudMoonAct
+                            : SUN_COLOR_BASE  * cloudSunAct;
+
+        vec4 cloud = raymarchClouds(cameraPosition, worldDir, lightDir, lightCol, ambient);
+        color = color * cloud.a + cloud.rgb;
+        #endif
     }
     #ifndef VOLUMETRIC_LIGHT
     else {

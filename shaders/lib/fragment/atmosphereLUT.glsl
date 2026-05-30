@@ -50,6 +50,16 @@ vec3 _inlineTransmittanceToTOA(float r, float mu) {
     bool hitsGround = (mu < 0.0) && (discriminantGround >= 0.0);
     if (hitsGround) return vec3(0.0);  // Sun below horizon ⇒ no light
 
+    // Soft atmospheric shadow/penumbra blend near the horizon
+    float shadowFade = 1.0;
+    if (mu < 0.0) {
+        float d_min = r * sqrt(1.0 - mu*mu);
+        float h_min = d_min - PLANET_RADIUS;
+        // Smoothly fade between 2km and 12km to simulate realistic soft horizon shadow
+        shadowFade = smoothstep(2000.0, 12000.0, h_min);
+        if (shadowFade == 0.0) return vec3(0.0);
+    }
+
     const int N = 10;  // quadratic spacing: 10 steps clusters samples near the ground for perfect low-sun accuracy
     vec3 opticalDepth = vec3(0.0);
     float tLast = 0.0;
@@ -64,7 +74,7 @@ vec3 _inlineTransmittanceToTOA(float r, float mu) {
         vec3 density = GetAtmosphereDensity(dist);
         opticalDepth += (COEFF_ATTENUATION * density) * ds;
     }
-    return exp(-opticalDepth);
+    return exp(-opticalDepth) * shadowFade;
 }
 
 // Hammersley sequence in 2D for low-discrepancy sphere sampling (no texture).
@@ -353,9 +363,19 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     float tStart = max(aid.x, 0.0);
     float tEnd   = planetHit ? pid.x : aid.y;
 
-    const int N = SKY_LUT_STEPS;  // quadratic spacing: dynamically controlled by SKY_LUT_STEPS slider
+    // Uniform stepping per Hillaire 2020 Listing 5. Quadratic spacing was
+    // tried as an "adaptive" optimization, but for SkyView it clusters all
+    // samples near the camera and leaves the last step covering ~19% of the
+    // ray — for horizon-grazing rays (dEnd ~100km) that's a single ~19km
+    // segment carrying a large chunk of inscatter. dEnd varies with
+    // elevation, so the discretization error varies row-to-row, producing
+    // the visible elevation-banded stripes above the horizon.
+    // (Quadratic spacing is still correct for the T-LUT and MS-LUT inline
+    // marches because those integrate a monotonic smooth quantity.)
+    const int N = SKY_LUT_STEPS;
     float dEnd = tEnd - tStart;
     if (dEnd <= 0.0) return vec3(0.0);
+    float ds = dEnd / float(N);
 
     vec3 scatter = vec3(0.0);
     vec3 trans   = vec3(1.0);
@@ -366,13 +386,8 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     float sunFade  = smoothstep(-0.2, 0.05, sunDir.y);
     float moonFade = smoothstep(-0.2, 0.05, moonDir.y);
 
-    float tLast = 0.0;
     for (int i = 0; i < N; ++i) {
-        float x = float(i + 1) / float(N);
-        float tEdge = x * x * dEnd;
-        float t = tStart + 0.5 * (tLast + tEdge);
-        float ds = tEdge - tLast;
-        tLast = tEdge;
+        float t = tStart + (float(i) + 0.5) * ds;
 
         vec3  p_t      = pos + worldDir * t;
         float altitude = length(p_t);
@@ -405,6 +420,12 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         vec3 inscatterStep = trans * inscatter * (1.0 - stepT) / max(sigma_e, vec3(1e-7));
         scatter += inscatterStep;
         trans   *= stepT;
+
+        // Saturated-transmittance early-out. For horizon-grazing rays through
+        // the dense lower atmosphere, trans drops near zero within a handful
+        // of steps; the remaining sparse-tail steps contribute nothing visible
+        // but cost the same. Bail so we don't waste the step budget.
+        if (max(trans.r, max(trans.g, trans.b)) < 0.001) break;
     }
 
     // Match legacy GetAtmosphere() tonemap softening so LUT values land in the

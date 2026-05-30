@@ -76,7 +76,7 @@ screen.Atmosphere=Atmosphere & Sky
 screen.Atmosphere.comment=Configure physical atmosphere density, scattering, and illuminance coefficients.
 
 option.SKY_LUT_STEPS=Sky Integration Steps
-option.SKY_LUT_STEPS.comment=Number of quadratic raymarching steps for the Sky-View precomputation. Lower is faster; higher yields slightly more accurate horizons.
+option.SKY_LUT_STEPS.comment=Number of uniform raymarching steps for the Sky-View precomputation. Lower is faster; higher yields smoother horizons (reduces elevation banding).
 
 option.SUN_ILLUMINANCE=Sun Illuminance
 option.SUN_ILLUMINANCE.comment=Physical intensity of the sun light term inside the atmospheric scattering solver.

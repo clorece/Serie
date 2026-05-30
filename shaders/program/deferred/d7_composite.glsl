@@ -56,8 +56,8 @@ vec3 getLightmap(vec3 l) {
     vec3 sunVec = normalize(sunPosition);
     vec3 upVec  = normalize(upPosition);
     float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
-    float skyExposure = smoothstep(0.6, 0.9, l.y);
-    float blocklightSuppression = mix(1.0, 0.0, sunUp * skyExposure);
+    float skyExposure = smoothstep(0.75, 0.9, l.y);
+    float blocklightSuppression = mix(1.0, 0.05, sunUp * skyExposure);
 
     vec3 torchLighting = l.x * torchColor * blocklightSuppression;
     vec3 skyLighting = l.y * ambientColor;
@@ -151,6 +151,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 }
 
 #include "/lib/fragment/shadows.glsl"
+#include "/lib/fragment/clouds.glsl"
 
 #ifdef PT_DEBUG_VOXELS
 #include "/lib/pt/voxelData.glsl"
@@ -212,7 +213,18 @@ void main() {
         directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal, material);
     }
     #endif
-    vec3 direct = diffuse * lightColor * directShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
+    // Cloud shadow on direct sun. The 512² distortion-warped projection
+    // (built in prepare1) gives free per-pixel sun occlusion under cumulus.
+    // Fade with rainStrength because vanilla rain replaces cumulus rendering
+    // with a uniform overcast — applying cumulus-shaped shadows during rain
+    // would look out of place.
+    float cloudShadow = 1.0;
+    if (depth0 < 1.0) {
+        vec3 worldPosAbs = getWorldPosition().xyz + cameraPosition;
+        cloudShadow = mix(1.0, sampleCloudShadow(worldPosAbs), 1.0 - rainStrength);
+    }
+
+    vec3 direct = diffuse * lightColor * directShadow * cloudShadow * (1.0 - (rainStrength * 0.75)) * skyOcc;
 
 
     if (material > 0.16 && material < 0.83 && depth0 < 1.0) {
@@ -224,8 +236,8 @@ void main() {
         float NdotL = max(dot(normal, lightVector), 0.0);
         float backfaceMask = clamp(1.0 - NdotL, 0.0, 1.0);
         
-        vec3 sssLight = lightColor * directShadow * sssPhase * backfaceMask * (1.0 - rainStrength * 0.75);
-        
+        vec3 sssLight = lightColor * directShadow * cloudShadow * sssPhase * backfaceMask * (1.0 - rainStrength * 0.75);
+
         direct += sssLight * lightmap.y * 2.5;
     }
 
