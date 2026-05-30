@@ -47,7 +47,7 @@ vec3 clipSpace;
 
 #include "/lib/util/positions.glsl"
 #include "/lib/fragment/sky.glsl"
-#include "/lib/fragment/fog.glsl"
+// fog.glsl + atmosphere.glsl deleted — legacy raymarch superseded by the LUT path.
 
 void main() {
     vec2 unjitteredTexCoord = texCoord;
@@ -73,15 +73,19 @@ void main() {
 
     if (depth0 == 1.0) {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
-    } else {
+    }
+    #ifndef VOLUMETRIC_LIGHT
+    else {
         // Aerial perspective: 8-step march from camera to surface samples the
         // T-LUT for sun visibility per step, then `color = scene * T + scatter`.
-        // Replaces the disabled legacy `getFog()` exponential. Distant terrain
-        // dissolves into the same sky color used by depth==1 pixels.
+        // Distant terrain dissolves into the same sky color at depth==1.
+        // When VOLUMETRIC_LIGHT is on, d9_vl handles this with shadow-aware
+        // integration (god rays); skip here to avoid double-integration.
         AerialPerspective ap = computeAerialPerspective(
             worldDir, worldSunDir, worldMoonDir, eyeAltitude, dist);
         color = color * ap.transmittance + ap.scatter;
     }
+    #endif
 
     /* RENDERTARGETS: 0 */
     gl_FragData[0] = vec4(color, 1.0);

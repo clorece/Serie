@@ -23,7 +23,7 @@
 
 #define AIR_NUMBER_DENSITY        2.5035422e25
 #define OZONE_CONCENTRATION_PEAK  8e-6
-#define OZONE_CROSS_SECTION       vec3(2.0e-21, 6.0e-21, 2.0e-22)
+#define OZONE_CROSS_SECTION       vec3(3.472e-21, 4.14e-21, 1.11e-22)
 
 // Bare names preserved from legacy atmosphere.glsl so sky.glsl callers
 // (which use `pi`, `rPI`, `rLOG2` un-namespaced) keep working post-extraction.

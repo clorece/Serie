@@ -40,11 +40,16 @@ void main() {
         // ---- Transmittance LUT region ----
         outRgb = computeTransmittanceLUT(px);
     } else if (px.y < 96) {
-        // ---- Multi-Scatter LUT region (only x<32) ----
+        // ---- Multi-Scatter LUT region (32×32) ----
+        // Re-enabled: SkyView reads this for the isotropic multi-scattering
+        // term that produces the deep-blue twilight sky away from the sun.
+        // Reading MS-LUT inside the same prepare pass reads the previous
+        // frame's values — atmospheric parameters change slowly enough that
+        // the one-frame lag is invisible. (~256M ALU/frame cost accepted.)
         if (px.x < 32) {
             outRgb = computeMultiScatterLUT(px - ivec2(0, 64));
         } else {
-            outRgb = vec3(0.0);  // dead band
+            outRgb = vec3(0.0);
         }
     } else {
         // ---- Sky-View LUT region (256×160) ----
