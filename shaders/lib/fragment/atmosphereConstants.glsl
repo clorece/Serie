@@ -6,8 +6,12 @@
 //   - lib/fragment/atmosphere.glsl  (legacy per-pixel raymarch — kept during migration)
 //   - lib/fragment/atmosphereLUT.glsl (Hillaire 2020 LUT build + sample)
 
+#ifndef SUN_ILLUMINANCE
 #define SUN_ILLUMINANCE 10.0
+#endif
+#ifndef MOON_ILLUMINANCE
 #define MOON_ILLUMINANCE 0.02
+#endif
 
 #define SUN_COLOR_BASE  (vec3(1.0, 0.9, 0.81) * SUN_ILLUMINANCE)
 #define MOON_COLOR_BASE (vec3(0.7, 0.78, 1.0) * MOON_ILLUMINANCE)
@@ -16,13 +20,30 @@
 #define ATMOSPHERE_HEIGHT 110e3
 #define SCALE_HEIGHTS     vec2(8.0e3, 1.2e3)  // Rayleigh, Mie
 
+#ifndef MIE_G
 #define MIE_G 0.80
+#endif
 
+#ifdef RAYLEIGH_SCATTER_R
+#define COEFF_RAYLEIGH vec3(RAYLEIGH_SCATTER_R, RAYLEIGH_SCATTER_G, RAYLEIGH_SCATTER_B) * 1e-6
+#else
 #define COEFF_RAYLEIGH vec3(5.8e-6, 1.35e-5, 3.31e-5)
+#endif
+
+#ifdef MIE_SCATTER_R
+#define COEFF_MIE      vec3(MIE_SCATTER_R, MIE_SCATTER_G, MIE_SCATTER_B) * 1e-6
+#else
 #define COEFF_MIE      vec3(3.0e-6, 3.0e-6,  3.0e-6)
+#endif
 
 #define AIR_NUMBER_DENSITY        2.5035422e25
+
+#ifdef OZONE_PEAK
+#define OZONE_CONCENTRATION_PEAK  (OZONE_PEAK * 1e-6)
+#else
 #define OZONE_CONCENTRATION_PEAK  8e-6
+#endif
+
 #define OZONE_CROSS_SECTION       vec3(3.472e-21, 4.14e-21, 1.11e-22)
 
 // Bare names preserved from legacy atmosphere.glsl so sky.glsl callers

@@ -70,3 +70,62 @@ option.VOXEL_GRID_SIZE.comment=Changes the bounds of the voxel path tracing volu
 value.VOXEL_GRID_SIZE.64=64 (Small)
 value.VOXEL_GRID_SIZE.128=128 (Normal)
 value.VOXEL_GRID_SIZE.256=256 (Large)
+
+# Atmosphere & Sky Settings
+screen.Atmosphere=Atmosphere & Sky
+screen.Atmosphere.comment=Configure physical atmosphere density, scattering, and illuminance coefficients.
+
+option.SKY_LUT_STEPS=Sky Integration Steps
+option.SKY_LUT_STEPS.comment=Number of quadratic raymarching steps for the Sky-View precomputation. Lower is faster; higher yields slightly more accurate horizons.
+
+option.SUN_ILLUMINANCE=Sun Illuminance
+option.SUN_ILLUMINANCE.comment=Physical intensity of the sun light term inside the atmospheric scattering solver.
+
+option.MOON_ILLUMINANCE=Moon Illuminance
+option.MOON_ILLUMINANCE.comment=Physical intensity of the moon light term inside the atmospheric scattering solver.
+
+option.MIE_G=Mie Asymmetry (G)
+option.MIE_G.comment=Governs forward-scattering sharpness. Higher values concentrate Mie glow closer to the sun disk, creating a sharper, brighter solar halo.
+
+option.RAYLEIGH_SCATTER_R=Rayleigh Scatter (Red)
+option.RAYLEIGH_SCATTER_R.comment=Scattering coefficient for red light wavelengths. Controls the warm amber/sunset hues of the atmosphere.
+
+option.RAYLEIGH_SCATTER_G=Rayleigh Scatter (Green)
+option.RAYLEIGH_SCATTER_G.comment=Scattering coefficient for green light wavelengths.
+
+option.RAYLEIGH_SCATTER_B=Rayleigh Scatter (Blue)
+option.RAYLEIGH_SCATTER_B.comment=Scattering coefficient for blue light wavelengths. Controls the deep blue daytime zenith of the sky.
+
+option.MIE_SCATTER_R=Mie Scatter (Red)
+option.MIE_SCATTER_R.comment=Aerosol/dust scattering coefficient for red light. Governs sunset horizon haze coloration.
+
+option.MIE_SCATTER_G=Mie Scatter (Green)
+option.MIE_SCATTER_G.comment=Aerosol/dust scattering coefficient for green light.
+
+option.MIE_SCATTER_B=Mie Scatter (Blue)
+option.MIE_SCATTER_B.comment=Aerosol/dust scattering coefficient for blue light.
+
+option.OZONE_PEAK=Ozone Peak Concentration
+option.OZONE_PEAK.comment=Peak ozone concentration level in the stratosphere. Governs the purple/blue transition bands during twilight.
+
+# Volumetric Light
+screen.Volumetric-Light=Volumetric Light
+screen.Volumetric-Light.comment=Configure dithered raymarching steps, intensity, and time-of-day multipliers for volumetric light and god rays.
+
+option.VOLUMETRIC_LIGHT=Volumetric Light
+option.VOLUMETRIC_LIGHT.comment=Enables shadowmap-aware volumetric atmospheric lighting (crepuscular god rays).
+
+option.VL_STEPS=Volumetric Steps
+option.VL_STEPS.comment=Controls the number of raymarching steps. Higher values yield smoother and sharper rays but reduce performance.
+
+option.VL_INTENSITY=Volumetric Intensity
+option.VL_INTENSITY.comment=Base intensity and brightness multiplier of volumetric god rays.
+
+option.VL_NOON_STRENGTH=Noon VL Multiplier
+option.VL_NOON_STRENGTH.comment=Multiplier for volumetric light strength when the sun is high in the sky (midday).
+
+option.VL_SUN_RISE_SET_STRENGTH=Sunrise/Sunset VL Multiplier
+option.VL_SUN_RISE_SET_STRENGTH.comment=Multiplier for volumetric light strength during sunrise and sunset (golden hour).
+
+option.VL_NIGHT_STRENGTH=Night VL Multiplier
+option.VL_NIGHT_STRENGTH.comment=Multiplier for volumetric light strength during the night (using moonlight crepuscular rays).

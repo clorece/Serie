@@ -189,10 +189,6 @@ void main() {
 
         float dist = (d0 >= 1.0) ? 64.0 : length(screenToView(unjitU, d0));
 
-        // Caustics on the submerged seabed before the water column re-absorbs the
-        // light on its way back to the camera. Surface Y is unknown per-pixel when
-        // submerged; assume it sits a block above the eye (cheap, sane for moderate
-        // depths — deep dives slightly underestimate falloff).
         vec3 sceneCaustic = scene;
         #ifdef WATER_CAUSTICS
         if (d0 < 1.0) {
@@ -228,8 +224,8 @@ void main() {
     #endif
 
     if (isTranslucent) {
-        const float GLASS_OPACITY     = 0.1; // see-through
-        const float CLEAR_ICE_OPACITY = 0.3; // frosted
+        const float GLASS_OPACITY     = 0.05; // see-through
+        const float CLEAR_ICE_OPACITY = 0.15; // frosted
         const float SOLID_ICE_OPACITY = 0.80; // mostly solid
         const float TRANSLUCENT_REFRACTION_DEPTH = 0.6;
 
@@ -237,6 +233,11 @@ void main() {
         if (isSolidIce)      { ior = 1.31; opacity = SOLID_ICE_OPACITY; doRefract = false; }
         else if (isClearIce) { ior = 1.31; opacity = CLEAR_ICE_OPACITY; doRefract = true;  }
         else                 { ior = 1.50; opacity = GLASS_OPACITY;     doRefract = true;  }
+
+        vec3 wSunT  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+        vec3 wMoonT = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
+        float dayFactor = clamp(wSunT.y * 1.5 + 0.2, 0.04, 1.0);
+        const vec3 torchColor = vec3(0.9922, 0.6471, 0.1922);
 
         vec2 unjitT = uv;
         #ifdef TAA
@@ -269,7 +270,9 @@ void main() {
             base = bg; // colortex0 already holds the lit opaque ice
         } else {
             vec3 seeThrough = bg * albedoT;
-            vec3 ownColor   = albedoT * (0.2 + 0.8 * skylight + 0.5 * c2.r); // ambient floor + sky + blocklight
+            // Scale skylight and ambient floor by dayFactor so glass doesn't glow at night.
+            // Torchlight uses the warm blocklight color and is not suppressed at night.
+            vec3 ownColor   = albedoT * ((0.05 + 0.95 * skylight) * dayFactor + 1.2 * c2.r * torchColor);
             base = mix(seeThrough, ownColor, opacity);
         }
 
@@ -281,8 +284,6 @@ void main() {
 
         viewReflDir = normalize(viewReflDir + tGeoN * clamp(-dot(viewReflDir, tGeoN) + 1e-5, 0.0, 1.0));
         vec3 worldRefl   = mat3(gbufferModelViewInverse) * viewReflDir;
-        vec3 wSunT  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
-        vec3 wMoonT = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
         float eyeAltT = cameraPosition.y - 64.0;
         vec3 reflectColor = getSkyReflection(worldRefl, eyeAltT) * skyVis;
         #ifdef WATER_REFLECTIONS

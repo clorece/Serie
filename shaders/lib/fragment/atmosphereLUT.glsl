@@ -509,18 +509,36 @@ AerialPerspective computeAerialPerspective(
 }
 
 
-// Ambient sky radiance for the GI sky probe. Samples the SkyView LUT looking
-// straight up (zenith). Drop-in replacement for the legacy flat `ambientColor`
-// at d0_restir.glsl:82 — time-of-day attenuation is built into the LUT, so
-// the call site no longer needs `ambientScale` modulation.
-//
-// v2 (deferred): plumb a sun-direction bias here so dawn/dusk warmth bleeds
-// into bounce light. Per-ray-direction sampling lives in gi.glsl for that.
+// Ambient sky radiance for the GI sky probe. Samples the SkyView LUT with a
+// subtle sun-direction bias so physical dawn/dusk warmth bleeds into bounce
+// light naturally without over-warming or artificial tints.
 vec3 getSkyAmbient(float eyeAltitude) {
-    // Single-tap: same UV for every fragment (always zenith), so bilinear
-    // smoothing is meaningless here — 1 fetch instead of 4 across all
-    // shaded pixels in d0_restir.
-    return textureLod(colortex12, _skyViewLUT_UV(vec3(0.0, 1.0, 0.0)), 0.0).rgb;
+    vec3 worldSunDir = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+    // Tilt the zenith direction subtly towards the sun position (0.15 bias)
+    vec3 sampleDir = normalize(vec3(0.0, 1.0, 0.0) + 0.15 * worldSunDir);
+
+    // Single-tap: 1 fetch instead of 4 across all shaded pixels in d0_restir.
+    vec3 ambient = textureLod(colortex12, _skyViewLUT_UV(sampleDir), 0.0).rgb;
+    // Warm up the physical ambient sky light subtly by blending a touch of warm sunlight/ambient tint
+    ambient *= vec3(1.08, 1.04, 0.96);
+    return ambient;
+}
+
+// Helper to compute the dynamic sun/moon light color inline to avoid circular dependencies
+vec3 _computeDynamicLightColor(float sunElevation) {
+    float sunUp  = sunElevation;
+    float moonUp = -sunElevation;
+
+    float sunActivity  = smoothstep(-0.1, 0.16, sunUp);
+    float moonActivity = smoothstep(-0.1, 0.10, moonUp);
+
+    vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 1.0, 1.1), max(sunUp, 0.0));
+    vec3 sunColor      = sunColorBase * sunActivity;
+
+    vec3 moonColorBase = vec3(0.65, 0.85, 1.0) * 0.02;
+    vec3 moonColor     = moonColorBase * moonActivity;
+
+    return sunColor + moonColor;
 }
 
 // LUT-backed replacement for lib/fragment/sky.glsl::getSky.
@@ -530,6 +548,11 @@ vec3 getSkyAmbient(float eyeAltitude) {
 vec3 sampleSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     // Sky scattering from the lat/long-warped sky-view LUT.
     vec3 skyColor = sampleSkyViewLUT(rd, eyeAltitude);
+
+    // Offset the sky view LUT color with a portion of the dynamic direct lightColor
+    vec3 dynamicLightCol = _computeDynamicLightColor(sunDir.y);
+    float sunZenith = clamp(sunDir.y, 0.0, 1.0);
+    skyColor += dynamicLightCol * 0.20 * (1.0 - sunZenith * 0.7);
 
     // Sun/moon discs (extinction along view ray to TOA). Bilinear T-LUT here:
     // the disc covers only ~50 pixels on screen and an incorrect single-tap T
@@ -546,7 +569,6 @@ vec3 sampleSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     // Match legacy noon-ground blend so the world below horizon is bright,
     // not black. The LUT covers below-horizon directions but tonemap
     // expectations downstream want this kick.
-    float sunZenith = clamp(sunDir.y, 0.0, 1.0);
     vec3 horizonColor = skyColor;
     vec3 noonGround = vec3(0.9, 0.95, 1.0) * sunZenith;
     vec3 groundColor = mix(horizonColor * 0.4, noonGround, pow(sunZenith, 2.0));
@@ -562,9 +584,13 @@ vec3 sampleSky_fast(vec3 rd, float eyeAltitude) {
     // Bilinear SkyView LUT fetch - completely smooth gradients on waves
     vec3 skyColor = sampleSkyViewLUT(rd, eyeAltitude);
 
-    // Fast sub-horizon ground blend
+    // Offset the sky view LUT color with a portion of the dynamic direct lightColor for reflections
     vec3 worldSunDir = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+    vec3 dynamicLightCol = _computeDynamicLightColor(worldSunDir.y);
     float sunZenith  = clamp(worldSunDir.y, 0.0, 1.0);
+    skyColor += dynamicLightCol * 0.20 * (1.0 - sunZenith * 0.7);
+
+    // Fast sub-horizon ground blend
     vec3 horizonColor = skyColor;
     vec3 noonGround = vec3(0.9, 0.95, 1.0) * sunZenith;
     vec3 groundColor = mix(horizonColor * 0.4, noonGround, pow(sunZenith, 2.0));

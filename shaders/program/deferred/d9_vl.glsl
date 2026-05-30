@@ -16,11 +16,14 @@ out vec3 sunVector;
 out vec3 moonVector;
 out vec3 lightVector;
 out vec3 upVector;
+out vec3 lightColor;
+out vec3 ambientColor;
 
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
     #include "/lib/vectors.glsl"
+    #include "/lib/colors.glsl"
 }
 
 #endif
@@ -37,6 +40,7 @@ in vec3 sunVector;
 in vec3 moonVector;
 in vec3 lightVector;
 in vec3 upVector;
+in vec3 lightColor;
 
 vec3 clipSpace;
 
@@ -70,11 +74,23 @@ void main() {
     vec3  worldDir     = mat3(gbufferModelViewInverse) * viewDir;
     vec3  worldSunDir  = mat3(gbufferModelViewInverse) * sunVector;
 
-    // Sun-below-horizon early-out: at night there are no godrays to integrate,
-    // and the dim moon contribution isn't worth 16 shadow taps per pixel. Pass
-    // the scene through. (Threshold = a few degrees below horizon to avoid a
-    // hard cutoff at the terminator.)
-    if (worldSunDir.y < -0.05) {
+    // Time-of-day volumetric light multipliers (partition of unity)
+    float wNoon = smoothstep(0.05, 0.25, worldSunDir.y);
+    float wNight = smoothstep(0.05, -0.1, worldSunDir.y);
+    float wSunriseSunset = 1.0 - wNoon - wNight;
+
+    float vlMultiplier = wNoon * VL_NOON_STRENGTH + wSunriseSunset * VL_SUN_RISE_SET_STRENGTH + wNight * VL_NIGHT_STRENGTH;
+
+    if (vlMultiplier < 0.001) {
+        gl_FragData[0] = vec4(sceneColor, 1.0);
+        return;
+    }
+
+    vec3  worldLightDir = mat3(gbufferModelViewInverse) * lightVector;
+
+    // Light-below-horizon early-out: when the active light source is well below the horizon,
+    // we can skip integration to save performance.
+    if (worldLightDir.y < -0.2) {
         gl_FragData[0] = vec4(sceneColor, 1.0);
         return;
     }
@@ -89,12 +105,18 @@ void main() {
     float r0  = PLANET_RADIUS + max(eyeAlt, 0.0);
     vec3  posCenter = vec3(0.0, r0, 0.0);
 
-    vec2 phaseSun = GetPhase(dot(worldDir, worldSunDir), MIE_G);
+    vec2 phaseLight = GetPhase(dot(worldDir, worldLightDir), MIE_G);
 
     vec3 trans   = vec3(1.0);
     vec3 scatter = vec3(0.0);
 
-    float sunFade = smoothstep(-0.2, 0.05, worldSunDir.y);
+    // Adapt light color, fade factor, and active light source based on day/night
+    bool isDay = (worldTime < 12700 || worldTime > 23250);
+    float lightFade = isDay ? smoothstep(-0.2, 0.05, worldSunDir.y) : smoothstep(-0.2, 0.05, -worldSunDir.y);
+    vec3 lightColorBase = isDay ? SUN_COLOR_BASE : MOON_COLOR_BASE;
+    // Blend in some of the dynamic lightColor to give the godrays beautiful time-of-day hues (e.g. sunset gold/amber)
+    vec3 dynamicLightColor = lightColor * (isDay ? SUN_ILLUMINANCE : 1.0);
+    lightColorBase = mix(lightColorBase, dynamicLightColor, 0.80);
 
     for (int i = 0; i < N; ++i) {
         float t = (float(i) + dither) * stepLen;
@@ -109,7 +131,7 @@ void main() {
             shadow = step(receiverDepth, texture(shadowtex0, shadowPos.xy).r);
         }
 
-        // Atmospheric integration (sun only — moon contribution dropped).
+        // Atmospheric integration.
         vec3  p_t      = posCenter + worldDir * t;
         float altitude = length(p_t);
         vec3  density  = GetAtmosphereDensity(altitude);
@@ -119,16 +141,17 @@ void main() {
         vec3 sigma_s   = sigma_s_r + sigma_s_m;
         vec3 sigma_e   = sigma_s + COEFF_OZONE * density.z;
 
-        float mu_s = dot(normalize(p_t), worldSunDir);
-        // Single-tap T-LUT (1 fetch vs 4 for bilinear — quantization is
-        // averaged across the N integration steps and invisible).
-        vec3  sunT = sampleTransmittanceLUT_fast(mu_s, altitude);
+        float mu_light = dot(normalize(p_t), worldLightDir);
+        // Single-tap T-LUT.
+        vec3  lightT = sampleTransmittanceLUT_fast(mu_light, altitude);
 
-        vec3  psi_ms_sun = sampleMultiScatterLUT_fast(mu_s, altitude);
+        vec3  psi_ms_light = sampleMultiScatterLUT_fast(mu_light, altitude);
 
         const float phaseIsotropic = 1.0 / (4.0 * pi);
-        vec3 phaseScatterSun = sigma_s_r * phaseSun.x + sigma_s_m * phaseSun.y;
-        vec3 inscatter = (sunT * phaseScatterSun + psi_ms_sun * sigma_s * (phaseIsotropic * sunFade)) * SUN_COLOR_BASE * shadow;
+        // Use a Mie-dominated scattering for the visible crepuscular rays (god rays)
+        // to match dust/fog scattering and perfectly reflect the light source color (eliminating blue god rays).
+        vec3 phaseScatterLight = (sigma_s_r * 0.02) * phaseLight.x + sigma_s_m * phaseLight.y;
+        vec3 inscatter = (lightT * phaseScatterLight + psi_ms_light * (sigma_s_r * 0.02 + sigma_s_m) * (phaseIsotropic * lightFade)) * lightColorBase * shadow;
 
         vec3 stepT = exp(-sigma_e * stepLen);
         vec3 inscatterStep = trans * inscatter * (1.0 - stepT) / max(sigma_e, vec3(1e-7));
@@ -139,7 +162,7 @@ void main() {
     // Match SkyView LUT tone space so VL scatter blends with sky pixels.
     scatter = pow(max(scatter, 0.0), vec3(1.0 / 1.35));
 
-    vec3 finalColor = sceneColor * trans + scatter * VL_INTENSITY;
+    vec3 finalColor = sceneColor * trans + scatter * (VL_INTENSITY * vlMultiplier);
     gl_FragData[0] = vec4(finalColor, 1.0);
 #endif
 }
