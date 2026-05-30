@@ -1,5 +1,6 @@
 # Serie
-<img width="2560" height="1440" alt="Banner" src="banner.png" />
+
+<img width="2560" height="1440" alt="2026-05-29_18 49 11" src="https://github.com/user-attachments/assets/499510fa-0233-4d3f-b1a8-2efa26ad1026" />
 
 Serie is a gameplay-focused path tracing shaderpack designed for physical accuracy while allowing for artistic tweaks. It utilizes ReSTIR and voxelization for infinite-bounce indirect illumination, supplemented by screenspace raytracing for distant lighting to maintain performance and visual cohesion.
 
