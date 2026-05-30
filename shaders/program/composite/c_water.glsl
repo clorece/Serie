@@ -50,22 +50,43 @@ bool waterReflectSSR(vec3 viewOrigin, vec3 viewDir, float dither, out vec2 hitUV
     float rayLen = min(tEdge.x, tEdge.y);
 
     vec3  rayStep = screenDir * (rayLen / float(WATER_REFLECTION_STEPS));
-    vec3  rayPos  = screenPos + rayStep * (1.0 + dither);
-    float depthTol = max(abs(rayStep.z) * 3.0, 0.0008);
+    vec2  viewSize = vec2(viewWidth, viewHeight);
+
+    // Dynamic depth tolerance scaled to prevent background ghosting & near-plane skipping
+    float depthTol = max(abs(rayStep.z) * 3.0, 0.02 / max(1.0, viewOrigin.z * viewOrigin.z));
+
+    // Cheap early check for near-contact reflections (bypasses loop entirely)
+    ivec2 startTexel = ivec2(screenPos.xy * viewSize);
+    if (clamp(startTexel, ivec2(0), ivec2(viewSize) - 1) == startTexel) {
+        float initialDepth = texelFetch(depthtex1, startTexel, 0).r;
+        if (initialDepth < screenPos.z && (screenPos.z - initialDepth) < depthTol) {
+            if (texelFetch(colortex2, startTexel, 0).b <= 0.125 && initialDepth < 1.0) {
+                hitUV = screenPos.xy;
+                return true;
+            }
+        }
+    }
+
+    vec3 rayPos = screenPos + rayStep * (1.0 + dither);
 
     for (int i = 0; i < WATER_REFLECTION_STEPS; i++, rayPos += rayStep) {
-        if (clamp(rayPos.xy, 0.0, 1.0) != rayPos.xy) return false;
+        // Tight viewport boundary out-of-bounds break
+        if (clamp(rayPos.xy, 0.0, 1.0) != rayPos.xy) break;
 
-        float sceneDepth = texture(depthtex1, rayPos.xy).r;
+        ivec2 texelCoords = ivec2(rayPos.xy * viewSize);
+        float sceneDepth = texelFetch(depthtex1, texelCoords, 0).r;
+
         if (sceneDepth < rayPos.z && (rayPos.z - sceneDepth) < depthTol) {
-            if (texture(colortex2, rayPos.xy).b > 0.125) continue; // skim over any translucent, keep going
-            if (sceneDepth >= 1.0) return false;                  // sky
+            // Skim over translucent objects (colortex2.b > 0.125)
+            if (texelFetch(colortex2, texelCoords, 0).b > 0.125) continue;
+            if (sceneDepth >= 1.0) break; // Hits sky, exit early
 
-
+            // Binary search refinement
             vec3 p = rayPos, st = rayStep;
             for (int j = 0; j < 4; j++) {
                 st *= 0.5;
-                float d = texture(depthtex1, p.xy).r;
+                ivec2 pTexel = ivec2(p.xy * viewSize);
+                float d = texelFetch(depthtex1, pTexel, 0).r;
                 p += (d < p.z) ? -st : st;
             }
             hitUV = p.xy;
@@ -263,7 +284,7 @@ void main() {
         vec3 wSunT  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
         vec3 wMoonT = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
         float eyeAltT = cameraPosition.y - 64.0;
-        vec3 reflectColor = getSky(worldRefl, wSunT, wMoonT, eyeAltT) * skyVis;
+        vec3 reflectColor = getSkyReflection(worldRefl, eyeAltT) * skyVis;
         #ifdef WATER_REFLECTIONS
         {
             float nz = waterDither(gl_FragCoord.xy, frameCounter);
@@ -383,7 +404,7 @@ void main() {
 
     vec3 worldRefl   = mat3(gbufferModelViewInverse) * viewReflDir;
 
-    vec3 reflectColor = getSky(worldRefl, worldSunDir, worldMoonDir, eyeAltitude) * skyVis;
+    vec3 reflectColor = getSkyReflection(worldRefl, eyeAltitude) * skyVis;
     #ifdef WATER_REFLECTIONS
     {
         float nz = waterDither(gl_FragCoord.xy, frameCounter);

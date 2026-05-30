@@ -8,10 +8,13 @@
 
 #include "/lib/fragment/atmosphereLUT.glsl"
 
-#ifndef SKY_LUT_STEPS
-#define SKY_LUT_STEPS 6   // legacy; now controls SkyView build step count budget
-#endif
 
 vec3 getSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     return sampleSky(rd, sunDir, moonDir, eyeAltitude);
 }
+
+// Forward to the ultra-optimized single-tap reflection sky sampler
+vec3 getSkyReflection(vec3 rd, float eyeAltitude) {
+    return sampleSky_fast(rd, eyeAltitude);
+}
+

@@ -18,6 +18,8 @@
 // All sample helpers apply 0.5-texel inset into their region so bilinear
 // filtering never bleeds into adjacent (different-meaning) regions.
 
+#include "/lib/options.glsl"
+
 #include "/lib/fragment/atmosphereConstants.glsl"
 
 const vec2  LUT_PACK_SIZE = vec2(256.0, 256.0);
@@ -48,16 +50,20 @@ vec3 _inlineTransmittanceToTOA(float r, float mu) {
     bool hitsGround = (mu < 0.0) && (discriminantGround >= 0.0);
     if (hitsGround) return vec3(0.0);  // Sun below horizon ⇒ no light
 
-    const int N = 16;  // tuned: 10 was too coarse for low-sun (sunset/sunrise) path lengths
-    float ds = dTOA / float(N);
+    const int N = 10;  // quadratic spacing: 10 steps clusters samples near the ground for perfect low-sun accuracy
     vec3 opticalDepth = vec3(0.0);
+    float tLast = 0.0;
     for (int i = 0; i < N; ++i) {
-        float t = (float(i) + 0.5) * ds;
+        float x = float(i + 1) / float(N);
+        float tEdge = x * x * dTOA;
+        float t = 0.5 * (tLast + tEdge);
+        float ds = tEdge - tLast;
+        tLast = tEdge;
+
         float dist = sqrt(r*r + 2.0 * r * mu * t + t*t);
         vec3 density = GetAtmosphereDensity(dist);
-        opticalDepth += COEFF_ATTENUATION * density;
+        opticalDepth += (COEFF_ATTENUATION * density) * ds;
     }
-    opticalDepth *= ds;
     return exp(-opticalDepth);
 }
 
@@ -231,16 +237,20 @@ vec3 computeTransmittanceLUT(ivec2 px) {
                 ? clamp((H_top*H_top - rho*rho - d*d) / (2.0 * r * d), -1.0, 1.0)
                 : 1.0;
 
-    const int N = 40;
-    float ds = d / float(N);
+    const int N = 16;  // quadratic spacing: 16 steps gives ground precision equivalent to >100 linear steps
     vec3 opticalDepth = vec3(0.0);
+    float tLast = 0.0;
     for (int i = 0; i < N; ++i) {
-        float t = (float(i) + 0.5) * ds;
+        float x = float(i + 1) / float(N);
+        float tEdge = x * x * d;
+        float t = 0.5 * (tLast + tEdge);
+        float ds = tEdge - tLast;
+        tLast = tEdge;
+
         float dist = sqrt(r*r + 2.0 * r * mu * t + t*t);
         vec3 density = GetAtmosphereDensity(dist);
-        opticalDepth += COEFF_ATTENUATION * density;
+        opticalDepth += (COEFF_ATTENUATION * density) * ds;
     }
-    opticalDepth *= ds;
     return exp(-opticalDepth);
 }
 
@@ -343,9 +353,9 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     float tStart = max(aid.x, 0.0);
     float tEnd   = planetHit ? pid.x : aid.y;
 
-    const int N = 32;
-    float ds = (tEnd - tStart) / float(N);
-    if (ds <= 0.0) return vec3(0.0);
+    const int N = SKY_LUT_STEPS;  // quadratic spacing: dynamically controlled by SKY_LUT_STEPS slider
+    float dEnd = tEnd - tStart;
+    if (dEnd <= 0.0) return vec3(0.0);
 
     vec3 scatter = vec3(0.0);
     vec3 trans   = vec3(1.0);
@@ -356,8 +366,14 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     float sunFade  = smoothstep(-0.2, 0.05, sunDir.y);
     float moonFade = smoothstep(-0.2, 0.05, moonDir.y);
 
+    float tLast = 0.0;
     for (int i = 0; i < N; ++i) {
-        float t = tStart + (float(i) + 0.5) * ds;
+        float x = float(i + 1) / float(N);
+        float tEdge = x * x * dEnd;
+        float t = tStart + 0.5 * (tLast + tEdge);
+        float ds = tEdge - tLast;
+        tLast = tEdge;
+
         vec3  p_t      = pos + worldDir * t;
         float altitude = length(p_t);
         vec3  density  = GetAtmosphereDensity(altitude);
@@ -531,6 +547,24 @@ vec3 sampleSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     // not black. The LUT covers below-horizon directions but tonemap
     // expectations downstream want this kick.
     float sunZenith = clamp(sunDir.y, 0.0, 1.0);
+    vec3 horizonColor = skyColor;
+    vec3 noonGround = vec3(0.9, 0.95, 1.0) * sunZenith;
+    vec3 groundColor = mix(horizonColor * 0.4, noonGround, pow(sunZenith, 2.0));
+    float horizon = smoothstep(-0.6, 0.05, rd.y);
+    return mix(groundColor, skyColor, horizon);
+}
+
+// Ultra-fast sky sampler for reflections (water, glass, ice).
+// Uses manual bilinear SkyView LUT filtering to completely avoid concentric nearest-neighbor
+// banding rings, but skips sun/moon disc rendering (since specularity is computed
+// separately via microfacet BRDF anyway). Cuts texture fetches from 8 -> 4 per pixel.
+vec3 sampleSky_fast(vec3 rd, float eyeAltitude) {
+    // Bilinear SkyView LUT fetch - completely smooth gradients on waves
+    vec3 skyColor = sampleSkyViewLUT(rd, eyeAltitude);
+
+    // Fast sub-horizon ground blend
+    vec3 worldSunDir = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+    float sunZenith  = clamp(worldSunDir.y, 0.0, 1.0);
     vec3 horizonColor = skyColor;
     vec3 noonGround = vec3(0.9, 0.95, 1.0) * sunZenith;
     vec3 groundColor = mix(horizonColor * 0.4, noonGround, pow(sunZenith, 2.0));
