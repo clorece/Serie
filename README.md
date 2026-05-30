@@ -1,16 +1,23 @@
-# SerieVX
-<img width="2560" height="1440" alt="2026-01-21_22 49 01" src="https://github.com/user-attachments/assets/10114b3b-e340-4137-81e8-f79c8503a1d3" />
+# Serie
+<img width="2560" height="1440" alt="Banner" src="banner.png" />
 
-SerieVX is a reimagination of Allium that focuses on gameplay while having Voxel Path Tracing features, such as worldspace global illumination and colored lights. Serie has taken a huge inspiration from Soft Voxels and VXFluff with the softly lit appearance.
+Serie is a gameplay-focused path tracing shaderpack designed for physical accuracy while allowing for artistic tweaks. It utilizes ReSTIR and voxelization for infinite-bounce indirect illumination, supplemented by screenspace raytracing for distant lighting to maintain performance and visual cohesion.
 
-### This shader is compatible with Distant Horizons, but it is not required.
+### Currently Implemented Features:
+- ReSTIR DI + GI
+- SVGF
+- Advanced Water & Transparent Rendering (Water Parallax, Vertex Displacement, Auto-Generated Refractions for Ice and other Transparents, Caustics)
+- Atmospheric Scattering (Work in Progress)
+- Auto Exposure
 
-### Huge Thanks
-- Emin for using Complementary as the base shader
-- Query for their wonderful LUT code
-
-### DISCLAIMER
-This shaderpack includes code that was generated or assisted by Artificial Intelligence. While all code has been tested for functionality and performance, users should be aware that parts of the logic (e.g., GLSL functions or noise algorithms) were created with the help of generative AI tools.
+### Features in Development:
+- Blocklight details
+- Atmospheric Scattering Rework
+- Volumetric Clouds
+- Volumetric Fog
+- Underwater Lightshafts and Fog Rendering
+- Integrated PBR + LabPBR
+- Distant Horizons
 
 ## Beta & Release Versions
 ### Beta
@@ -31,7 +38,7 @@ Releases are stable, polished versions that result from thorough testing and ite
 Release Versions are located to the right of the Github.
 
 ## Bug Reporting
-If you happen to find any bugs, please report them on the [Github Page](https://github.com/clorece/Allium) by:
+If you happen to find any bugs, please report them on the [Github Page](https://github.com/clorece/SerieVX) by:
 ### 1. Create a New Issue
 - Go to the Issues section and click on "New Issue".
 
@@ -42,12 +49,3 @@ If you happen to find any bugs, please report them on the [Github Page](https://
 ### 3. Attach Relevant Media and Logs
 - Include screenshots or, if applicable, videos to illustrate the issue.
 - Upload log files if applicable.
-
-## Screenshots
-<img width="2560" height="1440" alt="2026-01-21_22 55 26" src="https://github.com/user-attachments/assets/a96f58b7-9488-4215-96e5-09a1d009111d" />
-<img width="2560" height="1440" alt="2026-01-21_22 54 00" src="https://github.com/user-attachments/assets/4bd0aeae-c88a-4e86-8dbb-802cac67b9c6" />
-<img width="2560" height="1440" alt="2026-01-21_22 54 52" src="https://github.com/user-attachments/assets/a25c9e13-34fb-4cc7-8542-e5d5c4d4a11d" />
-<img width="2560" height="1440" alt="2026-01-21_22 49 44" src="https://github.com/user-attachments/assets/c9d9d2f8-29dd-42be-80f7-bd795324dd4c" />
-<img width="2560" height="1440" alt="2026-01-21_22 48 31" src="https://github.com/user-attachments/assets/d42a2e48-a0b6-4421-8be4-135589045ee5" />
-<img width="2560" height="1440" alt="2026-01-21_22 47 54" src="https://github.com/user-attachments/assets/57d43114-1413-4749-a89e-3d0ea42c7d13" />
-<img width="2560" height="1440" alt="2026-01-21_22 47 13" src="https://github.com/user-attachments/assets/5b11929b-9f7a-4e03-aa96-e8e8c66e2283" />
