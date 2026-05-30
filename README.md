@@ -38,7 +38,7 @@ Releases are stable, polished versions that result from thorough testing and ite
 Release Versions are located to the right of the Github.
 
 ## Bug Reporting
-If you happen to find any bugs, please report them on the [Github Page](https://github.com/clorece/SerieVX) by:
+If you happen to find any bugs, please report them on the [Github Page](https://github.com/clorece/Serie) by:
 ### 1. Create a New Issue
 - Go to the Issues section and click on "New Issue".
 
