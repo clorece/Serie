@@ -46,8 +46,8 @@ uniform sampler2D colortex8;
 uniform sampler2D colortex9;
 uniform sampler2D colortex10;
 uniform sampler2D colortex11;
-// colortex12 removed — RTAO replaces GTAO; raw AO in c14.w, accumulated AO in c9.a.
-// colortex13 removed — GI uses flat skyColor.
+uniform sampler2D colortex12; // atmosphere LUT pack (T + MS + Sky-View), 256×256 RGBA16F
+uniform sampler2D colortex13; // cloud shadow map, 512×512 RGBA16F (.r = cloud transmittance from sun)
 uniform sampler2D colortex14;
 uniform sampler2D colortex15;
 uniform sampler2D depthtex0;

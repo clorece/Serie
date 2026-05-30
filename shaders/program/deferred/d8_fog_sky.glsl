@@ -70,10 +70,17 @@ void main() {
     float eyeAltitude = cameraPosition.y - 64.0;
 
     float dist = length(fragPosition);
-    //color = getFog(worldDir, dist, worldSunDir, worldMoonDir, eyeAltitude, color);
 
     if (depth0 == 1.0) {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
+    } else {
+        // Aerial perspective: 8-step march from camera to surface samples the
+        // T-LUT for sun visibility per step, then `color = scene * T + scatter`.
+        // Replaces the disabled legacy `getFog()` exponential. Distant terrain
+        // dissolves into the same sky color used by depth==1 pixels.
+        AerialPerspective ap = computeAerialPerspective(
+            worldDir, worldSunDir, worldMoonDir, eyeAltitude, dist);
+        color = color * ap.transmittance + ap.scatter;
     }
 
     /* RENDERTARGETS: 0 */

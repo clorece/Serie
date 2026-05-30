@@ -46,6 +46,7 @@ vec3 clipSpace;
 
 #include "/lib/util/positions.glsl"
 #include "/lib/util/sampling.glsl"
+#include "/lib/fragment/atmosphereLUT.glsl"
 #include "/lib/pt/voxelData.glsl"
 #include "/lib/pt/ao.glsl"
 #include "/lib/pt/gi.glsl"
@@ -79,7 +80,13 @@ void main() {
     #endif
 
     #if defined(VOXEL_GI)
-        vec3 giSky = ambientColor * GI_SKY_BRIGHTNESS;
+        // GI sky probe — sampled from the Hillaire 2020 sky-view LUT looking
+        // upward. Replaces the legacy flat `ambientColor * ambientScale` (the
+        // LUT carries time-of-day modulation naturally, dim at night via the
+        // moon-only scatter integral). Direct skylight in d7_composite still
+        // uses ambientColor for now (v2 will unify it).
+        float eyeAlt = cameraPosition.y - 64.0;
+        vec3 giSky = getSkyAmbient(eyeAlt) * GI_SKY_BRIGHTNESS;
         vec3 rawGI = giSky; // sky fallback
         float lr   = luma(rawGI);
         float rawAO = 1.0;

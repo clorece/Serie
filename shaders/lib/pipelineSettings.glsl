@@ -19,9 +19,15 @@ const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated 
 const int colortex9Format = RGBA16F; // SVGF moments (.r = linear depth, .g = luma M1, .b = luma M2)
 const int colortex10Format = RGBA32F; // ReSTIR reservoir radiance.rgb + M
 const int colortex11Format = RGBA32F; // ReSTIR reservoir samplePos.xyz + W
-// colortex12 deleted — RTAO replaces GTAO; raw AO from d0_restir lives in c14.w
-// and the temporally-accumulated AO lives in c9.a.
-// colortex13 deleted — GI rays use flat skyColor instead of the directional LUT.
+// Atmosphere rewrite (see shaderpacks/serievx_atmosphere_plan.md):
+// colortex12 = packed atmosphere LUT (Hillaire 2020): T-LUT (0..255,0..63),
+//   MS-LUT (0..31,64..95), Sky-View LUT (0..255,96..255). 256×256 RGBA16F.
+//   Rebuilt every frame by world0/prepare.fsh.
+// colortex13 = cloud shadow map (sun visibility through clouds), distortion-warped
+//   projection. 512×512 RGBA16F (only .r used; using RGBA16F until R16F is
+//   wired into this pack's format-enum). Rebuilt every frame by world0/prepare1.fsh.
+const int colortex12Format = RGBA16F;
+const int colortex13Format = RGBA16F;
 const int colortex14Format = RGBA16F; // .xy = ReSTIR reservoir sample-hit normal, .w = raw RTAO scalar
 const int colortex15Format = RGBA16F; // temporal normal history
 
@@ -33,6 +39,14 @@ const bool colortex8Clear = false;
 const bool colortex9Clear = false;
 const bool colortex10Clear = false;
 const bool colortex11Clear = false;
+const bool colortex12Clear = false;  // prepare.fsh fully overwrites it every frame
+const bool colortex13Clear = false;  // prepare1.fsh fully overwrites it every frame
+
+// LINEAR filter on the LUT buffers — Iris's default for resolution-overridden
+// buffers can be NEAREST. Without this, the sky-view LUT shows visible row
+// boundaries as horizontal sky bands.
+const bool colortex12Nearest = false;
+const bool colortex13Nearest = false;
 const bool colortex14Clear = false;
 const bool colortex15Clear = false;
 
