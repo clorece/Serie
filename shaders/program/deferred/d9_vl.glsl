@@ -34,6 +34,7 @@ void main() {
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 #include "/lib/util/dither.glsl"
+#include "/lib/util/time.glsl"
 
 in vec2 texCoord;
 in vec3 sunVector;
@@ -74,12 +75,10 @@ void main() {
     vec3  worldDir     = mat3(gbufferModelViewInverse) * viewDir;
     vec3  worldSunDir  = mat3(gbufferModelViewInverse) * sunVector;
 
-    // Time-of-day volumetric light multipliers (partition of unity)
-    float wNoon = smoothstep(0.05, 0.25, worldSunDir.y);
-    float wNight = smoothstep(0.05, -0.1, worldSunDir.y);
-    float wSunriseSunset = 1.0 - wNoon - wNight;
+    TimeState t = getTimeState();
 
-    float vlMultiplier = wNoon * VL_NOON_STRENGTH + wSunriseSunset * VL_SUN_RISE_SET_STRENGTH + wNight * VL_NIGHT_STRENGTH;
+    float vlMultiplier = t.timeNoon * VL_NOON_STRENGTH + (t.timeSunrise + t.timeSunset) * VL_SUN_RISE_SET_STRENGTH + t.timeMidnight * VL_NIGHT_STRENGTH;
+    vlMultiplier *= t.shadowFade;
 
     if (vlMultiplier < 0.001) {
         gl_FragData[0] = vec4(sceneColor, 1.0);
@@ -110,13 +109,9 @@ void main() {
     vec3 trans   = vec3(1.0);
     vec3 scatter = vec3(0.0);
 
-    // Adapt light color, fade factor, and active light source based on day/night
-    bool isDay = (worldTime < 12700 || worldTime > 23250);
-    float lightFade = isDay ? smoothstep(-0.2, 0.05, worldSunDir.y) : smoothstep(-0.2, 0.05, -worldSunDir.y);
-    vec3 lightColorBase = isDay ? SUN_COLOR_BASE : MOON_COLOR_BASE;
-    // Blend in some of the dynamic lightColor to give the godrays beautiful time-of-day hues (e.g. sunset gold/amber)
-    vec3 dynamicLightColor = lightColor * (isDay ? SUN_ILLUMINANCE : 1.0);
-    lightColorBase = mix(lightColorBase, dynamicLightColor, 0.80);
+    // Adapt light color based on TimeState
+    float lightFade = t.shadowFade;
+    vec3 lightColorBase = t.lightColor * mix(1.0, SUN_ILLUMINANCE, t.sunActivity);
 
     for (int i = 0; i < N; ++i) {
         float t = (float(i) + dither) * stepLen;

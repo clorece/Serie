@@ -29,6 +29,7 @@ void main() {
 #include "/lib/options.glsl"
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
+#include "/lib/util/time.glsl"
 
 const int gcolorFormat	= RGBA16F;
 
@@ -86,17 +87,9 @@ void main() {
         float cloudMidAlt = (CLOUDS_LAYER_BOTTOM + CLOUDS_LAYER_TOP) * 0.5;
         vec3  ambient     = getSkyAmbient(cloudMidAlt);
 
-        // Activity factors mirror colors.glsl (which lives in vertex scope —
-        // its `sunActivity` / `moonActivity` aren't accessible here, so we
-        // compute the same smoothstep curves inline. worldSunDir.y is
-        // equivalent to sunUp = dot(sunVector, upVector).
-        bool  moonlit       = worldSunDir.y < -0.04;
-        float cloudSunAct   = smoothstep(-0.1, 0.16, worldSunDir.y);
-        float cloudMoonAct  = smoothstep(-0.1, 0.10, worldMoonDir.y);
-        vec3  lightDir      = moonlit ? worldMoonDir : worldSunDir;
-        vec3  lightCol      = moonlit
-                            ? MOON_COLOR_BASE * cloudMoonAct
-                            : SUN_COLOR_BASE  * cloudSunAct;
+        TimeState t = getTimeState();
+        vec3  lightDir = t.activeLightDir;
+        vec3  lightCol = (t.sunColor * SUN_ILLUMINANCE + t.moonColor) * 1.5;
 
         vec4 cloud = raymarchClouds(cameraPosition, worldDir, lightDir, lightCol, ambient);
         color = color * cloud.a + cloud.rgb;

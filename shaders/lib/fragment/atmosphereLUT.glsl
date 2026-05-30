@@ -540,8 +540,6 @@ vec3 getSkyAmbient(float eyeAltitude) {
 
     // Single-tap: 1 fetch instead of 4 across all shaded pixels in d0_restir.
     vec3 ambient = textureLod(colortex12, _skyViewLUT_UV(sampleDir), 0.0).rgb;
-    // Warm up the physical ambient sky light subtly by blending a touch of warm sunlight/ambient tint
-    ambient *= vec3(1.08, 1.04, 0.96);
     return ambient;
 }
 

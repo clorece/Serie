@@ -36,11 +36,9 @@ uniform sampler3D cloudNoiseDetail;
 
 // World→noise scale. ~5.5 km base tile (small enough that the cloud-layer
 // thickness covers significant noise variation, large enough that visible
-// repetitions across the horizon aren't obvious). Detail at ~700 m tile —
-// fine enough to break up cumulus silhouettes, coarse enough that per-pixel
-// UV variation stays sub-voxel (otherwise high-freq aliasing flickers edges).
-const float CLOUDS_BASE_SCALE   = 0.00018;
-const float CLOUDS_DETAIL_SCALE = 0.0014;
+// repetitions across the horizon aren't obvious). Detail at ~700 m tile.
+const float CLOUDS_BASE_SCALE   = 0.00018 / CLOUDS_SIZE_MULTIPLIER;
+const float CLOUDS_DETAIL_SCALE = 0.0014  / CLOUDS_SIZE_MULTIPLIER;
 
 // Cloud-layer radii in planet-centered coordinates (m from planet center).
 const float CLOUDS_R_BOTTOM = PLANET_RADIUS + CLOUDS_LAYER_BOTTOM;
@@ -66,8 +64,8 @@ float lift(float x, float k) {
 // gives the cauliflower bulge above the base instead of clouds sitting
 // flat on the bottom of the layer.
 float cloudHeightProfile(float h01) {
-    float ramp    = smoothstep(0.05, 0.25, h01);   // flat base, sharp condensation line
-    float fallOff = smoothstep(1.00, 0.50, h01);   // peak shifted up to h01≈0.50
+    float ramp    = smoothstep(0.0, 0.05, h01);    // extremely sharp ramp = very flat base
+    float fallOff = smoothstep(1.00, 0.55, h01);   // slower taper over the upper half = rounded dome tops
     return ramp * fallOff;
 }
 
@@ -117,28 +115,31 @@ float cloudDensity(vec3 worldPos, bool cheapMode) {
 
     float h01 = clamp((r - CLOUDS_R_BOTTOM) / CLOUDS_THICKNESS, 0.0, 1.0);
 
-    // (2) Domain-warped 3D base sample. A low-freq tap on the same atlas
-    // provides a displacement vector; sampling the actual shape at the
-    // warped position breaks the visible noise-tile grid without needing
-    // a second atlas. Photon does this implicitly by sampling two distinct
-    // worley textures at different scales — we get equivalent decorrelation
-    // from one texture by warping the input position.
-    vec3 basePos = worldPos + cloudWindOffset(1.0);
+    // (1) Wind advection. We evaluate wind once for the base position so that
+    // the entire cloud structure moves cohesively. We also offset the entire
+    // grid by half a tile so that the mathematical 0,0 tile seams don't 
+    // spawn directly over the player's head at world origin!
+    vec3 basePos = worldPos + cloudWindOffset(1.0) + vec3(0.5 / CLOUDS_BASE_SCALE, 0.0, 0.5 / CLOUDS_BASE_SCALE);
 
-    // Low-freq warp sample at 0.25× the shape scale. .r and .b drive
-    // independent XZ offsets; both centered around 0 by (×2 - 1).
-    vec4  warpSample = texture(cloudNoiseBase, wrapUV(basePos * (CLOUDS_BASE_SCALE * 0.25)));
-    float warpMag    = 1.0 / CLOUDS_BASE_SCALE * 0.45;  // ~0.45 tile of warp
-    vec3  warped     = basePos + vec3(warpSample.r * 2.0 - 1.0,
-                                      0.0,
-                                      warpSample.b * 2.0 - 1.0) * warpMag;
+    // (2) Base shape sample. We sample the pre-baked 3D texture for the 
+    // cauliflower bubbles (.r) and mid-frequency erosion (.g). 
+    // We do NOT use any domain warping here so the bubbles stay perfectly crisp.
+    vec4 base = textureLod(cloudNoiseBase, wrapUV(basePos * CLOUDS_BASE_SCALE), 0.0);
 
-    vec4 base = texture(cloudNoiseBase, wrapUV(warped * CLOUDS_BASE_SCALE));
+    // (3) Row-Free Coverage. The 3D texture's Perlin (.a) channel inherently 
+    // forms grid rows. The math warp was too swirly. 
+    // Solution: We completely ignore the Perlin channel. Instead, we fetch the 
+    // Worley channel (.g) at a 0.35x macro scale to act as our coverage map.
+    // Worley noise is naturally cellular, so it inherently forms spherical, organic 
+    // cloud banks with absolutely ZERO grid rows or swirls!
+    float macroCov = textureLod(cloudNoiseBase, wrapUV(basePos * (CLOUDS_BASE_SCALE * 0.35)), 0.0).g;
+    
+    // Worley .g is an erosion channel, so 1.0 - g gives solid bubble shapes.
+    // We smoothstep it to create solid cohesive banks with soft edges.
+    float covNoise = smoothstep(0.2, 0.8, 1.0 - macroCov);
 
-    // Coverage from 3D perlin (.a). Varying in Y means each cloud has its own
-    // vertical extent; sampling only XZ (the previous attempt) locked every
-    // XZ to identical cloud heights → unnatural straight horizontal band.
-    float weather  = mix(0.5, base.a, 0.85);
+    // Varying in Y is maintained because we are sampling a 3D texture for coverage.
+    float weather  = mix(0.5, covNoise, 0.85);
     float coverage = clamp(CLOUDS_COVERAGE * 2.0 * weather, 0.0, 1.0);
     if (coverage <= 1e-3) return 0.0;
 
@@ -151,7 +152,7 @@ float cloudDensity(vec3 worldPos, bool cheapMode) {
     // (4) Mid-freq base erosion via linearStep — multiplicative remap, cores
     // remain at 1.0, edges get pulled toward 0. Detail fade ramps up with
     // altitude so cauliflower carving concentrates at the tops.
-    float baseEroFade = mix(0.20, 0.55, smoothstep(0.0, 0.7, h01));
+    float baseEroFade = mix(0.30, 0.85, smoothstep(0.0, 0.7, h01));
     float baseEro     = base.g * base.g * baseEroFade;
     density = remap01(density, baseEro, 1.0);
     if (density <= 0.0) return 0.0;
@@ -165,24 +166,25 @@ float cloudDensity(vec3 worldPos, bool cheapMode) {
         // magnitude and project along the wind-perpendicular XZ axis — that
         // gives true cross-wind swirl rather than diagonal shear. Boiling
         // drives a small vertical warp so cores animate in place.
-        vec4 detailC = texture(cloudNoiseDetail, wrapUV(detailPos * CLOUDS_DETAIL_SCALE));
+        vec4 detailC = textureLod(cloudNoiseDetail, wrapUV(detailPos * CLOUDS_DETAIL_SCALE), 0.0);
         vec2 windPerp = normalize(vec2(-CLOUDS_WIND_DIR_Z, CLOUDS_WIND_DIR_X)
                                   + vec2(1e-4));  // 1e-4 keeps it valid if both dirs are 0
         float curlS = detailC.r * 2.0 - 1.0;
         float boilS = detailC.a * 2.0 - 1.0;
         // Distortion grows with altitude — bases stay calm, tops swirl.
-        float curlMag = 40.0 * (0.1 + 0.9 * h01 * h01);
+        // Reduced curl magnitude from 40.0 to 12.0 so tops stay bubbly rather than shredded.
+        float curlMag = 12.0 * (0.1 + 0.9 * h01 * h01);
         vec3 distortedPos = detailPos
                           + vec3(windPerp.x, 0.0, windPerp.y) * (curlS * curlMag)
                           + vec3(0.0, boilS * 12.0, 0.0);
 
         // Re-sample at the distorted UV for the actual erosion channels.
-        vec4 detail = texture(cloudNoiseDetail, wrapUV(distortedPos * CLOUDS_DETAIL_SCALE));
+        vec4 detail = textureLod(cloudNoiseDetail, wrapUV(distortedPos * CLOUDS_DETAIL_SCALE), 0.0);
 
         // Wisp erosion: blend mid-freq (.g) at the base to sharp (.b) at the
         // top so the silhouette gets sharper as you climb the tower.
         float wisp        = mix(detail.g, detail.b, smoothstep(0.2, 0.9, h01));
-        float wispErode   = wisp * wisp * mix(0.30, 0.55, h01);
+        float wispErode   = wisp * wisp * mix(0.45, 0.90, h01);
         density = remap01(density, wispErode, 1.0);
     }
 
@@ -359,14 +361,13 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     return vec4(1.0, 0.0, 0.0, 0.0);  // pure red where the march would run
 #endif
 
-    // Adaptive distance cap. A pure CLOUDS_MAX_DISTANCE clamp truncates
-    // horizon rays so they only see the bottom slab of the cloud layer
-    // (low dir.y → short vertical traversal → all clouds look flat at
-    // distance). Scale the cap so low-angle rays cover at least ~50% of
-    // the layer vertically before stopping.
+    // Adaptive distance cap with smooth blending. We want clouds to render far into
+    // the horizon (up to ~80km), so we give low-angle rays a larger reach.
+    // Using length() instead of max() creates a perfectly smooth hyperbolic boundary
+    // instead of a sharp crease, eliminating geometric cut-off lines in the sky.
     float verticalReach = CLOUDS_THICKNESS * 0.5;
     float distForReach  = verticalReach / max(dir.y, 0.02);
-    float effectiveMax  = max(CLOUDS_MAX_DISTANCE, distForReach);
+    float effectiveMax  = length(vec2(CLOUDS_MAX_DISTANCE, distForReach));
     tEnd = min(tEnd, tStart + effectiveMax);
 
     // More steps near horizon (long path through layer) than zenith (short path).
@@ -407,6 +408,13 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         vec3  p = origin + dir * t;
 
         float density = cloudDensity(p, false);
+        
+        // Volumetric distance erosion: smoothly thin out the cloud volume over the
+        // last 25% of the render distance. This guarantees the cloud physically
+        // tapers to 0 density before hitting the cap.
+        float distFade = 1.0 - smoothstep(effectiveMax * 0.75, effectiveMax, t - tStart);
+        density *= distFade;
+
         if (density <= 0.0) continue;
 
 #if CLOUDS_DEBUG == 2
@@ -473,10 +481,11 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         // we get the same effect more cheaply by scaling lightOD by the
         // light-source brightness so a dim moon can't false-occlude the sky.
         // Using sunHere (which includes planet shadow) ensures that when the
-        // planet blocks the light, effectiveOD drops to 0 and the clouds
-        // properly flatten into ambient-lit silhouettes.
+        // planet blocks the light, we scale down the directional occlusion.
+        // We retain a 15% baseline to act as ambient occlusion so the clouds
+        // don't lose all internal depth and flatten completely during twilight.
         float lightLum      = clamp(dot(sunHere, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
-        float effectiveOD   = lightOD * lightLum;
+        float effectiveOD   = lightOD * max(lightLum, 0.15);
         float ambientFactor = 0.6 * mix(1.0, 0.25, smoothstep(0.0, 4.0, effectiveOD));
         vec3  inscatterColor = directLight + ambient * ambientFactor;
 
@@ -501,39 +510,29 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     trans = (trans - CLOUDS_MIN_TRANSMITTANCE) / max(1.0 - CLOUDS_MIN_TRANSMITTANCE, 1e-6);
     trans = clamp(trans, 0.0, 1.0);
 
-    // Aerial-perspective wrap. Atmospheric transmittance between camera and
-    // cloud-exit point dims the scattering AND expands the silhouette so
-    // distant cumulus dissolves into the sky behind them. Derivation:
-    //   Photon: mix((1 - cloud_T) * clear_sky, scatter, air_T)
-    // The d8 composite is `color = sky * alpha + scatter`. Equating:
-    //   scatter' = scatter * air_T_rgb
-    //   alpha'   = 1 - air_T_lum * (1 - cloud_T)
-    // which propagates atmosphere haze through cloud silhouettes without
-    // raymarchClouds needing `clear_sky` explicitly.
+    // Aerial-perspective wrap. Atmospheric transmittance dims the scattering
+    // and expands the silhouette so distant cumulus dissolves into the sky.
     vec3  originPC2 = vec3(origin.x, origin.y + PLANET_RADIUS, origin.z);
-    vec3  endPC2    = originPC2 + dir * tEnd;
     float rOrig     = length(originPC2);
-    float rEnd      = length(endPC2);
-    float muOrig    = dot(originPC2 / max(rOrig, 1.0), dir);
-    float muEnd     = dot(endPC2    / max(rEnd,  1.0), dir);
-    vec3  T_orig    = sampleTransmittanceLUT_fast(muOrig, rOrig);
-    vec3  T_end     = sampleTransmittanceLUT_fast(muEnd,  rEnd);
-    vec3  air_T     = clamp(T_orig / max(T_end, vec3(1e-6)), 0.0, 1.0);
+    
+    // Evaluate atmospheric transmittance to the actual visible cloud depth.
+    // We use a midpoint analytic evaluation rather than T-LUT division. T-LUT division 
+    // suffers from massive precision collapse on long horizontal paths, causing the 
+    // transmittance to drop to 0 way too early (which makes clouds 'fade out too close').
+    // The lower atmosphere density gradient is extremely smooth, so a single midpoint 
+    // Riemann sum gives mathematically perfect, artifact-free transmittance up to 100km.
+    float distToCloud = distWeight > 0.0 ? (distSum / distWeight) : tEnd;
+    vec3  midPosPC    = originPC2 + dir * (distToCloud * 0.5);
+    float midR        = length(midPosPC * 0.9995);
+    
+    vec3  midDens     = GetAtmosphereDensity(midR);
+    vec3  extinction  = COEFF_ATTENUATION * midDens;
+    vec3  air_T       = exp(-extinction * distToCloud);
 
-    // Scalar luma — using `air_T` per-channel produced yellow rings around
-    // cloud silhouettes at low angles (Mie scattering dims B more than R/G,
-    // so mid-density edge pixels picked up a per-channel chromatic fringe).
-    // Per-step T-LUT inside the loop already handles cloud color/warmth;
-    // this AP only needs to control opacity/dimming, not tint.
-    float airTLum = dot(air_T, vec3(0.2126, 0.7152, 0.0722));
-
-    // Distance-modulated AP strength. Visible cumulus distances span ~5 km
-    // (zenith) to ~75 km (low horizon, with adaptive max-distance). Fade
-    // starts at 25 km so near and mid clouds stay clearly visible — only
-    // far-horizon cumulus (≳ 45 km) gets strong AP to blend into sky.
-    float apparentDist = distWeight > 0.0 ? (distSum / distWeight) : 0.0;
-    float apStrength   = mix(0.3, 0.95, smoothstep(25000.0, 55000.0, apparentDist));
-    float effAirT      = mix(1.0, airTLum, apStrength);
+    // Pure physical AP. At 70km+ distances, physical air transmittance is naturally
+    // low enough to perfectly dissolve the clouds into the sky background without
+    // any artificial bounds, starting points, or hacks.
+    float effAirT   = dot(air_T, vec3(0.2126, 0.7152, 0.0722));
 
     scatter *= effAirT;
     trans    = 1.0 - effAirT * (1.0 - trans);
