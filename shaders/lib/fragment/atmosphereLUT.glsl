@@ -380,6 +380,11 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     vec3 pos = vec3(0.0, r, 0.0);
 
     vec2 aid = GetRaySphereIntersection(pos, worldDir, ATMOSPHERE_RADIUS);
+    // Intentionally shrink the planet (0.998·R_p) so near-horizon rays graze a
+    // little atmosphere BELOW the geometric horizon — that soft sub-horizon glow
+    // is what keeps the limb from cutting to black. (The faint dawn/dusk seam
+    // this shell used to cause came from sub-surface density blowing up; that is
+    // handled by clamping the marched radius to >= PLANET_RADIUS in the loop.)
     vec2 pid = GetRaySphereIntersection(pos, worldDir, PLANET_RADIUS * 0.998);
     if (aid.y < 0.0) return vec3(0.0);
 
@@ -424,7 +429,14 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         float t = tStart + (float(i) + 0.5) * ds;
 
         vec3  p_t      = pos + worldDir * t;
-        float altitude = length(p_t);
+        // Clamp to the surface. The planet intersection above uses
+        // PLANET_RADIUS*0.998, so horizon-grazing rays in that 0.2% shell are
+        // treated as misses and keep marching, but their samples dip just below
+        // the real surface. GetAtmosphereDensity() grows as exp((R_p-r)/H_mie)
+        // with H_mie=1.2km, so a sample 0.2% below R_p is ~40000x surface
+        // density — a spurious bright band exactly at the horizon. Never sample
+        // sub-surface. No-op for every above-surface ray.
+        float altitude = max(length(p_t), PLANET_RADIUS);
         vec3  density  = GetAtmosphereDensity(altitude);
 
         vec3 sigma_s_r = COEFF_RAYLEIGH * density.x;
@@ -457,6 +469,22 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         const float phaseIsotropic = 1.0 / (4.0 * pi);
         vec3 phaseScatterSun  = sigma_s_r * phaseSun.x  + sigma_s_m * phaseSun.y;
         vec3 phaseScatterMoon = sigma_s_r * phaseMoon.x + sigma_s_m * phaseMoon.y;
+
+        // Earth's shadow / Belt of Venus: smooth per-sample planet shadow on the
+        // DIRECT sun in-scatter only (multi-scatter stays, so the shadowed band
+        // is bluish-grey, not black — pink belt above, blue band below). A sample
+        // at radius r is lit when the sun is above ITS astronomical horizon,
+        // mu_s_local > muSunHorizon = -sqrt(1 - (R_p/r)^2). Higher samples have a
+        // lower horizon, so they stay lit further past sunset → the lit band sits
+        // above the shadowed one. Smooth + wide (BELT_SHADOW_SOFTNESS) and a
+        // function of mu_s_local (continuous, no hard cutoff) so it can't alias
+        // into the march "shells" the old hard terminator produced.
+        float eShadow = 1.0;
+#ifdef BELT_OF_VENUS
+        float muSunHorizon = -sqrt(max(0.0, 1.0 - (PLANET_RADIUS * PLANET_RADIUS) / (altitude * altitude)));
+        eShadow = smoothstep(muSunHorizon - BELT_SHADOW_SOFTNESS, muSunHorizon + BELT_SHADOW_SOFTNESS, mu_s_local);
+#endif
+
         // Gate the WHOLE sun/moon contribution (direct + multi-scatter) by the
         // global day/night fade. The T-LUT we now use for sunT has no planet
         // occlusion, so the direct term would otherwise keep lighting the sky
@@ -464,16 +492,16 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         // on the global sun elevation, so it is identical for every march step
         // and view direction — it cannot reintroduce the per-step shadow shells
         // the inline terminator caused (that is why this gate is safe here).
-        vec3 inscatter = sunFade  * (sunT  * phaseScatterSun  + psi_ms_sun  * sigma_s * phaseIsotropic) * SUN_COLOR_BASE
-                       + moonFade * (moonT * phaseScatterMoon + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE;
+        vec3 inscatter = sunFade  * (sunT  * phaseScatterSun * eShadow + psi_ms_sun  * sigma_s * phaseIsotropic) * SUN_COLOR_BASE
+                       + moonFade * (moonT * phaseScatterMoon          + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE;
 
         // Energy-conserving step
         vec3 stepW = trans * (1.0 - stepT) / max(sigma_e, vec3(1e-7));
         scatter += inscatter * stepW;
 
 #if SKY_DEBUG >= 10
-        dbgSunRay += sunFade  * (sunT * sigma_s_r * phaseSun.x)              * SUN_COLOR_BASE  * stepW;
-        dbgSunMie += sunFade  * (sunT * sigma_s_m * phaseSun.y)              * SUN_COLOR_BASE  * stepW;
+        dbgSunRay += sunFade  * (sunT * sigma_s_r * phaseSun.x * eShadow)    * SUN_COLOR_BASE  * stepW;
+        dbgSunMie += sunFade  * (sunT * sigma_s_m * phaseSun.y * eShadow)    * SUN_COLOR_BASE  * stepW;
         dbgMS     += sunFade  * (psi_ms_sun * sigma_s * phaseIsotropic)      * SUN_COLOR_BASE  * stepW;
         dbgSunT   += sunT * stepW;   // raw transmittance (un-faded), diagnostic only
         dbgMoon   += moonFade * (moonT * phaseScatterMoon + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE * stepW;

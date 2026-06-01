@@ -35,6 +35,14 @@
 //   14 build term: moon total
 #define SKY_DEBUG 0
 #define SKY_DEBUG_GAIN 1.0   // [0.05 0.1 0.25 0.5 1.0 2.0 4.0 8.0 16.0] brightness multiplier for debug terms (10-14) so dim ones are visible
+
+// --- Belt of Venus (Earth's-shadow term in the SkyView build) ---
+// Per-march-sample smooth planet-shadow on the DIRECT sun in-scatter: the low
+// anti-solar atmosphere falls into shadow (dark band) while the atmosphere above
+// stays lit (pink band). Kept smooth/wide so it can't alias into march "shells".
+#define BELT_OF_VENUS
+#define BELT_SHADOW_SOFTNESS 0.06 // [0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.14 0.20] angular half-width of Earth's shadow penumbra (sun cosine units). Smaller = crisper belt (more banding risk); larger = softer/washed out.
+
 #define SUN_ILLUMINANCE 10.0  // [1.0 2.5 5.0 7.5 10.0 12.5 15.0 20.0] Sun light intensity multiplier for atmospheric scattering
 #define MOON_ILLUMINANCE 0.02 // [0.005 0.01 0.02 0.04 0.06 0.08 0.10] Moon light intensity multiplier for atmospheric scattering
 #define MIE_G 0.80            // [0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95] Mie phase function asymmetry factor (controls sun glow size/sharpness)
