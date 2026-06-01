@@ -337,10 +337,6 @@ float _cloudLightOD(vec3 pos, vec3 sunDir) {
 // Returns: (scatter.rgb, transmittance.alpha). Compose into the sky pixel as
 //   `finalSky = skyColor * cloud.a + cloud.rgb`.
 vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 ambient) {
-    // Looking down? Skip — clouds are above us (this also short-circuits the
-    // expensive intersection math for half the sky pixels).
-    if (dir.y < 0.02) return vec4(0.0, 0.0, 0.0, 1.0);
-
 #if CLOUDS_DEBUG == 3
     // Sanity-check: sample the base noise at the cloud-layer midpoint above the
     // camera. If the texture isn't loaded, this returns 0 everywhere (black sky).
@@ -352,15 +348,45 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     return vec4(vec3(n.r), 0.0);  // alpha=0 → fully opaque, replaces sky
 #endif
 
-    // Layer intersection in planet-centered coordinates.
-    vec3 originPC = vec3(origin.x, origin.y + PLANET_RADIUS, origin.z);
-    vec2 tBottom = GetRaySphereIntersection(originPC, dir, CLOUDS_R_BOTTOM);
-    vec2 tTop    = GetRaySphereIntersection(originPC, dir, CLOUDS_R_TOP);
+    // Layer intersection in planet-centered coordinates. Handles the camera
+    // ANYWHERE relative to the shell — below it (normal MC altitude), inside it
+    // (flying through the cumulus), or above it (looking down on the deck). The
+    // old code assumed camera-below: it took only the upward sphere exits and
+    // culled every downward ray, so the deck got sliced off at the horizon the
+    // moment the player climbed into it and vanished entirely once above it.
+    vec3  originPC = vec3(origin.x, origin.y + PLANET_RADIUS, origin.z);
+    float rOrig    = length(originPC);
 
-    // Camera below cloud bottom: tStart = bottom-sphere upward-exit (.y),
-    // tEnd = top-sphere upward-exit (.y). Negative results = ray misses.
-    float tStart = max(tBottom.y, 0.0);
-    float tEnd   = max(tTop.y,    0.0);
+    vec2 sBottom = GetRaySphereIntersection(originPC, dir, CLOUDS_R_BOTTOM);
+    vec2 sTop    = GetRaySphereIntersection(originPC, dir, CLOUDS_R_TOP);
+
+    float tStart, tEnd;
+    if (rOrig > CLOUDS_R_TOP) {
+        // Above the deck: enter through the top sphere (must be looking down
+        // into it). No forward top hit → the layer is behind us.
+        if (sTop.y <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+        tStart = max(sTop.x, 0.0);
+        // Leave the shell at the bottom-sphere entry if the ray descends
+        // through it, otherwise at the top-sphere far exit.
+        tEnd   = (sBottom.x > 0.0) ? sBottom.x : sTop.y;
+    } else if (rOrig < CLOUDS_R_BOTTOM) {
+        // Below the deck (the normal case): enter at the bottom-sphere far
+        // exit, leave at the top-sphere far exit.
+        if (sTop.y <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+        tStart = max(sBottom.y, 0.0);
+        tEnd   = sTop.y;
+    } else {
+        // Inside the deck: start at the camera and leave at whichever shell
+        // boundary we reach first (bottom if descending, else top).
+        tStart = 0.0;
+        tEnd   = (sBottom.x > 0.0) ? min(sBottom.x, sTop.y) : sTop.y;
+    }
+
+    // Ground clip: solid planet between us and the shell exit hides the clouds
+    // beyond it. Only bites on downward rays, which are no longer culled.
+    vec2 sPlanet = GetRaySphereIntersection(originPC, dir, PLANET_RADIUS);
+    if (sPlanet.x > 0.0) tEnd = min(tEnd, sPlanet.x);
+
     if (tEnd <= tStart) return vec4(0.0, 0.0, 0.0, 1.0);
 
 #if CLOUDS_DEBUG == 1
@@ -539,9 +565,8 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
 
     // Aerial-perspective wrap. Atmospheric transmittance dims the scattering
     // and expands the silhouette so distant cumulus dissolves into the sky.
-    vec3  originPC2 = vec3(origin.x, origin.y + PLANET_RADIUS, origin.z);
-    float rOrig     = length(originPC2);
-    
+    // (originPC / rOrig already computed for the shell intersection above.)
+
     // Evaluate atmospheric transmittance to the actual visible cloud depth.
     // We use a midpoint analytic evaluation rather than T-LUT division. T-LUT division 
     // suffers from massive precision collapse on long horizontal paths, causing the 
@@ -549,7 +574,7 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     // The lower atmosphere density gradient is extremely smooth, so a single midpoint 
     // Riemann sum gives mathematically perfect, artifact-free transmittance up to 100km.
     float distToCloud = distWeight > 0.0 ? (distSum / distWeight) : tEnd;
-    vec3  midPosPC    = originPC2 + dir * (distToCloud * 0.1);
+    vec3  midPosPC    = originPC + dir * (distToCloud * 0.1);
     float midR        = length(midPosPC * 0.9995);
     
     vec3  midDens     = GetAtmosphereDensity(midR);
