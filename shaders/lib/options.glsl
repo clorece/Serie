@@ -20,6 +20,21 @@
 #define VL_NIGHT_STRENGTH 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at night.
 
 #define SKY_LUT_STEPS 10       // [4 6 8 10 12 14 16 20 24 28 32 40 48] uniform raymarching steps for the SkyView LUT build (lib/fragment/atmosphereLUT.glsl)
+
+// --- Sky-View debug (set non-zero to diagnose the sunrise "layers" artifact) ---
+// Sky pixels only. Output bypasses dynamic-light/discs/ground-blend so you see
+// the raw thing. Exposure/tonemap still apply but won't hide hard edges.
+//   0  off (normal sky)
+//   1  raw SkyView LUT, bilinear  (is the artifact already in the LUT?)
+//   2  raw SkyView LUT, NEAREST   (compare to 1: layers only here = upscale/filter)
+//   3  LUT texel-grid overlay     (do the layers line up with LUT texels?)
+//   10 build term: sun Rayleigh only
+//   11 build term: sun Mie only
+//   12 build term: multi-scatter (sun) only
+//   13 build term: sun transmittance (sunT) accumulated
+//   14 build term: moon total
+#define SKY_DEBUG 0
+#define SKY_DEBUG_GAIN 1.0   // [0.05 0.1 0.25 0.5 1.0 2.0 4.0 8.0 16.0] brightness multiplier for debug terms (10-14) so dim ones are visible
 #define SUN_ILLUMINANCE 10.0  // [1.0 2.5 5.0 7.5 10.0 12.5 15.0 20.0] Sun light intensity multiplier for atmospheric scattering
 #define MOON_ILLUMINANCE 0.02 // [0.005 0.01 0.02 0.04 0.06 0.08 0.10] Moon light intensity multiplier for atmospheric scattering
 #define MIE_G 0.80            // [0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95] Mie phase function asymmetry factor (controls sun glow size/sharpness)
@@ -38,7 +53,7 @@
 #define OZONE_PEAK 8.0 // [0.0 2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0] Peak ozone concentration
 
 // --- Volumetric clouds (see shaderpacks/serievx_atmosphere_plan.md §5) ---
-#define CLOUDS // master toggle; cloud raymarch (Phase 6) and cloud-shadow build (Phase 5) both gated on this
+//#define CLOUDS // master toggle; cloud raymarch (Phase 6) and cloud-shadow build (Phase 5) both gated on this
 #define CLOUDS_COVERAGE 0.70          // [0.20 0.30 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.80 0.90] global cumulus coverage (0 = clear sky, 1 = overcast)
 #define CLOUDS_SIZE_MULTIPLIER 1.75    // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00 2.50 3.00 4.00 5.00] Size multiplier for both cloud base and detail shapes
 #define CLOUDS_DENSITY 0.03           // [0.01 0.02 0.03 0.05 0.08 0.12 0.18 0.25] cloud extinction coefficient (higher = denser/darker interiors)

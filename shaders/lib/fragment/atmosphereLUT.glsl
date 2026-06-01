@@ -205,6 +205,30 @@ vec3 sampleSkyViewLUT(vec3 worldDir, float eyeAltitude) {
     return _bilinearLUT(_skyViewLUT_UV(worldDir), ivec2(0, yMin), ivec2(int(SV_LUT_W), yMaxExcl));
 }
 
+#if SKY_DEBUG != 0
+// Hard NEAREST tap of the SkyView LUT (debug mode 2): rounds to the owning
+// texel via texelFetch, bypassing any filtering, to expose whether the layers
+// are an upscale/filter artifact vs already baked into the LUT.
+vec3 _nearestSkyViewLUT(vec3 worldDir) {
+    vec2 px = _skyViewLUT_UV(worldDir) * LUT_PACK_SIZE;
+    ivec2 t = ivec2(floor(px));
+    t.x = clamp(t.x, 0, int(SV_LUT_W) - 1);
+    t.y = clamp(t.y, int(SV_LUT_Y_OFFSET), int(SV_LUT_Y_OFFSET + SV_LUT_H) - 1);
+    return texelFetch(colortex12, t, 0).rgb;
+}
+
+// Tints the raw LUT sample wherever we are near a SkyView texel boundary, so
+// the LUT grid is visible over the sky (debug mode 3): if the "layers" snap to
+// these lines the problem is LUT resolution; if they sit between lines it isn't.
+vec3 _skyViewGridOverlay(vec3 worldDir, float eyeAltitude) {
+    vec3 base = sampleSkyViewLUT(worldDir, eyeAltitude);
+    vec2 px   = _skyViewLUT_UV(worldDir) * LUT_PACK_SIZE;
+    vec2 f    = abs(fract(px) - 0.5);          // ->0.5 at texel boundary, 0 at center
+    float line = smoothstep(0.44, 0.5, f.x) + smoothstep(0.44, 0.5, f.y);
+    return mix(base, vec3(1.0, 0.0, 1.0), clamp(line, 0.0, 1.0) * 0.6);
+}
+#endif
+
 // Transmittance from camera through atmosphere along worldDir for the given
 // path length (in meters). Approximated via T-LUT ratio:
 //   T_path = T(r_cam, mu) / T(r_end, mu_end)
@@ -380,6 +404,16 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     vec3 scatter = vec3(0.0);
     vec3 trans   = vec3(1.0);
 
+#if SKY_DEBUG >= 10
+    // Per-term accumulators so the debug modes can show exactly one physical
+    // contribution in isolation (see SKY_DEBUG in options.glsl).
+    vec3 dbgSunRay = vec3(0.0);   // sun Rayleigh
+    vec3 dbgSunMie = vec3(0.0);   // sun Mie
+    vec3 dbgMS     = vec3(0.0);   // multi-scatter (sun)
+    vec3 dbgSunT   = vec3(0.0);   // sun transmittance (sunT), step-weighted
+    vec3 dbgMoon   = vec3(0.0);   // moon total
+#endif
+
     vec2 phaseSun  = GetPhase(dot(worldDir, sunDir),  MIE_G);
     vec2 phaseMoon = GetPhase(dot(worldDir, moonDir), MIE_G);
 
@@ -401,8 +435,18 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         vec3  upAtP      = normalize(p_t);
         float mu_s_local = dot(upAtP, sunDir);
         float mu_m_local = dot(upAtP, moonDir);
-        vec3  sunT  = _inlineTransmittanceToTOA(altitude, mu_s_local);
-        vec3  moonT = _inlineTransmittanceToTOA(altitude, mu_m_local);
+        // Smooth sun/moon visibility from the bilinear T-LUT (prev frame, like
+        // the MS-LUT read below). The old inline _inlineTransmittanceToTOA had a
+        // HARD planet-shadow terminator (hitsGround / shadowFade==0 → return 0);
+        // sampled at each discrete march step that produced the concentric
+        // hard-edged shadow "shells" that slid out from the sun at dawn/dusk
+        // (debug isolated the artifact to sunT, present in the Rayleigh AND Mie
+        // sun terms but absent from multi-scatter). The T-LUT encodes the same
+        // extinction but continuously — grazing/sub-horizon rays fall to ~0 via
+        // the long optical path, with no discontinuity to alias.
+        // NOTE arg order: sampleTransmittanceLUT(mu, r), not (r, mu).
+        vec3  sunT  = sampleTransmittanceLUT(mu_s_local, altitude);
+        vec3  moonT = sampleTransmittanceLUT(mu_m_local, altitude);
 
         // Multiple scattering term (isotropic approximation)
         vec3  psi_ms_sun  = sampleMultiScatterLUT_fast(mu_s_local, altitude);
@@ -413,12 +457,28 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         const float phaseIsotropic = 1.0 / (4.0 * pi);
         vec3 phaseScatterSun  = sigma_s_r * phaseSun.x  + sigma_s_m * phaseSun.y;
         vec3 phaseScatterMoon = sigma_s_r * phaseMoon.x + sigma_s_m * phaseMoon.y;
-        vec3 inscatter = (sunT * phaseScatterSun + psi_ms_sun * sigma_s * (phaseIsotropic * sunFade)) * SUN_COLOR_BASE
-                       + (moonT * phaseScatterMoon + psi_ms_moon * sigma_s * (phaseIsotropic * moonFade)) * MOON_COLOR_BASE;
+        // Gate the WHOLE sun/moon contribution (direct + multi-scatter) by the
+        // global day/night fade. The T-LUT we now use for sunT has no planet
+        // occlusion, so the direct term would otherwise keep lighting the sky
+        // below the horizon (orange "sunset" glow at night). sunFade depends only
+        // on the global sun elevation, so it is identical for every march step
+        // and view direction — it cannot reintroduce the per-step shadow shells
+        // the inline terminator caused (that is why this gate is safe here).
+        vec3 inscatter = sunFade  * (sunT  * phaseScatterSun  + psi_ms_sun  * sigma_s * phaseIsotropic) * SUN_COLOR_BASE
+                       + moonFade * (moonT * phaseScatterMoon + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE;
 
         // Energy-conserving step
-        vec3 inscatterStep = trans * inscatter * (1.0 - stepT) / max(sigma_e, vec3(1e-7));
-        scatter += inscatterStep;
+        vec3 stepW = trans * (1.0 - stepT) / max(sigma_e, vec3(1e-7));
+        scatter += inscatter * stepW;
+
+#if SKY_DEBUG >= 10
+        dbgSunRay += sunFade  * (sunT * sigma_s_r * phaseSun.x)              * SUN_COLOR_BASE  * stepW;
+        dbgSunMie += sunFade  * (sunT * sigma_s_m * phaseSun.y)              * SUN_COLOR_BASE  * stepW;
+        dbgMS     += sunFade  * (psi_ms_sun * sigma_s * phaseIsotropic)      * SUN_COLOR_BASE  * stepW;
+        dbgSunT   += sunT * stepW;   // raw transmittance (un-faded), diagnostic only
+        dbgMoon   += moonFade * (moonT * phaseScatterMoon + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE * stepW;
+#endif
+
         trans   *= stepT;
 
         // Saturated-transmittance early-out. For horizon-grazing rays through
@@ -430,7 +490,19 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
 
     // Match legacy GetAtmosphere() tonemap softening so LUT values land in the
     // same range the rest of the pack was already tuned against.
+#if   SKY_DEBUG == 10
+    return pow(max(dbgSunRay * SKY_DEBUG_GAIN, 0.0), vec3(1.0 / 1.35));
+#elif SKY_DEBUG == 11
+    return pow(max(dbgSunMie * SKY_DEBUG_GAIN, 0.0), vec3(1.0 / 1.35));
+#elif SKY_DEBUG == 12
+    return pow(max(dbgMS     * SKY_DEBUG_GAIN, 0.0), vec3(1.0 / 1.35));
+#elif SKY_DEBUG == 13
+    return pow(max(dbgSunT   * SKY_DEBUG_GAIN, 0.0), vec3(1.0 / 1.35));
+#elif SKY_DEBUG == 14
+    return pow(max(dbgMoon   * SKY_DEBUG_GAIN, 0.0), vec3(1.0 / 1.35));
+#else
     return pow(max(scatter, 0.0), vec3(1.0 / 1.35));
+#endif
 }
 
 
@@ -565,6 +637,15 @@ vec3 _computeDynamicLightColor(float sunElevation) {
 // disc with extinction). The horizon-clamp + ground-blend used by the legacy
 // path is replaced by the LUT's built-in sub-horizon handling.
 vec3 sampleSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
+#if SKY_DEBUG == 1 || SKY_DEBUG >= 10
+    // Modes 1 and 10-14: raw LUT (bilinear). For 10-14 the build already wrote
+    // the isolated term into the LUT, so this just shows it without post terms.
+    return sampleSkyViewLUT(rd, eyeAltitude);
+#elif SKY_DEBUG == 2
+    return _nearestSkyViewLUT(rd);
+#elif SKY_DEBUG == 3
+    return _skyViewGridOverlay(rd, eyeAltitude);
+#else
     // Sky scattering from the lat/long-warped sky-view LUT.
     vec3 skyColor = sampleSkyViewLUT(rd, eyeAltitude);
 
@@ -593,6 +674,7 @@ vec3 sampleSky(vec3 rd, vec3 sunDir, vec3 moonDir, float eyeAltitude) {
     vec3 groundColor = mix(horizonColor * 0.4, noonGround, pow(sunZenith, 2.0));
     float horizon = smoothstep(-0.6, 0.05, rd.y);
     return mix(groundColor, skyColor, horizon);
+#endif
 }
 
 // Ultra-fast sky sampler for reflections (water, glass, ice).
