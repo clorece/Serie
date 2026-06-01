@@ -94,9 +94,17 @@ void main() {
         // raymarchClouds() natively evaluates the atmospheric transmittance (T-LUT) 
         // and planet shadow per-step. Using t.sunColor here double-dims the light,
         // causing sunset clouds to look grey and dull instead of vibrant orange.
+        // We scale the moon UP massively because MOON_ILLUMINANCE is naturally very low (0.02)
+        // and the physical T-LUT attenuates it further. Multiplying it here provides enough raw
+        // energy to make night clouds bright and clear.
+        // Adjusted to 10.0 based on user feedback for a balanced night sky.
         vec3 exoSun  = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
-        vec3 exoMoon = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE;
-        vec3 lightCol = mix(exoMoon, exoSun, t.shadowFade) * 1.5;
+        vec3 exoMoon = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE * 10.0;
+        
+        // We must NOT use t.shadowFade here, because shadowFade returns to 1.0 at night 
+        // to render moon shadows. We need a simple day/night mix factor.
+        float isDay = smoothstep(-0.1, 0.1, t.sunUp);
+        vec3 lightCol = mix(exoMoon, exoSun, isDay) * 1.5;
 
         vec4 cloud = raymarchClouds(cameraPosition, worldDir, lightDir, lightCol, ambient);
         color = color * cloud.a + cloud.rgb;

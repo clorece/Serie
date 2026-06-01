@@ -15,6 +15,7 @@ void main() {
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 #include "/lib/fragment/sky.glsl"
+#include "/lib/fragment/vlFog.glsl"
 #ifdef WATER_CAUSTICS
 #include "/lib/fragment/caustics.glsl"
 #endif
@@ -356,7 +357,32 @@ void main() {
         float F0t  = (isClearIce || isSolidIce) ? 0.12 : 0.04; // ice glossier so reflections read; glass dielectric
         float fres = F0t + (1.0 - F0t) * pow(1.0 - cosV, 5.0);
 
-        gl_FragData[0] = vec4(mix(base, reflectColor, fres), 1.0);
+        vec3 tResult = mix(base, reflectColor, fres);
+
+        // Atmospheric fog for the translucent surface. The deferred fog/VL pass
+        // (d8/d9) ran BEFORE translucents were drawn, so it only fogged the
+        // opaque scene behind this surface — the glass/ice/portal surface itself
+        // (own light + reflections) never received the camera->surface haze.
+        // Without this, transparents keep full brightness and pop out of the fog
+        // (and at night their reflections read as a glow against the dark, fogged
+        // surroundings). Match whichever fog the opaque scene got this frame:
+        // d9's shadow-aware volumetric integration when VOLUMETRIC_LIGHT is on,
+        // else d8's flat aerial perspective. Same function/intensity, so the
+        // transparent surface fogs to the same density as everything around it.
+        {
+            vec3  fogWorldDir = normalize(mat3(gbufferModelViewInverse) * viewSurf);
+            float fogDist     = length(viewSurf);
+            #ifdef VOLUMETRIC_LIGHT
+                float fogDither = waterDither(gl_FragCoord.xy, frameCounter);
+                VolFog vf = computeVolumetricFog(fogWorldDir, fogDist, eyeAltT, fogDither);
+                tResult = tResult * vf.transmittance + vf.scatter;
+            #else
+                AerialPerspective ap = computeAerialPerspective(fogWorldDir, wSunT, wMoonT, eyeAltT, fogDist);
+                tResult = tResult * ap.transmittance + ap.scatter;
+            #endif
+        }
+
+        gl_FragData[0] = vec4(tResult, 1.0);
         return;
     }
 
@@ -512,6 +538,25 @@ void main() {
     float fresnel = F0 + (Fmax - F0) * pow(1.0 - cosT, 5.0);
 
     vec3 result = mix(refractColor, reflectColor, fresnel) + specular;
+
+    // Atmospheric fog for the water surface (above-water view). Same reason as
+    // the translucent path above: d8/d9 fogged only the opaque scene before the
+    // water surface existed, so the surface's reflection/specular/scatter would
+    // otherwise sit unfogged and pop out of the haze. Match the opaque scene's
+    // fog: d9 volumetric when VOLUMETRIC_LIGHT is on, else d8 aerial perspective.
+    // (Eye-in-water has its own absorption fog and returns earlier.)
+    {
+        vec3  fogWorldDir = normalize(mat3(gbufferModelViewInverse) * viewWater);
+        float fogDist     = length(viewWater);
+        #ifdef VOLUMETRIC_LIGHT
+            float fogDither = waterDither(gl_FragCoord.xy, frameCounter);
+            VolFog vf = computeVolumetricFog(fogWorldDir, fogDist, eyeAltitude, fogDither);
+            result = result * vf.transmittance + vf.scatter;
+        #else
+            AerialPerspective ap = computeAerialPerspective(fogWorldDir, worldSunDir, worldMoonDir, eyeAltitude, fogDist);
+            result = result * ap.transmittance + ap.scatter;
+        #endif
+    }
 
     gl_FragData[0] = vec4(result, 1.0);
 }

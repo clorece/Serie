@@ -522,10 +522,10 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         // light-source brightness so a dim moon can't false-occlude the sky.
         // Using sunHere (which includes planet shadow) ensures that when the
         // planet blocks the light, we scale down the directional occlusion.
-        // We retain a 15% baseline to act as ambient occlusion so the clouds
+        // We retain a baseline to act as ambient occlusion so the clouds
         // don't lose all internal depth and flatten completely during twilight.
         float lightLum      = clamp(dot(sunHere, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
-        float effectiveOD   = lightOD * max(lightLum, 0.15);
+        float effectiveOD   = lightOD * max(lightLum, 0.25);
         
         // Calculate relative altitude (0.0 to 1.0) for this specific raymarch step
         float h01_step = clamp((r_p - CLOUDS_R_BOTTOM) / CLOUDS_THICKNESS, 0.0, 1.0);
@@ -537,8 +537,10 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         
         // Ground bounce (Earthshine): Upwelling light from the terrain reflecting onto the 
         // flat cloud bottoms. We use a powder effect so the edges glow and the centers shadow.
+        // Scaled by lightLum so it naturally darkens when the sun sets, but retains a minimum
+        // so night clouds aren't pitch black underneath.
         float basePowder = exp(-density * 0.5) * (1.0 - exp(-density * 2.0));
-        float earthShine = exp(-h01_step * 8.0) * basePowder * 0.7;
+        float earthShine = exp(-h01_step * 8.0) * basePowder * 0.7 * max(lightLum, 0.25);
         
         vec3  inscatterColor = directLight + ambient * (ambientFactor + earthShine);
 
