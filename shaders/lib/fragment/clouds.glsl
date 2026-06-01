@@ -41,9 +41,9 @@ const float CLOUDS_BASE_SCALE   = 0.00018 / CLOUDS_SIZE_MULTIPLIER;
 const float CLOUDS_DETAIL_SCALE = 0.0014  / CLOUDS_SIZE_MULTIPLIER;
 
 // Cloud-layer radii in planet-centered coordinates (m from planet center).
-const float CLOUDS_R_BOTTOM = PLANET_RADIUS + CLOUDS_LAYER_BOTTOM;
-const float CLOUDS_R_TOP    = PLANET_RADIUS + CLOUDS_LAYER_TOP;
-const float CLOUDS_THICKNESS = CLOUDS_LAYER_TOP - CLOUDS_LAYER_BOTTOM;
+const float CLOUDS_R_BOTTOM = PLANET_RADIUS + (CLOUDS_LAYER_BOTTOM * CLOUDS_ALTITUDE_MULTIPLIER);
+const float CLOUDS_THICKNESS = (CLOUDS_LAYER_TOP - CLOUDS_LAYER_BOTTOM) * CLOUDS_HEIGHT_MULTIPLIER;
+const float CLOUDS_R_TOP    = CLOUDS_R_BOTTOM + CLOUDS_THICKNESS;
 
 
 // Linear remap with clamp at 0.
@@ -307,13 +307,19 @@ float cloudPhase(float cosTheta) {
 // the immediate vicinity (most opaque self-shadow contributor) and later
 // taps reach far into the cloud volume cheaply.
 float _cloudLightOD(vec3 pos, vec3 sunDir) {
-    if (sunDir.y < 0.02) return 0.0;
+    // During twilight (dawn/dusk), the sun/moon dips below the horizon.
+    // If we march downward, the ray exits the cloud layer immediately, returning
+    // 0 density and causing the clouds to unnaturally lose all self-shadowing.
+    // By clamping the Y-axis of the march direction to be at least horizontal,
+    // we ensure the ray evaluates the cloud volume for proper multi-scatter shadowing.
+    vec3 marchDir = normalize(vec3(sunDir.x, max(sunDir.y, 0.05), sunDir.z));
+    
     const float baseStep = 60.0;
     const float growth   = 1.7;
     float od = 0.0;
     float stepLen = baseStep;
     for (int i = 0; i < CLOUDS_LIGHT_STEPS; ++i) {
-        pos += sunDir * stepLen;
+        pos += marchDir * stepLen;
         od += cloudDensity(pos, true) * stepLen;  // cheap mode — no detail sampling
         stepLen *= growth;
     }
@@ -375,7 +381,13 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
                         float(CLOUDS_PRIMARY_STEPS),
                         smoothstep(0.0, 0.7, dir.y)));
     steps = clamp(steps, 8, 128);
-    float dt = (tEnd - tStart) / float(steps);
+
+    // Exponential step growth for primary raymarch.
+    // Increases step size as distance from camera increases, improving performance
+    // and maintaining high quality near the player.
+    float growth = 1.04; // 4% growth per step
+    float sumProgression = (pow(growth, float(steps)) - 1.0) / (growth - 1.0);
+    float baseStep = (tEnd - tStart) / sumProgression;
 
     float cosTheta = dot(dir, sunDir);
     float phase    = cloudPhase(cosTheta);
@@ -404,7 +416,9 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     float distWeight = 0.0;
 
     for (int i = 0; i < steps; ++i) {
-        float t = tStart + (float(i) + jitter) * dt;
+        float thisStep = baseStep * pow(growth, float(i));
+        float t_base = tStart + baseStep * (pow(growth, float(i)) - 1.0) / (growth - 1.0);
+        float t = t_base + jitter * thisStep;
         vec3  p = origin + dir * t;
 
         float density = cloudDensity(p, false);
@@ -424,7 +438,7 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         // Beer through the step.
         float sigma_e = density;
         float sigma_s = density;  // assume single-scatter albedo ≈ 1 for water clouds
-        float stepT   = exp(-sigma_e * dt);
+        float stepT   = exp(-sigma_e * thisStep);
 
         // Self-shadow (sun visibility through cloud volume).
         float lightOD = _cloudLightOD(p, sunDir);
@@ -486,8 +500,21 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         // don't lose all internal depth and flatten completely during twilight.
         float lightLum      = clamp(dot(sunHere, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
         float effectiveOD   = lightOD * max(lightLum, 0.15);
-        float ambientFactor = 0.6 * mix(1.0, 0.25, smoothstep(0.0, 4.0, effectiveOD));
-        vec3  inscatterColor = directLight + ambient * ambientFactor;
+        
+        // Calculate relative altitude (0.0 to 1.0) for this specific raymarch step
+        float h01_step = clamp((r_p - CLOUDS_R_BOTTOM) / CLOUDS_THICKNESS, 0.0, 1.0);
+
+        // Local ambient occlusion: denser parts get darker, revealing 3D shapes even in shadow.
+        // This completely fixes the "flat shaded" look on the cloud underbellies.
+        float localAO = mix(1.0, 0.4, density);
+        float ambientFactor = 0.6 * mix(1.0, 0.25, smoothstep(0.0, 4.0, effectiveOD)) * localAO;
+        
+        // Ground bounce (Earthshine): Upwelling light from the terrain reflecting onto the 
+        // flat cloud bottoms. We use a powder effect so the edges glow and the centers shadow.
+        float basePowder = exp(-density * 0.5) * (1.0 - exp(-density * 2.0));
+        float earthShine = exp(-h01_step * 8.0) * basePowder * 0.7;
+        
+        vec3  inscatterColor = directLight + ambient * (ambientFactor + earthShine);
 
         // Energy-conserving step integration.
         vec3 contrib = inscatterColor * sigma_s * (1.0 - stepT) / max(sigma_e, 1e-7);
@@ -522,7 +549,7 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     // The lower atmosphere density gradient is extremely smooth, so a single midpoint 
     // Riemann sum gives mathematically perfect, artifact-free transmittance up to 100km.
     float distToCloud = distWeight > 0.0 ? (distSum / distWeight) : tEnd;
-    vec3  midPosPC    = originPC2 + dir * (distToCloud * 0.5);
+    vec3  midPosPC    = originPC2 + dir * (distToCloud * 0.1);
     float midR        = length(midPosPC * 0.9995);
     
     vec3  midDens     = GetAtmosphereDensity(midR);

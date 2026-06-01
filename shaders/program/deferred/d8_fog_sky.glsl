@@ -89,7 +89,14 @@ void main() {
 
         TimeState t = getTimeState();
         vec3  lightDir = t.activeLightDir;
-        vec3  lightCol = (t.sunColor * SUN_ILLUMINANCE + t.moonColor) * 1.5;
+        
+        // Clouds need the raw, un-attenuated exo-atmospheric light color because 
+        // raymarchClouds() natively evaluates the atmospheric transmittance (T-LUT) 
+        // and planet shadow per-step. Using t.sunColor here double-dims the light,
+        // causing sunset clouds to look grey and dull instead of vibrant orange.
+        vec3 exoSun  = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
+        vec3 exoMoon = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE;
+        vec3 lightCol = mix(exoMoon, exoSun, t.shadowFade) * 1.5;
 
         vec4 cloud = raymarchClouds(cameraPosition, worldDir, lightDir, lightCol, ambient);
         color = color * cloud.a + cloud.rgb;
