@@ -11,13 +11,13 @@ const int RGBA8UI = 11;
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
 const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred)
-const int colortex4Format = RGBA8;   // coarse voxel-occupancy buffer (brick = 8³ block of colortex7); .r = non-empty flag (1.0/0.0). Built in prepare2, consumed by the brick-skipping DDA in lib/pt. Resolution 256×256 (covers coarse grids up to 32³ = VOXEL_GRID_SIZE 256).
+const int colortex4Format = RGBA8;   // coarse voxel-occupancy buffer (brick = 8³ block of colortex7); .r = non-empty flag (1.0/0.0). Built in prepare2, consumed by the brick-skipping DDA in lib/pt. Resolution 512×256 (coarse grid 64×8×64 for the 512×64×512 voxel grid).
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
 const int colortex6Format = RGBA16F; // SVGF a-trous ping-pong B (deferred). Bloom no longer uses this.
 const int colortex7Format = RGBA8UI; // voxel data atlas (.x = block type, .y = light level, .z = emissive light, .w = unused)
 const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated irradiance, .a = history length)
 const int colortex9Format = RGBA16F; // SVGF moments (.r = linear depth, .g = luma M1, .b = luma M2)
-const int colortex10Format = RGBA32F; // ReSTIR reservoir radiance.rgb + M
+const int colortex10Format = RGBA16F; // ReSTIR reservoir radiance.rgb (clamped <=RESTIR_CLAMP) + M (<=RESTIR_M_CAP); both exact in half, saves bandwidth on this per-frame R/W buffer
 const int colortex11Format = RGBA32F; // ReSTIR reservoir samplePos.xyz + W
 // Atmosphere rewrite (see shaderpacks/serievx_atmosphere_plan.md):
 // colortex12 = packed atmosphere LUT (Hillaire 2020): T-LUT (0..255,0..63),
@@ -52,7 +52,12 @@ const bool colortex14Clear = false;
 const bool colortex15Clear = false;
 
 const int shadowMapResolution = SHADOW_RESOLUTION;
-const float shadowDistance = 160.0;
+// Must cover the voxel grid's horizontal radius (VOXEL_DIM_X/2 = 256) or the
+// outer grid never gets voxelized (blocks are only written where the shadow
+// pass rasterizes them). This is the main cost of the doubled PT distance —
+// the shadow pass now renders a 256-radius region. If distant voxels show
+// holes, raise SHADOW_RESOLUTION (more shadow texels per far block).
+const float shadowDistance = 256.0;
 const float sunPathRotation = -30.0; // [10.0 20.0 30.0 40.0 50.0 60.0]
 const float ambientOcclusionLevel = 0.5;
 const float ambientStrength = 0.3;
@@ -65,7 +70,8 @@ const bool shadowtex1Nearest = false;
 // Required for the multi-scale bloom atlas (mip-sampling colortex0 at LODs 2..8).
 const bool colortex0MipmapEnabled = true;
 
-// TODO colortex6 is now SVGF-only (no longer touched by bloom). To delete it entirely,
-// refactor the a-trous chain (d1/d3/d5_denoise) to single-buffer ping-pong on colortex3.
+// TODO colortex6 is now SVGF-only (no longer touched by bloom). It is the ping-pong
+// B buffer for the a-trous chain (d1_atrous_first -> d1..d4_denoise, steps 1/2/4/8/16).
+// To delete it entirely, refactor that chain to single-buffer ping-pong on colortex3.
 // Watch the c3 ping-pong parity warning when doing that.
 #endif

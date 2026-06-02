@@ -250,7 +250,7 @@ void main() {
 
     vec3 indirect;
     #if defined(VOXEL_GI)
-        vec3 gi = texture(colortex3, texCoord).rgb;
+        vec3 gi = texture(colortex6, texCoord).rgb; // denoised GI: 6-iteration a-trous lands on colortex6
         #ifdef AO_RTAO
             #ifdef LIGHTING_AO_FULL
                 gi *= aoTerm;
@@ -274,7 +274,7 @@ void main() {
     #elif defined(AO_RTAO)
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
     #elif defined(VOXEL_AO)
-        float ao = texture(colortex3, texCoord).r;
+        float ao = texture(colortex6, texCoord).r; // denoised AO: 6-iteration a-trous lands on colortex6
         float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoFactor;
     #else
@@ -320,7 +320,7 @@ void main() {
     // voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl)
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {
-        vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
+        vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
         vec3 rayOrig = cameraPosition - gridOrigin;
         vec3 rayDir  = normalize(getWorldPosition().xyz);
 
@@ -331,9 +331,9 @@ void main() {
 
         bool hit = false;
         vec3 hitAlbedo = vec3(0.0);
-        for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
-            if (any(lessThan(voxPos, ivec3(0))) || any(greaterThanEqual(voxPos, ivec3(VOXEL_GRID_SIZE)))) break;
-            VoxelSample vs = readVoxel(colortex7, voxPos);
+        for (int i = 0; i < 768; i++) {
+            if (any(lessThan(voxPos, ivec3(0))) || any(greaterThanEqual(voxPos, VOXEL_DIMS))) break;
+            VoxelSample vs = readVoxel(voxelSampler, voxPos);
             if (vs.category != VOXEL_AIR) { hit = true; hitAlbedo = vs.albedo; break; }
             bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));
             tMax  += vec3(mask) * tDelta;
@@ -344,10 +344,10 @@ void main() {
     #endif
 
     // DEBUG VIEW: Skylight Illumination
-    // We output the raw/denoised GI buffer (colortex3) directly to the screen.
+    // We output the raw/denoised GI buffer (colortex6) directly to the screen.
     // This allows you to see exactly the indirect light reaching the surface!
     #ifdef GI_DEBUG_VIEW
-        vec3 debugIllum = texture(colortex3, texCoord).rgb;
+        vec3 debugIllum = texture(colortex6, texCoord).rgb;
         /* RENDERTARGETS: 0 */
         gl_FragData[0] = vec4(debugIllum, 1.0);
     #else

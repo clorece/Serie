@@ -92,10 +92,10 @@ void main() {
     vec3  normal = normalize(texture(colortex1, uvUnjittered).rgb * 2.0 - 1.0);
     vec3  normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
     vec3  worldRel = getWorldPosition().xyz;
-    
+
     vec3  rawGI = texture(colortex3, texCoord).rgb;
     float rawAO = texture(colortex14, texCoord).w;
-    
+
     vec3 neighborSum = vec3(0.0);
     float neighborWeight = 0.0;
     for (int x = -1; x <= 1; x++) {
@@ -121,10 +121,10 @@ void main() {
     if (neighborWeight > 0.1) {
         vec3 neighborAvg = neighborSum / neighborWeight;
         neighborLuma = dot(neighborAvg, vec3(0.2126, 0.7152, 0.0722));
-        
+
         // if the center pixel is drastically brighter than its VALID neighbors, clamp it.
         if (centerLumaRaw > neighborLuma * 3.0 + 0.02) {
-            rawGI = neighborAvg; 
+            rawGI = neighborAvg;
         }
     }
     
@@ -144,7 +144,7 @@ void main() {
         } else if (shade.M > float(RESTIR_M_CAP) * 0.4) {
             spatialSamples = min(RESTIR_SPATIAL_SAMPLES, 1); // partially converged: scale down
         }
-        
+
         for (int i = 0; i < spatialSamples; i++) {
             vec2 uniformOffset = getUniformOffset(i, frameCounter);
             ivec2 delta = ivec2(round(uniformOffset));
@@ -221,11 +221,11 @@ void main() {
 
                 float motion = length(cameraPosition - previousCameraPosition);
                 reject = max(reject, smoothstep(0.1, 1.0, motion) * 0.75);
-                
+
                 float clampDiff = length(prev8.rgb - clampedHistory) / max(luma(prev8.rgb), 0.001);
                 reject = max(reject, clamp(clampDiff * 0.5, 0.0, 0.8));
-                
-                reject *= reject; 
+
+                reject *= reject;
 
                 giHist = mix(giHist, 1.0, reject);
                 float a = 1.0 / giHist;

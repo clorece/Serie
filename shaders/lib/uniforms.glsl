@@ -41,7 +41,8 @@ uniform sampler2D colortex3;
 uniform sampler2D colortex4; // coarse voxel-occupancy (.r = brick non-empty flag 1.0/0.0), built in prepare2
 uniform sampler2D colortex5;
 uniform sampler2D colortex6;
-uniform usampler2D colortex7;
+uniform usampler2D colortex7; // (legacy 2D voxel atlas — superseded by voxelSampler 3D image)
+uniform usampler3D voxelSampler; // fine voxel grid, dedicated 3D image (see image.voxelImg in shaders.properties)
 uniform sampler2D colortex8;
 uniform sampler2D colortex9;
 uniform sampler2D colortex10;

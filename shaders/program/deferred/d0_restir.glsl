@@ -87,6 +87,9 @@ void main() {
         // uses ambientColor for now (v2 will unify it).
         float eyeAlt = cameraPosition.y - 64.0;
         vec3 giSky = getSkyAmbient(eyeAlt) * GI_SKY_BRIGHTNESS;
+        // Warm the skylight ILLUMINATION only (not the rendered sky). Golden tint,
+        // ~luminance-preserving so brightness stays put as warmth increases.
+        giSky *= mix(vec3(1.0), vec3(1.25, 1.04, 0.72), GI_SKY_WARMTH);
         vec3 rawGI = giSky; // sky fallback
         float lr   = luma(rawGI);
         float rawAO = 1.0;
@@ -99,7 +102,7 @@ void main() {
 
             #ifdef AO_RTAO
                 uint aoSeed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter * 37 + 9);
-                rawAO = computeRTAO(colortex7, colortex4, worldAbs, normalWorld, aoSeed, cameraPosition,
+                rawAO = computeRTAO(voxelSampler, colortex4, worldAbs, normalWorld, aoSeed, cameraPosition,
                                     depthtex0, gbufferProjection, gbufferModelView);
             #endif
 
@@ -129,7 +132,7 @@ void main() {
             bool validReproj = all(greaterThanEqual(uvPrev, padding)) && all(lessThan(uvPrev, 1.0 - padding));
 
           #ifdef RESTIR_GI
-            vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
+            vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
             vec3 origin = worldAbs + normalWorld * 0.15;
 
             Reservoir res = newReservoir();
@@ -140,7 +143,7 @@ void main() {
 
                 float dither = randFloat(seed);
                 vec3 rad = giRayRadiance(
-                    colortex7, colortex4, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
+                    voxelSampler, colortex4, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
                     depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView,
                     hitPos, hitNormal, wasHit, hitCategory, rayEmission, skyLightmap, dither
                 );
@@ -193,7 +196,7 @@ void main() {
                 } else {
                     depthValid = (abs(expectedClipZ - actualClipZ) < 0.002);
                 }
-                
+
 
                 vec3 prevNormalWorld = octDecodeNormal(texture(colortex15, uvPrev).xy);
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
@@ -226,6 +229,12 @@ void main() {
             Reservoir shade = res;
 
             rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);
+
+            // Mix in a bit of the direct light color to enhance the warmth of sun-driven bounces
+            // as requested. This ensures the GI picks up the golden daytime tint more strongly.
+            vec3 normLightCol = lightColor / max(luma(lightColor), 0.1);
+            rawGI = mix(rawGI, rawGI * normLightCol, 0.10);
+
             lr    = luma(rawGI);
 
             vec4 p9_tmp = validReproj ? textureCatmullRom(colortex9, uvPrev, vec2(viewWidth, viewHeight)) : vec4(0.0);
@@ -235,7 +244,7 @@ void main() {
             }
           #else
             rawGI = computeGI(
-                colortex7, colortex4, worldAbs, normalWorld, seed, cameraPosition,
+                voxelSampler, colortex4, worldAbs, normalWorld, seed, cameraPosition,
                 sunDirWorld, lightColor, giSky, skyLightmap,
                 depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView
             ) * (float(GI_STRENGTH) / 100.0);
@@ -262,7 +271,7 @@ void main() {
             vec3 worldAbs = worldRel + cameraPosition;
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
             rawAO = computeAO(
-                colortex7, colortex4, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
+                voxelSampler, colortex4, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
                 depthtex0, gbufferProjection, gbufferModelView
             );
         }

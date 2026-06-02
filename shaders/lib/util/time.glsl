@@ -58,7 +58,9 @@ TimeState getTimeState() {
     t.activeLightDir = (t.sunUp > -0.05) ? worldSunDir : worldMoonDir;
     
     // Light Color logic
-    vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.25) * 0.15, vec3(1.0, 1.0, 1.1), max(t.sunUp, 0.0));
+    // Adjusted daytime tint (sunUp > 0) to be warmer and more golden (1.0, 0.95, 0.9) 
+    // instead of the original cooler (1.0, 1.0, 1.1).
+    vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 0.95, 0.9), max(t.sunUp, 0.0));
     t.sunColor      = sunColorBase * t.sunActivity;
 
     vec3 moonColorBase = vec3(0.65, 0.85, 1.0) * 0.02;

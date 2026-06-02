@@ -2,4 +2,4 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/d6_denoise.glsl"
+#include "/program/deferred/d7_composite.glsl"

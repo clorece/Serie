@@ -47,8 +47,8 @@ vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
 }
 
 bool fetchBilateralHistory(
-    vec2 uv, float expectedClipZ, vec3 expectedNormalWorld, 
-    sampler2D hist8, sampler2D hist9, sampler2D hist15, 
+    vec2 uv, float expectedClipZ, vec3 expectedNormalWorld,
+    sampler2D hist8, sampler2D hist9, sampler2D hist15,
     out vec4 outHistory8, out vec4 outHistory9
 ) {
     vec2 pos = uv * vec2(viewWidth, viewHeight) - 0.5;
@@ -104,7 +104,7 @@ bool fetchBilateralHistory(
     );
 
     validW *= pow(normalW, vec4(16.0));
-    
+
     w *= validW;
 
     float wSum = dot(w, vec4(1.0));
@@ -181,18 +181,13 @@ vec4 svgfAtrousFirst(
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
 
-    float centerDepthRaw = textureLod(depthTex, uv, 0.0).r;
-    vec4 centerClip = vec4(uv * 2.0 - 1.0, centerDepthRaw * 2.0 - 1.0, 1.0);
-    vec4 centerView = gbufferProjectionInverse * centerClip;
-    vec3 centerPos = centerView.xyz / centerView.w;
-
     mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
     int tapRange = 2;
 
     if (stepSize > 2.0) {
         float rotAngle = getJitterRotation(uv, frameCounter);
         rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
-        tapRange = 1; 
+        tapRange = 1;
     }
 
     for (int x = -tapRange; x <= tapRange; x++) {
@@ -213,18 +208,13 @@ vec4 svgfAtrousFirst(
             if (x == 0 && y == 0) {
                 w = hw;
             } else {
+                // plane awareness via screen-space depth gradient (see svgfAtrous)
                 float expectedD = centerDepth + dot(depthGrad, off);
                 float wz = exp(-abs(nDepth - expectedD) * invSigmaZ);
                 float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
 
-                vec4 nClip = vec4(nUV * 2.0 - 1.0, nDepthRaw * 2.0 - 1.0, 1.0);
-                vec4 nView = gbufferProjectionInverse * nClip;
-                vec3 nPos = nView.xyz / nView.w;
-                float planeDist = abs(dot(nPos - centerPos, centerN));
-                float wPlane = exp(-planeDist * 10.0);
-
-                w = hw * wz * wn * wl * wPlane;
+                w = hw * wz * wn * wl;
 
                 #ifdef SVGF_WORLD_RADIUS
                     float tangential = length(off) * pxWorld * abs(centerDepth);
@@ -249,18 +239,13 @@ vec4 svgfAtrous(
     vec4  c      = textureLod(src, uv, 0.0);
     float cLuma  = luma(c.rgb);
     float varG   = gauss3Var(src, uv);
-    
+
     float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(varG, 0.0)) + 0.05);
     float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
     float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 
     vec3  sumC = vec3(0.0);
     float sumV = 0.0, wsum = 0.0;
-    
-    float centerDepthRaw = textureLod(depthTex, uv, 0.0).r;
-    vec4 centerClip = vec4(uv * 2.0 - 1.0, centerDepthRaw * 2.0 - 1.0, 1.0);
-    vec4 centerView = gbufferProjectionInverse * centerClip;
-    vec3 centerPos = centerView.xyz / centerView.w;
 
     mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
     int tapRange = 2;
@@ -268,7 +253,7 @@ vec4 svgfAtrous(
     if (stepSize > 2.0) {
         float rotAngle = getJitterRotation(uv, frameCounter);
         rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
-        tapRange = 1; 
+        tapRange = 1;
     }
 
     for (int x = -tapRange; x <= tapRange; x++) {
@@ -288,18 +273,15 @@ vec4 svgfAtrous(
             if (x == 0 && y == 0) {
                 w = hw;
             } else {
+                // Plane awareness comes from the screen-space depth gradient
+                // (expectedD) — equivalent to the old per-tap inverse-projection
+                // plane test but without two mat4 mults per tap.
                 float expectedD = centerDepth + dot(depthGrad, off);
                 float wz = exp(-abs(nDepth - expectedD) * invSigmaZ);
                 float wn = pow(max(dot(nN, centerN), 0.0), sigmaN);
                 float wl = exp(-abs(cLuma - nLuma) * invSigmaL);
 
-                vec4 nClip = vec4(nUV * 2.0 - 1.0, nDepthRaw * 2.0 - 1.0, 1.0);
-                vec4 nView = gbufferProjectionInverse * nClip;
-                vec3 nPos = nView.xyz / nView.w;
-                float planeDist = abs(dot(nPos - centerPos, centerN));
-                float wPlane = exp(-planeDist * 10.0);
-
-                w = hw * wz * wn * wl * wPlane;
+                w = hw * wz * wn * wl;
 
                 #ifdef SVGF_WORLD_RADIUS
                     float tangential = length(off) * pxWorld * abs(centerDepth);

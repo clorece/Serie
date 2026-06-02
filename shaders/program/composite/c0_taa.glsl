@@ -40,18 +40,14 @@ void main() {
         float sumLuma = 0.0;
         float totalWeight = 0.0;
 
-        for (float x = 0.15; x < 0.9; x += 0.09) {
-            for (float y = 0.15; y < 0.9; y += 0.09) {
-                vec2 uv = vec2(x, y);
+        for (float x = -0.01; x <= 0.011; x += 0.01) {
+            for (float y = -0.01; y <= 0.011; y += 0.01) {
+                vec2 uv = vec2(0.5) + vec2(x, y);
                 vec3 rawColor = texture(colortex0, uv).rgb;
                 float luma = dot(rawColor, vec3(0.2126, 0.7152, 0.0722));
                 
-                // Photographic center-weighted metering
-                float distToCenter = distance(uv, vec2(0.5)) * 2.0; // 0 to ~1.4
-                float weight = mix(1.0, exp(-distToCenter * distToCenter * 2.0), AUTO_EXPOSURE_CENTER_WEIGHT);
-                
-                sumLuma += log2(max(luma, 0.0001)) * weight;
-                totalWeight += weight;
+                sumLuma += log2(max(luma, 0.0001));
+                totalWeight += 1.0;
             }
         }
         

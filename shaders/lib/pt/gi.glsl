@@ -16,12 +16,12 @@ struct VoxelHit {
     vec3  emission;  // emission gathered from non-occluding blocklights the ray passed through
 };
 
-VoxelHit traceVoxelGI(usampler2D atlas, sampler2D coarse, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
+VoxelHit traceVoxelGI(usampler3D atlas, sampler2D coarse, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
     VoxelHit r;
     r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0); r.emission = vec3(0.0);
 
     vec3  localPos = worldPos - gridOrigin;
-    if (any(lessThan(localPos, vec3(0.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE)))) {
+    if (any(lessThan(localPos, vec3(0.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_DIMS)))) {
         return r;
     }
     ivec3 vox      = ivec3(floor(localPos));
@@ -31,7 +31,7 @@ VoxelHit traceVoxelGI(usampler2D atlas, sampler2D coarse, vec3 gridOrigin, vec3 
     vec3  dirPos   = step(0.0, rayDir); // 0/1 selector for the +/- exit face
 
     vec3 t0Box = (vec3(0.0) - localPos) * invRayDir;
-    vec3 t1Box = (vec3(VOXEL_GRID_SIZE) - localPos) * invRayDir;
+    vec3 t1Box = (vec3(VOXEL_DIMS) - localPos) * invRayDir;
     vec3 tMaxBox = max(t0Box, t1Box);
     float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
     float actualMaxDist = min(maxDist, tExit);
@@ -46,7 +46,8 @@ VoxelHit traceVoxelGI(usampler2D atlas, sampler2D coarse, vec3 gridOrigin, vec3 
     vec3  lastMask = vec3(0.0);
     float tEntry   = 0.0;
     bool  first    = true; // true until the first fine sample / skip (was `i == 0`)
-    for (int i = 0; i < 128; i++) {
+    // generous cap; rays terminate far earlier via actualMaxDist / brick-skips
+    for (int i = 0; i < 192; i++) {
         if (tEntry > actualMaxDist) break;
 
         // --- brick-level empty-space skip ---
@@ -65,7 +66,7 @@ VoxelHit traceVoxelGI(usampler2D atlas, sampler2D coarse, vec3 gridOrigin, vec3 
             continue;
         }
 
-        uvec4 v = texelFetch(atlas, voxelCoordToAtlas(vox), 0);
+        uvec4 v = texelFetch(atlas, vox, 0);
         if (first) {
             if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
                 vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
@@ -111,7 +112,7 @@ VoxelHit traceVoxelGI(usampler2D atlas, sampler2D coarse, vec3 gridOrigin, vec3 
 
 
 vec3 giRayRadiance(
-    usampler2D atlas, sampler2D coarse, vec3 camPos, vec3 gridOrigin,
+    usampler3D atlas, sampler2D coarse, vec3 camPos, vec3 gridOrigin,
     vec3 origin, vec3 dir, vec3 sunDir, vec3 sunColor, vec3 skyColor,
     sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV,
     out vec3 hitPos, out vec3 hitNormal, out bool wasHit, out uint hitCategory, out vec3 rayEmission,
@@ -138,7 +139,7 @@ vec3 giRayRadiance(
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0 && skyOcc > 0.01) {
-            bool occluded = traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV);
+            bool occluded = traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, false);
             if (!occluded) rad += h.albedo * sunColor * ndl * skyOcc;
         }
 
@@ -147,7 +148,7 @@ vec3 giRayRadiance(
         if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) {
             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
             float lambertWeight = dot(h.normal, skyProbeDir);
-            bool  skyEscape     = !traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV);
+            bool  skyEscape     = !traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV, false);
             vec3 probeSky = skyColor;
             if (skyEscape) rad += h.albedo * probeSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
         }
@@ -157,22 +158,9 @@ vec3 giRayRadiance(
         return rad;
     }
     
-    vec3 ssrtHitNormal;
-    vec2 ssrtHitUV;
-    float remainingDist = max(0.0, float(GI_RADIUS) - distance(origin, h.pos));
-    if (remainingDist > 0.0 && screenSpaceRayTrace(h.pos, dir, remainingDist, camPos, gbufferProj, gbufferMV, depthtex0, dither, ssrtHitUV, ssrtHitNormal, hitPos)) {
-        wasHit = true;
-        hitCategory = VOXEL_OPAQUE;
-        hitNormal = ssrtHitNormal;
-        
-
-        vec3 ssgiColor = texture(colortex5, ssrtHitUV).rgb;
-        if (isnan(ssgiColor.r) || isnan(ssgiColor.g) || isnan(ssgiColor.b) || isinf(ssgiColor.r) || isinf(ssgiColor.g) || isinf(ssgiColor.b)) {
-            ssgiColor = vec3(0.0);
-        }
-        return max(ssgiColor, vec3(0.0));
-    }
-
+    // Voxel ray missed everything within the grid → sky. (The old screen-space
+    // GI fallback here is removed: with the radius-256 voxel grid the voxel pass
+    // is the source of truth; screen-space ray tracing is kept only for RTAO.)
     wasHit      = false;
     hitCategory = VOXEL_AIR;
     hitPos      = h.pos;
@@ -184,11 +172,11 @@ vec3 giRayRadiance(
 
 
 vec3 computeGI(
-    usampler2D atlas, sampler2D coarse, vec3 worldPos, vec3 normal, inout uint seed, vec3 camPos,
+    usampler3D atlas, sampler2D coarse, vec3 worldPos, vec3 normal, inout uint seed, vec3 camPos,
     vec3 sunDir, vec3 sunColor, vec3 skyColor, float skyLightmap,
     sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV
 ) {
-    vec3 gridOrigin = floor(camPos) - vec3(VOXEL_RADIUS);
+    vec3 gridOrigin = floor(camPos) - VOXEL_RADIUS_VEC;
     vec3 origin = worldPos + normal * 0.1;
     vec3 acc    = vec3(0.0);
 

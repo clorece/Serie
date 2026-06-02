@@ -48,8 +48,8 @@
 #define MIE_G 0.80            // [0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95] Mie phase function asymmetry factor (controls sun glow size/sharpness)
 
 // Rayleigh scattering coefficients for R, G, B channels (scaled by 1e-6, default: 5.8e-6, 1.35e-5, 3.31e-5)
-#define RAYLEIGH_SCATTER_R 5.8   // [1.0 2.0 3.0 4.0 5.0 5.8 7.0 8.0 10.0] Rayleigh scattering red channel
-#define RAYLEIGH_SCATTER_G 13.5  // [5.0 8.0 11.0 13.5 16.0 19.0 22.0 25.0] Rayleigh scattering green channel
+#define RAYLEIGH_SCATTER_R 5.8   // [1.0 2.0 3.0 4.0 5.0 5.8 6.5 7.0 8.0 10.0] Rayleigh scattering red channel
+#define RAYLEIGH_SCATTER_G 13.5  // [5.0 8.0 11.0 13.5 14.5 16.0 19.0 22.0 25.0] Rayleigh scattering green channel
 #define RAYLEIGH_SCATTER_B 33.1  // [15.0 20.0 25.0 30.0 33.1 38.0 43.0 50.0] Rayleigh scattering blue channel
 
 // Mie scattering coefficients for R, G, B channels (scaled by 1e-6, default: 3.0e-6, 3.0e-6, 3.0e-6)
@@ -66,7 +66,7 @@
 #define CLOUDS_ALTITUDE_MULTIPLIER 0.75 // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00 2.50 3.00] Multiplier for how high in the air clouds render
 #define CLOUDS_HEIGHT_MULTIPLIER 0.50 // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00] Multiplier for the cloud layer's vertical thickness
 #define CLOUDS_SIZE_MULTIPLIER 1.50    // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00 2.50 3.00 4.00 5.00] Size multiplier for both cloud base and detail shapes
-#define CLOUDS_DENSITY 0.02           // [0.01 0.02 0.03 0.05 0.08 0.12 0.18 0.25] cloud extinction coefficient (higher = denser/darker interiors)
+#define CLOUDS_DENSITY 0.03           // [0.01 0.02 0.03 0.05 0.08 0.12 0.18 0.25] cloud extinction coefficient (higher = denser/darker interiors)
 #define CLOUDS_LAYER_BOTTOM 1500.0    // [600.0 900.0 1200.0 1500.0 1800.0 2400.0 3000.0] cumulus base altitude (m above planet surface)
 #define CLOUDS_LAYER_TOP    5400.0    // [2400.0 3000.0 3600.0 4500.0 5400.0 6400.0 7500.0] cumulus top altitude (m above planet surface)
 #define CLOUDS_WIND_SPEED 6.0         // [0.0 1.0 2.0 4.0 6.0 9.0 12.0 18.0 25.0] m/s — cloud advection speed
@@ -95,7 +95,7 @@
 #define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
 #define AUTO_EXPOSURE_TARGET 0.22 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
-#define AUTO_EXPOSURE_CENTER_WEIGHT 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+#define AUTO_EXPOSURE_CENTER_WEIGHT 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.001 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
 #define AUTO_EXPOSURE_MAX 6.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
@@ -161,14 +161,20 @@
 #define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
 
 #define VOXEL_GI
+// LEGACY — the voxel grid is now ANISOTROPIC and sized by VOXEL_DIM_X/Y/Z in
+// lib/pt/voxelData.glsl (512×128×512 = horizontal radius 256, vertical 64).
+// This cubic option no longer drives the grid; kept only so the options menu
+// and any stale references still resolve. Change the dims in voxelData.glsl
+// (and the colortex7/colortex4 resolutions in shaders.properties) instead.
 #define VOXEL_GRID_SIZE 128 // [64 128 256 512 1024 2048]
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
-#define GI_RADIUS  24   // [12 16 24 32 48 64 96 128] TODO might also be dead due to ReSTIR
+#define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
 #define GI_STRENGTH 100 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
+#define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
-#define GI_SKY_PROBE_DIST 32   // [8 12 16 24 32] max blocks the sky-probe DDA ray travels from a bounce surface
+#define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
 #define GI_FLOOR 100    // [0 50 100 150 200] TODO probably dont need this as a macro
 #define GI_EMISSION 0.25   // [1 2 3 4 5 6 7 8] emissive block glow strength
 //#define EXCLUDE_BLOCKLIGHTS_VOXELIZATION // Excludes custom blocklights (torches, lanterns, etc.) from the path-traced GI voxel grid entirely.
@@ -181,6 +187,7 @@
 #define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
 #define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
 #define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] history length below which variance is estimated spatially
+//#define SVGF_EARLY_OUT  // PERF: skip the a-trous spatial filter on long-converged (histLen>48) pixels. DISABLED — at 1 spp the temporal mean still has per-pixel spatial noise, so this leaves static areas noisy while only in-motion pixels get filtered.
 #define PT_DETAIL_RECONSTRUCT // reconstructs fine detail in the filter
 #define SVGF_WORLD_RADIUS // TODO might not need?
 #define SVGF_SIGMA_WORLD 2.0 // TODO might not need?
@@ -189,8 +196,8 @@
 #define SVGF_PRESERVE_MAX 85     // [0 25 50 70 85 95 100] max % of raw (un-blurred) GI kept once a pixel is fully converged
 #define SVGF_PRESERVE_FRAMES 16  // [8 16 24 32 48 64] history length (frames) at which max preservation is reached
 //TODO merge GI_ACCUM_FRAMES and AO_ACCUM_FRAMES into one general "temporal accumulation length" macro and use it for both GI and AO denoising, call it SVGF_ACCUMULATION_LENGTH or something
-#define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] temporal frames to blend in denoiser
-#define AO_ACCUM_FRAMES 128   // [8 16 32 48 64 128 192 256]
+#define GI_ACCUM_FRAMES 64 // [8 16 32 48 64 128 192 256] temporal frames to blend in denoiser
+#define AO_ACCUM_FRAMES 64   // [8 16 32 48 64 128 192 256]
 
 #define RESTIR_GI
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] candidate rays generated per frame

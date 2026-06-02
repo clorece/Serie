@@ -96,9 +96,9 @@ flat in uint voxelBlockCategory;
 flat in int biomeTintedBlock;
 in float skyLight;
 
-// Image binding for writes MUST use the colorimgN alias, not colortexN.
-// colortexN is the sampler (read) name; imageStore to colortexN is a silent no-op in Iris.
-layout(rgba8ui) uniform writeonly uimage2D colorimg7;
+// Fine voxel grid is a dedicated 3D image (image.voxelImg in shaders.properties).
+// Write with the image name `voxelImg`; read elsewhere via the `voxelSampler` usampler3D.
+layout(rgba8ui) uniform writeonly uimage3D voxelImg;
 
 void main() {
     // check alpha for discard using per-fragment sampling (needed for leaves/foliage) to maintain the correct block shape in the voxel grid.
@@ -143,9 +143,9 @@ void main() {
     bool skipVoxelWrite = ((biomeTintedBlock == 1) && !isTopFace) || (finalCategory == 0u);
 
     ivec3 voxelCoord;
-    vec3 gridOrigin = floor(cameraPosition) - vec3(VOXEL_RADIUS);
+    vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
     if (!skipVoxelWrite && worldToVoxel(voxelCenter, gridOrigin, voxelCoord)) {
-        imageStore(colorimg7, voxelCoordToAtlas(voxelCoord), voxelData);
+        imageStore(voxelImg, voxelCoord, voxelData);
     }
 
     gl_FragData[0] = tex;

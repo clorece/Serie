@@ -19,10 +19,12 @@ float sunActivity  = smoothstep(-0.1, 0.16, sunUp);
 // horizon, matching how other packs front-load nighttime ambient.
 float moonActivity = smoothstep(-0.1, 0.10, moonUp);
 
-// Sun colour: warm-amber sunset → near-white noon, gated by activity so the
+// Sun colour: warm-amber sunset → near-white golden noon, gated by activity so the
 // sun term cleanly fades out (no abrupt cutoff) as the sun sinks below the
 // horizon.
-vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.25) * 0.15, vec3(1.0, 1.0, 1.1), max(sunUp, 0.0));
+// Adjusted daytime tint (sunUp > 0) to be warmer and more golden (1.0, 0.95, 0.9) 
+// instead of the original cooler (1.0, 1.0, 1.1).
+vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 0.95, 0.9), max(sunUp, 0.0));
 vec3 sunColor      = sunColorBase * sunActivity;
 
 // Moon colour: cool blue, scaled to ~0.02 of sun illuminance (matches the

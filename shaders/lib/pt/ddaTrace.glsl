@@ -80,8 +80,12 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
     return false;
 }
 
+// `allowSS` enables the screen-space ray-trace fallback when the ray leaves the
+// voxel grid. With the grid now covering a 256-block radius this is only kept
+// for RTAO (short contact rays); GI shadow / sky-probe rays pass false and just
+// treat out-of-grid as unoccluded (the voxel grid is the source of truth).
 bool traceVoxelRay(
-    usampler2D atlas,
+    usampler3D atlas,
     sampler2D coarse,
     vec3 worldPos,
     vec3 rayDir,
@@ -89,12 +93,14 @@ bool traceVoxelRay(
     vec3 camPos,
     sampler2D depthtex0,
     mat4 gbufferProj,
-    mat4 gbufferMV
+    mat4 gbufferMV,
+    bool allowSS
 ) {
-    vec3 gridOrigin = floor(camPos) - vec3(VOXEL_RADIUS);
+    vec3 gridOrigin = floor(camPos) - VOXEL_RADIUS_VEC;
     vec3 localPos   = worldPos - gridOrigin;
 
-    if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_GRID_SIZE + 2.0)))) {
+    if (any(lessThan(localPos, vec3(-2.0))) || any(greaterThanEqual(localPos, vec3(VOXEL_DIMS) + 2.0))) {
+        if (!allowSS) return false;
         vec2 dummyUV; vec3 dummyN, dummyP;
         return screenSpaceRayTrace(worldPos, rayDir, maxDist, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
     }
@@ -107,7 +113,7 @@ bool traceVoxelRay(
     vec3 tDelta = abs(invRayDir);
 
     vec3 t0 = (vec3(0.0) - localPos) * invRayDir;
-    vec3 t1 = (vec3(VOXEL_GRID_SIZE) - localPos) * invRayDir;
+    vec3 t1 = (vec3(VOXEL_DIMS) - localPos) * invRayDir;
     vec3 tMaxBox = max(t0, t1);
     float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
 
@@ -117,10 +123,12 @@ bool traceVoxelRay(
     vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
 
     float tEntry = 0.0;
-    for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
+    // generous cap; rays terminate far earlier via maxDist / tExit / brick-skips
+    for (int i = 0; i < 768; i++) {
         if (tEntry >= maxDist) return false;
 
         if (tEntry > tExit) {
+            if (!allowSS) return false;
             vec2 dummyUV; vec3 dummyN, dummyP;
             return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
         }

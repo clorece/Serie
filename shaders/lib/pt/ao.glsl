@@ -21,7 +21,7 @@ vec3 cosHemisphereDir(vec3 n, float r1, float r2) {
 }
 
 float computeRTAO(
-    usampler2D atlas,
+    usampler3D atlas,
     sampler2D coarse,
     vec3        worldPos,
     vec3        normalWorld,
@@ -38,7 +38,8 @@ float computeRTAO(
     float unoccluded = 0.0;
     for (int i = 0; i < RTAO_SAMPLES; i++) {
         vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
-        if (!traceVoxelRay(atlas, coarse, origin, dir, float(RTAO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV)) {
+        // RTAO is the ONE path that keeps the screen-space fallback (allowSS = true)
+        if (!traceVoxelRay(atlas, coarse, origin, dir, float(RTAO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, true)) {
             unoccluded += 1.0;
         }
     }
@@ -47,7 +48,7 @@ float computeRTAO(
 
 
 float computeAO(
-    usampler2D atlas,
+    usampler3D atlas,
     sampler2D coarse,
     vec3        worldPos,
     vec3        normalWorld,
@@ -69,7 +70,7 @@ float computeAO(
         float r1  = randFloat(seed);
         float r2  = randFloat(seed);
         vec3  dir = cosHemisphereDir(normalWorld, r1, r2);
-        if (!traceVoxelRay(atlas, coarse, origin, dir, float(AO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV)) {
+        if (!traceVoxelRay(atlas, coarse, origin, dir, float(AO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, false)) {
             unoccluded += 1.0;
         }
     }

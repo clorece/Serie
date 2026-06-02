@@ -49,18 +49,31 @@ void main() {
     // distance so the kernel's WORLD footprint stays bounded at any range.
     float pxWorld = 2.0 * gbufferProjectionInverse[1][1] * texelSize.y;
 
+    // accumulated temporal history length (colortex8.a) — preserved into the
+    // history feedback (last iter), and used by the optional early-out /
+    // detail-preserve blend.
+    float histLen = texture(colortex8, texCoord).a;
+
     vec4 outv = texture(DENOISE_SRC, texCoord);
     #if defined(GI_DENOISE) && (defined(VOXEL_GI) || defined(VOXEL_AO))
-        if (depthC < 1.0) {
+        // The a-trous spatial filter runs on EVERY surface pixel. (SVGF_EARLY_OUT,
+        // off by default, would skip it on long-converged pixels — but at 1 spp
+        // the temporal mean still carries spatial noise, so that leaves the static
+        // image undenoised while only in-motion pixels get filtered.)
+        if (depthC < 1.0
+            #ifdef SVGF_EARLY_OUT
+                && histLen <= 48.0
+            #endif
+        ) {
             outv = svgfAtrous(DENOISE_SRC, depthtex0, colortex1, texCoord,
                               float(DENOISE_STEP), linDepth, depthGrad, nrm, pxWorld);
         }
     #endif
 
     #ifdef DENOISE_LAST_ITER
-        // colortex8 holds the history length from d0_accum/d0_restir
-        vec4  c8      = texture(colortex8, texCoord);
-        float histLen = c8.a;
+        // colortex8 holds the RAW accumulated GI + history length (histLen,
+        // already read above) from d0_accum.
+        vec4  c8 = texture(colortex8, texCoord);
 
         // Displayed result (colortex6 or colortex8 via DRAWBUFFERS)
         vec3 displayColor = outv.rgb;

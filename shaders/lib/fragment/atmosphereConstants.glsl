@@ -1,11 +1,6 @@
 #ifndef ATMOSPHERE_CONSTANTS_GLSL
 #define ATMOSPHERE_CONSTANTS_GLSL
 
-// Shared atmosphere constants + stateless helpers (phase fns, density, ray-sphere).
-// Consumed by:
-//   - lib/fragment/atmosphere.glsl  (legacy per-pixel raymarch — kept during migration)
-//   - lib/fragment/atmosphereLUT.glsl (Hillaire 2020 LUT build + sample)
-
 #ifndef SUN_ILLUMINANCE
 #define SUN_ILLUMINANCE 10.0
 #endif
@@ -46,8 +41,6 @@
 
 #define OZONE_CROSS_SECTION       vec3(3.472e-21, 4.14e-21, 1.11e-22)
 
-// Bare names preserved from legacy atmosphere.glsl so sky.glsl callers
-// (which use `pi`, `rPI`, `rLOG2` un-namespaced) keep working post-extraction.
 const float pi    = 3.14159265359;
 const float rPI   = 1.0 / pi;
 const float rLOG2 = 1.0 / log(2.0);
@@ -60,16 +53,8 @@ const vec2  SCALED_PLANET_RADIUS  = PLANET_RADIUS * INVERSE_SCALE_HEIGHTS;
 const float ATMOSPHERE_RADIUS         = PLANET_RADIUS + ATMOSPHERE_HEIGHT;
 const float ATMOSPHERE_RADIUS_SQUARED = ATMOSPHERE_RADIUS * ATMOSPHERE_RADIUS;
 
-// Per-channel extinction = scatter (Rayleigh + 1.11*Mie) + absorption (ozone).
-// COEFF_ATTENUATION[0] = Rayleigh scatter, [1] = Mie scatter (extinction factor folded in),
-// [2] = ozone absorption. Multiply a density vec3 to get vec3 extinction per channel.
 const mat3 COEFF_ATTENUATION = mat3(COEFF_RAYLEIGH, COEFF_MIE * 1.11, COEFF_OZONE);
 
-
-// --- Stateless helpers -----------------------------------------------------
-
-// Returns the two roots of a ray-sphere intersection. (x = near, y = far).
-// If both are negative the ray misses; if x<0<y the origin is inside the sphere.
 vec2 GetRaySphereIntersection(vec3 position, vec3 direction, float radius) {
     float PoD = dot(position, direction);
     float radiusSquared = radius * radius;
@@ -95,8 +80,6 @@ vec2 GetPhase(float cosTheta, const float g) {
     return vec2(GetRayleighPhase(cosTheta), GetMiePhase(cosTheta, g));
 }
 
-// Density at distance `centerDistance` from planet center.
-// Returns (Rayleigh, Mie, Ozone) — all unitless multipliers on the per-channel coeffs.
 vec3 GetAtmosphereDensity(float centerDistance) {
     vec2 rayleighMie = exp(centerDistance * -INVERSE_SCALE_HEIGHTS + SCALED_PLANET_RADIUS);
 

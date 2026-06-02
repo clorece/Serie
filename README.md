@@ -2,7 +2,7 @@
 
 <img width="2560" height="1440" alt="2026-05-29_18 49 11" src="https://github.com/user-attachments/assets/499510fa-0233-4d3f-b1a8-2efa26ad1026" />
 
-Serie is a gameplay-focused path tracing shaderpack designed for physical accuracy while allowing for artistic tweaks. It utilizes ReSTIR and voxelization for infinite-bounce indirect illumination, supplemented by screenspace raytracing for distant lighting to maintain performance and visual cohesion.
+Serie is path tracing shaderpack designed for physical accuracy while allowing for artistic tweaks. It utilizes ReSTIR and voxelization for infinite-bounce indirect illumination
 
 ### Currently Implemented Features:
 - ReSTIR DI + GI
@@ -10,12 +10,12 @@ Serie is a gameplay-focused path tracing shaderpack designed for physical accura
 - Advanced Water & Transparent Rendering (Water Parallax, Vertex Displacement, Auto-Generated Refractions for Ice and other Transparents, Caustics)
 - Atmospheric Scattering (Work in Progress)
 - Auto Exposure
+- Atmospheric Scattering
+- Volumetric Clouds
+- Volumetric Fog
 
 ### Features in Development:
 - Blocklight details
-- Atmospheric Scattering Rework
-- Volumetric Clouds
-- Volumetric Fog
 - Underwater Lightshafts and Fog Rendering
 - Integrated PBR + LabPBR
 - Distant Horizons
