@@ -107,15 +107,35 @@ float getClosestDepth(vec2 uv, vec2 screenSize) {
 
 vec2 getPreviousUV(vec2 uv, vec2 screenSize, out vec3 velocityPixels) {
     float depth0 = getClosestDepth(uv, screenSize);
-    if (depth0 >= 1.0) {
-        velocityPixels = vec2(0.0, 0.0).xyy;
-        return uv;
-    }
-    
+
     vec2 currentJitter = getTaaJitter(frameCounter) / screenSize;
     vec2 prevJitter    = getTaaJitter(frameCounter - 1) / screenSize;
+    vec2 uvUnjittered  = uv - currentJitter;
 
-    vec2 uvUnjittered = uv - currentJitter;
+    if (depth0 >= 1.0) {
+        // Sky / cloud reprojection. The depth-based velocity path below is
+        // meaningless for sky pixels (depth==1.0 → a far-plane point "at
+        // infinity"), and the old code just bailed with prevUV = uv. That left
+        // the cloud history pinned to a fixed screen position, so turning the
+        // camera smeared the clouds across the sky. Sky is effectively at
+        // infinity, so only camera *rotation* contributes (translation gives no
+        // parallax): rotate this pixel's view ray into world space and project
+        // it through the previous frame's view+projection. The ray's magnitude
+        // is irrelevant for the final reprojection — the perspective divide
+        // cancels it — but we still divide by w to recover the correct ray
+        // *sign* (gbufferProjectionInverse can return a negative w that would
+        // otherwise flip the direction into the wrong hemisphere).
+        vec4 viewH    = gbufferProjectionInverse * vec4(uvUnjittered * 2.0 - 1.0, 1.0, 1.0);
+        vec3 viewDir  = viewH.xyz / viewH.w;
+        vec3 worldDir = mat3(gbufferModelViewInverse) * viewDir;
+        vec3 prevView = mat3(gbufferPreviousModelView) * worldDir;
+        vec4 prevClip = gbufferPreviousProjection * vec4(prevView, 1.0);
+        vec2 prevUV   = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
+
+        velocityPixels = vec3((uvUnjittered - prevUV) * screenSize, 0.0);
+        return prevUV + prevJitter;
+    }
+
     vec4 clipPos = vec4(uvUnjittered * 2.0 - 1.0, depth0 * 2.0 - 1.0, 1.0);
     
     vec4 viewPosVal = gbufferProjectionInverse * clipPos;
@@ -161,17 +181,31 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
     
 
     bool isWater = textureLod(colortex2, uv, 0.0).b > 0.5;
+    bool isSky   = textureLod(depthtex0, uv, 0.0).r >= 1.0;
 
-    float aggression = isWater ? 3.0 : 1.0;     
+    // Clouds/sky are low-frequency, but the per-frame raymarch jitter injects
+    // fresh neighbourhood variance every frame; a tight AABB clamp keeps
+    // re-admitting that jitter as edge flicker / "boiling". Widen the clamp for
+    // sky (as we already do for water) so more of the now-correctly-reprojected
+    // history survives and the noise averages out instead of being clipped back
+    // in each frame.
+    float aggression = (isWater || isSky) ? 3.0 : 1.0;
 
     prevColorYCoCg = clipAABB(avgColorYCoCg, variance, prevColorYCoCg, aggression);
     vec3 prevColor = max(YCoCgtoRGB(prevColorYCoCg), 0.0);
-    
+
 
     float blendWeight = TAA_BLEND_WEIGHT;
+    // Sky now reprojects correctly (rotational), so we can lean harder on
+    // history to smooth the cloud raymarch noise without reintroducing smear.
+    if (isSky) blendWeight = max(blendWeight, 0.97);
+
     float velocityReject = clamp(pow(dot(velocityPixels.xy, velocityPixels.xy), 0.25) * 0.1, 0.0, 1.0);
     if (isWater) {
         velocityReject *= 0.25; // keep history blending stable for water during camera movement
+    }
+    if (isSky) {
+        velocityReject *= 0.5;  // reprojection handles rotation; only trim residual ghosting
     }
     blendWeight *= (1.0 - velocityReject);
 
