@@ -99,7 +99,7 @@ void main() {
 
             #ifdef AO_RTAO
                 uint aoSeed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter * 37 + 9);
-                rawAO = computeRTAO(colortex7, worldAbs, normalWorld, aoSeed, cameraPosition,
+                rawAO = computeRTAO(colortex7, colortex4, worldAbs, normalWorld, aoSeed, cameraPosition,
                                     depthtex0, gbufferProjection, gbufferModelView);
             #endif
 
@@ -140,7 +140,7 @@ void main() {
 
                 float dither = randFloat(seed);
                 vec3 rad = giRayRadiance(
-                    colortex7, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
+                    colortex7, colortex4, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
                     depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView,
                     hitPos, hitNormal, wasHit, hitCategory, rayEmission, skyLightmap, dither
                 );
@@ -235,7 +235,7 @@ void main() {
             }
           #else
             rawGI = computeGI(
-                colortex7, worldAbs, normalWorld, seed, cameraPosition,
+                colortex7, colortex4, worldAbs, normalWorld, seed, cameraPosition,
                 sunDirWorld, lightColor, giSky, skyLightmap,
                 depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView
             ) * (float(GI_STRENGTH) / 100.0);
@@ -262,7 +262,7 @@ void main() {
             vec3 worldAbs = worldRel + cameraPosition;
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
             rawAO = computeAO(
-                colortex7, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
+                colortex7, colortex4, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
                 depthtex0, gbufferProjection, gbufferModelView
             );
         }

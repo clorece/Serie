@@ -82,6 +82,7 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
 
 bool traceVoxelRay(
     usampler2D atlas,
+    sampler2D coarse,
     vec3 worldPos,
     vec3 rayDir,
     float maxDist,
@@ -110,20 +111,37 @@ bool traceVoxelRay(
     vec3 tMaxBox = max(t0, t1);
     float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
 
+    // ray-direction sign as a 0/1 selector for the brick exit face
+    vec3 dirPos = step(0.0, rayDir);
 
     vec3 tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
 
     float tEntry = 0.0;
     for (int i = 0; i < VOXEL_GRID_SIZE * 2; i++) {
         if (tEntry >= maxDist) return false;
-        
+
         if (tEntry > tExit) {
             vec2 dummyUV; vec3 dummyN, dummyP;
             return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
         }
 
+        // --- brick-level empty-space skip ---
+        // If the 8³ brick around `vox` is provably empty, advance straight to its
+        // exit face (skipping up to ~14 voxel steps) instead of marching it.
+        if (brickIsEmpty(coarse, vox)) {
+            vec3 brickMin = vec3((vox >> 3) << 3);
+            vec3 brickMax = brickMin + float(VOXEL_BRICK);
+            vec3 tb = (mix(brickMin, brickMax, dirPos) - localPos) * invRayDir;
+            float tBrickExit = min(tb.x, min(tb.y, tb.z));
+            tEntry = tBrickExit;
+            // land just past the exit face, then reseed the fine DDA from there
+            vox  = ivec3(floor(localPos + rayDir * (tBrickExit + 1e-3)));
+            tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
+            continue;
+        }
+
         uint vt = sampleVoxel(atlas, vox);
-        
+
         // all non-air voxels (including all blocklights) act as solid occluders for shadow rays
         if (vt != VOXEL_AIR && i > 0) return true;
 

@@ -38,7 +38,7 @@ uniform sampler2D colortex0;
 uniform sampler2D colortex1;
 uniform sampler2D colortex2;
 uniform sampler2D colortex3;
-// colortex4 removed — material packed into colortex1.a.
+uniform sampler2D colortex4; // coarse voxel-occupancy (.r = brick non-empty flag 1.0/0.0), built in prepare2
 uniform sampler2D colortex5;
 uniform sampler2D colortex6;
 uniform usampler2D colortex7;

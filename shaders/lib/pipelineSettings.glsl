@@ -11,7 +11,7 @@ const int RGBA8UI = 11;
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
 const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred)
-// colortex4 deleted — material code now packed into colortex1.a (was the only consumer).
+const int colortex4Format = RGBA8;   // coarse voxel-occupancy buffer (brick = 8³ block of colortex7); .r = non-empty flag (1.0/0.0). Built in prepare2, consumed by the brick-skipping DDA in lib/pt. Resolution 256×256 (covers coarse grids up to 32³ = VOXEL_GRID_SIZE 256).
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
 const int colortex6Format = RGBA16F; // SVGF a-trous ping-pong B (deferred). Bloom no longer uses this.
 const int colortex7Format = RGBA8UI; // voxel data atlas (.x = block type, .y = light level, .z = emissive light, .w = unused)
@@ -32,6 +32,7 @@ const int colortex14Format = RGBA16F; // .xy = ReSTIR reservoir sample-hit norma
 const int colortex15Format = RGBA16F; // temporal normal history
 
 const bool colortex3Clear = true;
+const bool colortex4Clear = false;  // prepare2 fully overwrites every valid texel each frame
 const bool colortex5Clear = false;
 const bool colortex6Clear = true;
 const bool colortex7Clear = true;

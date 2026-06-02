@@ -16,7 +16,7 @@ struct VoxelHit {
     vec3  emission;  // emission gathered from non-occluding blocklights the ray passed through
 };
 
-VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
+VoxelHit traceVoxelGI(usampler2D atlas, sampler2D coarse, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
     VoxelHit r;
     r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0); r.emission = vec3(0.0);
 
@@ -26,10 +26,12 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     }
     ivec3 vox      = ivec3(floor(localPos));
     ivec3 stepDir  = ivec3(sign(rayDir));
-    vec3  tDelta   = abs(1.0 / (rayDir + 1e-8));
+    vec3  invRayDir = 1.0 / (rayDir + 1e-8);
+    vec3  tDelta   = abs(invRayDir);
+    vec3  dirPos   = step(0.0, rayDir); // 0/1 selector for the +/- exit face
 
-    vec3 t0Box = (vec3(0.0) - localPos) / (rayDir + 1e-8);
-    vec3 t1Box = (vec3(VOXEL_GRID_SIZE) - localPos) / (rayDir + 1e-8);
+    vec3 t0Box = (vec3(0.0) - localPos) * invRayDir;
+    vec3 t1Box = (vec3(VOXEL_GRID_SIZE) - localPos) * invRayDir;
     vec3 tMaxBox = max(t0Box, t1Box);
     float tExit = min(tMaxBox.x, min(tMaxBox.y, tMaxBox.z));
     float actualMaxDist = min(maxDist, tExit);
@@ -43,11 +45,28 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 
     vec3  lastMask = vec3(0.0);
     float tEntry   = 0.0;
-    for (int i = 0; i < 80; i++) {
+    bool  first    = true; // true until the first fine sample / skip (was `i == 0`)
+    for (int i = 0; i < 128; i++) {
         if (tEntry > actualMaxDist) break;
 
+        // --- brick-level empty-space skip ---
+        // Empty bricks contain no occluders and no emissive voxels (emissive is
+        // non-air), so jumping them never drops a hit or a glow tap.
+        if (brickIsEmpty(coarse, vox)) {
+            vec3 brickMin = vec3((vox >> 3) << 3);
+            vec3 brickMax = brickMin + float(VOXEL_BRICK);
+            vec3 tb = (mix(brickMin, brickMax, dirPos) - localPos) * invRayDir;
+            float tBrickExit = min(tb.x, min(tb.y, tb.z));
+            lastMask = vec3(lessThanEqual(tb, vec3(tBrickExit))); // entry face of the next brick
+            tEntry = tBrickExit;
+            vox  = ivec3(floor(localPos + rayDir * (tBrickExit + 1e-3)));
+            tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
+            first = false;
+            continue;
+        }
+
         uvec4 v = texelFetch(atlas, voxelCoordToAtlas(vox), 0);
-        if (i == 0) {
+        if (first) {
             if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
                 vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
                                        : vec3(v.gba) / 255.0;
@@ -83,6 +102,7 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
         tEntry   = min(tMax.x, min(tMax.y, tMax.z));
         tMax    += vec3(mask) * tDelta;
         vox     += stepDir * ivec3(mask);
+        first    = false;
     }
     r.pos = worldPos + rayDir * tEntry;
     return r;
@@ -91,13 +111,13 @@ VoxelHit traceVoxelGI(usampler2D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 
 
 vec3 giRayRadiance(
-    usampler2D atlas, vec3 camPos, vec3 gridOrigin,
+    usampler2D atlas, sampler2D coarse, vec3 camPos, vec3 gridOrigin,
     vec3 origin, vec3 dir, vec3 sunDir, vec3 sunColor, vec3 skyColor,
     sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV,
     out vec3 hitPos, out vec3 hitNormal, out bool wasHit, out uint hitCategory, out vec3 rayEmission,
     float skyLightmap, float dither
 ) {
-    VoxelHit h = traceVoxelGI(atlas, gridOrigin, origin, dir, float(GI_RADIUS));
+    VoxelHit h = traceVoxelGI(atlas, coarse, gridOrigin, origin, dir, float(GI_RADIUS));
 
     rayEmission = h.emission;
 
@@ -118,7 +138,7 @@ vec3 giRayRadiance(
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0 && skyOcc > 0.01) {
-            bool occluded = traceVoxelRay(atlas, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV);
+            bool occluded = traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.1, sunDir, float(GI_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV);
             if (!occluded) rad += h.albedo * sunColor * ndl * skyOcc;
         }
 
@@ -127,7 +147,7 @@ vec3 giRayRadiance(
         if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) {
             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
             float lambertWeight = dot(h.normal, skyProbeDir);
-            bool  skyEscape     = !traceVoxelRay(atlas, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV);
+            bool  skyEscape     = !traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV);
             vec3 probeSky = skyColor;
             if (skyEscape) rad += h.albedo * probeSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
         }
@@ -164,7 +184,7 @@ vec3 giRayRadiance(
 
 
 vec3 computeGI(
-    usampler2D atlas, vec3 worldPos, vec3 normal, inout uint seed, vec3 camPos,
+    usampler2D atlas, sampler2D coarse, vec3 worldPos, vec3 normal, inout uint seed, vec3 camPos,
     vec3 sunDir, vec3 sunColor, vec3 skyColor, float skyLightmap,
     sampler2D depthtex0, sampler2D colortex5, sampler2D colortex1, mat4 gbufferProj, mat4 gbufferMV
 ) {
@@ -176,7 +196,7 @@ vec3 computeGI(
         float dither = randFloat(seed);
         vec3 dir = cosHemisphereDir(normal, randFloat(seed), randFloat(seed));
         vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCat; vec3 rayEmission;
-        acc += giRayRadiance(atlas, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, rayEmission, skyLightmap, dither);
+        acc += giRayRadiance(atlas, coarse, camPos, gridOrigin, origin, dir, sunDir, sunColor, skyColor, depthtex0, colortex5, colortex1, gbufferProj, gbufferMV, hitPos, hitNormal, wasHit, hitCat, rayEmission, skyLightmap, dither);
         acc += rayEmission;
     }
     return acc / float(GI_SAMPLES);
