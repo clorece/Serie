@@ -135,18 +135,45 @@ void main() {
             vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
             vec3 origin = worldAbs + normalWorld * 0.15;
 
+            // Wyman 2023: tile of pixels shares the candidate random sequence so the
+            // voxel DDA marches coherently (cache-friendly). dirSeed is its own stream
+            // (offset frame multiplier) so RESTIR_COHERENT_TILE==1 stays per-pixel random.
+            uint dirSeed = pixelSeed(ivec2(gl_FragCoord.xy) / RESTIR_COHERENT_TILE, frameCounter * 31 + 17);
+
+            // Wyman 2023 "stochastic LoD": on converged + camera-static pixels, skip the
+            // primary trace this frame and ride the temporal reservoir. Camera-static keeps
+            // reprojection reliable so the temporal merge below is guaranteed to repopulate.
+            int numCandidates = RESTIR_INITIAL_SAMPLES;
+            #ifdef RESTIR_CONVERGED_SKIP
+                if (validReproj && length(cameraPosition - previousCameraPosition) < 1e-3) {
+                    float prevMpeek = texture(colortex10, uvPrev).a;
+                    if (prevMpeek >= float(RESTIR_M_CAP) - 0.5 && randFloat(seed) < RESTIR_CONVERGED_SKIP_PROB) {
+                        numCandidates = 0;
+                    }
+                }
+            #endif
+
             Reservoir res = newReservoir();
-            for (int i = 0; i < RESTIR_INITIAL_SAMPLES; i++) {
-                vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
+            for (int i = 0; i < numCandidates; i++) {
+                vec3 dir = cosHemisphereDir(normalWorld, randFloat(dirSeed), randFloat(dirSeed));
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory; vec3 rayEmission;
 
+                VoxelHit h = traceVoxelGI(voxelSampler, colortex4, gridOrigin, origin, dir, float(GI_RADIUS));
+                rayEmission = h.emission;
+                vec3 sunVec = normalize(sunPosition);
+                vec3 upVec  = normalize(upPosition);
+                float sunUp = clamp(dot(sunVec, upVec), 0.0, 1.0);
+                float skyExposure = smoothstep(0.75, 0.9, skyLightmap);
+                float blocklightSuppression = mix(1.0, 0.05, sunUp * skyExposure);
+                rayEmission *= blocklightSuppression;
 
-                float dither = randFloat(seed);
-                vec3 rad = giRayRadiance(
-                    voxelSampler, colortex4, cameraPosition, gridOrigin, origin, dir, sunDirWorld, lightColor, giSky,
-                    depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView,
-                    hitPos, hitNormal, wasHit, hitCategory, rayEmission, skyLightmap, dither
-                );
+                wasHit = h.hit;
+                hitCategory = h.hit ? h.category : VOXEL_AIR;
+                hitPos = h.pos;
+                hitNormal = h.hit ? h.normal : -dir;
+
+                vec3 rad = vec3(0.0);
+                bool reprojected = false;
 
                 if (wasHit && hitCategory != VOXEL_EMISSIVE && hitCategory < 100u) {
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
@@ -165,8 +192,33 @@ void main() {
                             // ReSTIR multi-bounce: overwrite radiance with previous frame if depth matches
                             if (prevDepthRaw < 0.9999 && relErr < 0.05) {
                                 rad = texture(colortex5, uvHit).rgb;
+                                reprojected = true;
                             }
                         }
+                    }
+                }
+
+                if (!reprojected) {
+                    if (wasHit) {
+                        float skyOcc = max(skyLightmap, 0.0);
+                        float ndl = max(dot(h.normal, sunDirWorld), 0.0);
+                        if (ndl > 0.0 && skyOcc > 0.01) {
+                            bool occluded = traceVoxelRay(voxelSampler, colortex4, h.pos + h.normal * 0.1, sunDirWorld, float(GI_RADIUS), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
+                            if (!occluded) rad += h.albedo * lightColor * ndl * skyOcc;
+                        }
+
+                        vec3  skyProbeRaw    = h.normal + vec3(0.0, 1.0, 0.0);
+                        float skyProbeLenSq  = dot(skyProbeRaw, skyProbeRaw);
+                        if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) {
+                            vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
+                            float lambertWeight = dot(h.normal, skyProbeDir);
+                            bool  skyEscape     = !traceVoxelRay(voxelSampler, colortex4, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
+                            if (skyEscape) rad += h.albedo * giSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
+                        }
+                    } else {
+                        float skyOcc = max(skyLightmap, 0.0);
+                        vec3 skyRad = giSky * skyOcc;
+                        rad = skyRad * smoothstep(-0.2, 0.4, dir.y);
                     }
                 }
 

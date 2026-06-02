@@ -47,7 +47,7 @@ VoxelHit traceVoxelGI(usampler3D atlas, sampler2D coarse, vec3 gridOrigin, vec3 
     float tEntry   = 0.0;
     bool  first    = true; // true until the first fine sample / skip (was `i == 0`)
     // generous cap; rays terminate far earlier via actualMaxDist / brick-skips
-    for (int i = 0; i < 192; i++) {
+    for (int i = 0; i < GI_MAX_STEPS; i++) {
         if (tEntry > actualMaxDist) break;
 
         // --- brick-level empty-space skip ---

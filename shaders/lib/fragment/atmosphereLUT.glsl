@@ -630,17 +630,15 @@ AerialPerspective computeAerialPerspective(
 }
 
 
-// Ambient sky radiance for the GI sky probe. Samples the SkyView LUT with a
-// subtle sun-direction bias so physical dawn/dusk warmth bleeds into bounce
-// light naturally without over-warming or artificial tints.
+// Ambient sky radiance for the GI sky probe. Single straight-up SkyView-LUT tap.
+// (Previously tilted the sample 0.15 toward the sun, but a single directional
+// tap standing in for a hemisphere integral then CHASES the sun: as the sun
+// descends from noon the sample slid into the bright, warm circum-solar sky, so
+// the GI/cloud/fog ambient brightened and warmed at mid sun elevations. Sampling
+// straight up keeps the ambient stable across the day; intentional warmth comes
+// from GI_SKY_WARMTH in d0_restir.)
 vec3 getSkyAmbient(float eyeAltitude) {
-    vec3 worldSunDir = mat3(gbufferModelViewInverse) * normalize(sunPosition);
-    // Tilt the zenith direction subtly towards the sun position (0.15 bias)
-    vec3 sampleDir = normalize(vec3(0.0, 1.0, 0.0) + 0.15 * worldSunDir);
-
-    // Single-tap: 1 fetch instead of 4 across all shaded pixels in d0_restir.
-    vec3 ambient = textureLod(colortex12, _skyViewLUT_UV(sampleDir), 0.0).rgb;
-    return ambient;
+    return textureLod(colortex12, _skyViewLUT_UV(vec3(0.0, 1.0, 0.0)), 0.0).rgb;
 }
 
 // Helper to compute the dynamic sun/moon light color inline to avoid circular dependencies

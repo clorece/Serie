@@ -44,7 +44,8 @@ float dayScale   = mix(0.1, 1.0, max(sunUp, 0.0));
 float nightScale = 0.025;
 float ambientScale = mix(nightScale, dayScale, sunActivity);
 
-// Warm up ambient light subtly during sunset/sunrise (peaks when sun is close to horizon)
-float sunsetMask = clamp(1.0 - abs(sunUp - 0.08) * 5.0, 0.0, 1.0);
-vec3 baseAmbient = mix(vec3(0.27, 0.32, 0.38), vec3(0.42, 0.34, 0.23), sunsetMask * 0.75);
+// Neutral sky-tint ambient. (Removed the old sunsetMask warm injection — a
+// hardcoded orange peaking near the horizon (sunUp≈0.08) that double-dipped on
+// the warmth the Hillaire atmosphere LUT already encodes.)
+vec3 baseAmbient = vec3(0.27, 0.32, 0.38);
 ambientColor = baseAmbient * ambientScale;

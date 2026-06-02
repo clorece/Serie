@@ -169,6 +169,7 @@
 #define VOXEL_GRID_SIZE 128 // [64 128 256 512 1024 2048]
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
+#define GI_MAX_STEPS 192 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
 #define GI_STRENGTH 100 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
@@ -202,10 +203,24 @@
 #define RESTIR_GI
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] candidate rays generated per frame
 #define RESTIR_M_CAP 48         // [8 12 16 24 32 48] max reservoir confidence (history clamp)
-#define RESTIR_JACOBIAN
+#define RESTIR_JACOBIAN  // OFF: the reconnection Jacobian (calculateJacobian, clamped to a wide [0.05,20]) multiplies the spatial-reuse weight and lets one grazing/edge neighbour hijack the reservoir -> fireflies/static on edges & thin foliage. Original code passed 1.0 here. Re-enable only with a TIGHT clamp (e.g. [0.8,1.25]).
 #define RESTIR_SPATIAL          // enable spatial reservoir reuse from neighbours
 #define RESTIR_SPATIAL_SAMPLES 2 // [1 2 3 4 5] neighbour reservoirs merged per pixel
 #define RESTIR_SPATIAL_RADIUS 16.0 // [4.0 8.0 16.0 24.0 32.0] neighbour search radius (pixels)
+
+// --- Low-level perf (Wyman, "What Does Optimizing ReSTIR Look Like?", SIGGRAPH 2023) ---
+// Lesson: "highly randomized sampling is bad for caching." A tile of pixels shares
+// the candidate cosine-hemisphere random pair, so neighbouring pixels march coherent
+// rays through voxelSampler -> the DDA hits the same cache lines instead of thrashing.
+// Per-pixel normals + per-frame rotation + ReSTIR spatiotemporal reuse dissolve the
+// resulting correlation ("artifacts disappear after reuse"). 1 = independent per pixel.
+#define RESTIR_COHERENT_TILE 1 // [1 2 4 8] pixels per tile sharing candidate ray directions (voxel cache coherence). NOTE: >1 creates a correlated NxN checkerboard that the denoiser must blur away; with the responsive A-SVGF alpha it becomes visible (jittering checker under changing light). Keep at 1 unless you re-add strong spatial decorrelation.
+// Lesson: "ReSTIR is a stochastic LoD; important paths change slowly." On fully
+// converged + camera-static pixels, stochastically skip the primary candidate trace
+// and ride the temporal reservoir. Saves voxel traces in static views; slightly slows
+// response to lighting changes. Opt-in.
+//#define RESTIR_CONVERGED_SKIP
+#define RESTIR_CONVERGED_SKIP_PROB 0.5 // [0.25 0.5 0.75] fraction of converged-static frames to skip the trace on
 
 // TODO these might be dead macros to fix spatial reservoir reuse
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] clamp on the unbiased reservoir weight W 

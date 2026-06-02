@@ -60,16 +60,20 @@ float calculateJacobian(vec3 shadingPos, vec3 neighborShadingPos, vec3 samplePos
     return clamp(jacobian, 0.05, 20.0);
 }
 
-vec2 getUniformOffset(int sampleIdx, int frame) {
-    uint seedX = pcgHash(uint(frame) * 7U + uint(sampleIdx) * 101U);
-    uint seedY = pcgHash(uint(frame) * 13U + uint(sampleIdx) * 197U);
-    
-    float randX = float(seedX >> 8u) * (1.0 / float(1u << 24u));
-    float randY = float(seedY >> 8u) * (1.0 / float(1u << 24u));
-    
-    float ang = randX * 6.2831853;
-    float dist = sqrt(randY) * RESTIR_SPATIAL_RADIUS;
-    
+// PER-PIXEL random disk offset for spatial reservoir reuse. The old version used a
+// frame-uniform offset combined with `q = p ^ delta`; XOR-ing every pixel by the same
+// constant produces the classic XOR/Sierpinski maze texture, which the reused reservoir
+// radiance then stamps onto flat surfaces (visible once the denoiser stopped over-blurring
+// it). Giving each pixel its own random rotation+radius and ADDING the offset yields
+// unstructured noise the temporal accumulation + a-trous handle cleanly.
+vec2 getSpatialOffset(int sampleIdx, int frame, ivec2 pixel) {
+    uint s = pcgHash(uint(pixel.x) ^ (uint(pixel.y) << 16u) ^ (uint(frame) * 9781u) ^ (uint(sampleIdx) * 26699u));
+    float r1 = float(s >> 8u) * (1.0 / float(1u << 24u));
+    s = pcgHash(s);
+    float r2 = float(s >> 8u) * (1.0 / float(1u << 24u));
+
+    float ang  = r1 * 6.2831853;
+    float dist = sqrt(r2) * RESTIR_SPATIAL_RADIUS;
     return vec2(cos(ang), sin(ang)) * dist;
 }
 
@@ -146,18 +150,26 @@ void main() {
         }
 
         for (int i = 0; i < spatialSamples; i++) {
-            vec2 uniformOffset = getUniformOffset(i, frameCounter);
-            ivec2 delta = ivec2(round(uniformOffset));
-            
+            ivec2 p = ivec2(gl_FragCoord.xy);
+            vec2 spatialOffset = getSpatialOffset(i, frameCounter, p);
+            ivec2 delta = ivec2(round(spatialOffset));
+
             if (delta.x == 0 && delta.y == 0) {
                 delta.x = 1;
             }
-            
-            ivec2 p = ivec2(gl_FragCoord.xy);
-            ivec2 q = p ^ delta;
+
+            ivec2 q = p + delta;
             vec2 nUV = (vec2(q) + 0.5) * texelSize;
 
-            if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x || 
+            // Mirror the offset back inside if it ran off-screen, so edge pixels keep
+            // their spatial-sample count (the old XOR folded pixels in for free; additive
+            // offsets do not, which would otherwise leave a noisy border).
+            if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x ||
+                nUV.y < paddingSpatial.y || nUV.y > 1.0 - paddingSpatial.y) {
+                q  = p - delta;
+                nUV = (vec2(q) + 0.5) * texelSize;
+            }
+            if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x ||
                 nUV.y < paddingSpatial.y || nUV.y > 1.0 - paddingSpatial.y) continue;
 
 
@@ -172,7 +184,17 @@ void main() {
             Reservoir n = readReservoir(colortex10, colortex11, colortex14, nUV);
             n.M = min(n.M, float(RESTIR_M_CAP));
 
-            mergeReservoir(shade, n, 1.0, seed);
+            // Each reuse step is another RIS iteration (Wyman 2023): the neighbour's
+            // sample is reconnected to THIS shading point, so its contribution must be
+            // reweighted by the geometric (solid-angle) Jacobian. Previously hardcoded
+            // to 1.0, which biased the estimate and capped the usable reuse radius.
+            float jacobian = 1.0;
+            #ifdef RESTIR_JACOBIAN
+                vec3 nShadePos = getNeighborWorldPosition(nUV, nDepthRaw);
+                jacobian = calculateJacobian(worldRel, nShadePos, n.samplePos, n.sampleNormal);
+            #endif
+
+            mergeReservoir(shade, n, jacobian, seed);
         }
         finalizeReservoir(shade);
         rawGI = min(shade.radiance * shade.W, vec3(RESTIR_CLAMP)) * (float(GI_STRENGTH) / 100.0);

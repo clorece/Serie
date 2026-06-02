@@ -153,11 +153,24 @@ float gauss3Var(sampler2D src, vec2 uv) {
     return v / wsum;
 }
 
-// might need to change this to just use TAAJitter (might fix some weird temporal artifacts that way)
+// À-trous kernel rotation, PHASE-LOCKED to the TAA jitter cycle.
+// Two independent problems are addressed:
+//   * SPATIAL: the old version quantized to 8x8-pixel blocks (`floor(uv*viewSize/8.0)`),
+//     so at the large dilations of d2/d3/d4 (4/8/16) the per-block-constant rotation left
+//     discontinuities at block borders -> a distance-based grid/maze. We use a per-pixel
+//     base angle instead (no block structure).
+//   * TEMPORAL: the old version animated the rotation on `frame % 64`. TAA jitters on a
+//     `frame % 8` cycle (see getTaaJitter), so a 64-frame rotation beating against the
+//     8-frame TAA cycle never settled inside TAA's ~20-frame memory -> the edge blur
+//     changed every frame = refraction-like shimmer on block edges. We cycle the temporal
+//     component in lock-step with TAA (period 8, even 45-deg steps). Each pixel then
+//     repeats the SAME 8 orientations every 8 frames, so TAA (and the GI history) converge
+//     to their rotational average -> stable, while staying spatially decorrelated.
 float getJitterRotation(vec2 uv, int frame) {
-    vec2 p = floor(uv * vec2(viewWidth, viewHeight) / 8.0);
-    p += float(frame % 64) * vec2(5.588238, 5.588238);
-    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+    vec2 p = uv * vec2(viewWidth, viewHeight);
+    float perPixel = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+    float taaPhase = float(frame % 8) * (6.2831853 / 8.0); // locked to the TAA jitter period
+    return perPixel + taaPhase;
 }
 
 vec4 svgfAtrousFirst(
