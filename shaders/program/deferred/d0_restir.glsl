@@ -85,8 +85,7 @@ void main() {
         // LUT carries time-of-day modulation naturally, dim at night via the
         // moon-only scatter integral). Direct skylight in d7_composite still
         // uses ambientColor for now (v2 will unify it).
-        float eyeAlt = cameraPosition.y - 64.0;
-        vec3 giSky = getSkyAmbient(eyeAlt) * GI_SKY_BRIGHTNESS;
+        vec3 giSky = ambientColor * GI_SKY_BRIGHTNESS;
         // Warm the skylight ILLUMINATION only (not the rendered sky). Golden tint,
         // ~luminance-preserving so brightness stays put as warmth increases.
         giSky *= mix(vec3(1.0), vec3(1.25, 1.04, 0.72), GI_SKY_WARMTH);
@@ -213,7 +212,9 @@ void main() {
                             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
                             float lambertWeight = dot(h.normal, skyProbeDir);
                             bool  skyEscape     = !traceVoxelRay(voxelSampler, colortex4, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
-                            if (skyEscape) rad += h.albedo * giSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
+                            // Use luminance-only albedo — skylight is too diffuse/weak
+                            // to produce visible color bleeding off surfaces.
+                            if (skyEscape) rad += vec3(luma(h.albedo)) * giSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
                         }
                     } else {
                         float skyOcc = max(skyLightmap, 0.0);

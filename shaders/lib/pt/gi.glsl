@@ -150,7 +150,9 @@ vec3 giRayRadiance(
             float lambertWeight = dot(h.normal, skyProbeDir);
             bool  skyEscape     = !traceVoxelRay(atlas, coarse, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV, false);
             vec3 probeSky = skyColor;
-            if (skyEscape) rad += h.albedo * probeSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
+            // Use luminance-only albedo — skylight is too diffuse/weak
+            // to produce visible color bleeding off surfaces.
+            if (skyEscape) rad += vec3(dot(h.albedo, vec3(0.2126, 0.7152, 0.0722))) * probeSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
         }
 
         hitPos    = h.pos;

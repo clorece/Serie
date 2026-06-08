@@ -183,7 +183,7 @@
 #define GI_TEMPORAL_REJECT 4.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
 
 // TODO double check if any of these SVGF options are now redundant or can be tuned more aggressively with the new PT implementation
-#define GI_DENOISE      // SVGF TODO: change macro name to SVGF_DENOISE
+//#define GI_DENOISE      // SVGF TODO: change macro name to SVGF_DENOISE
 #define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
 #define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power); lower = smoother
 #define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
