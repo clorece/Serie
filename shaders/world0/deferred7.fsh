@@ -1,5 +1,0 @@
-#version 430 compatibility
-#define FRAGMENT
-#include "/lib/uniforms.glsl"
-
-#include "/program/deferred/d6_denoise.glsl"

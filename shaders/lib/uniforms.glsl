@@ -38,11 +38,12 @@ uniform sampler2D colortex0;
 uniform sampler2D colortex1;
 uniform sampler2D colortex2;
 uniform sampler2D colortex3;
-uniform sampler2D colortex4; // coarse voxel-occupancy (.r = brick non-empty flag 1.0/0.0), built in prepare2
+uniform sampler2D colortex4;
 uniform sampler2D colortex5;
 uniform sampler2D colortex6;
-uniform usampler2D colortex7; // (legacy 2D voxel atlas — superseded by voxelSampler 3D image)
 uniform usampler3D voxelSampler; // fine voxel grid, dedicated 3D image (see image.voxelImg in shaders.properties)
+uniform usampler3D brickSampler;      // 8³-block occupancy (64×16×64), written by the shadow pass
+uniform usampler3D superBrickSampler; // 64³-block occupancy (8×2×8), written by the shadow pass
 uniform sampler2D colortex8;
 uniform sampler2D colortex9;
 uniform sampler2D colortex10;

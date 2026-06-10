@@ -20,36 +20,12 @@ vec3 cosHemisphereDir(vec3 n, float r1, float r2) {
     return normalize(t * (sinTheta * cos(phi)) + b * (sinTheta * sin(phi)) + n * cosTheta);
 }
 
-float computeRTAO(
-    usampler3D atlas,
-    sampler2D coarse,
-    vec3        worldPos,
-    vec3        normalWorld,
-    inout uint  seed,
-    vec3        camPos,
-    sampler2D   depthtex0,
-    mat4        gbufferProj,
-    mat4        gbufferMV
-) {
-    vec3 origin = worldPos + normalWorld * 0.05;
-    if (normalWorld.y > 0.5) {
-        origin.y = max(origin.y, floor(worldPos.y - 0.01) + 1.05);
-    }
-    float unoccluded = 0.0;
-    for (int i = 0; i < RTAO_SAMPLES; i++) {
-        vec3 dir = cosHemisphereDir(normalWorld, randFloat(seed), randFloat(seed));
-        // RTAO is the ONE path that keeps the screen-space fallback (allowSS = true)
-        if (!traceVoxelRay(atlas, coarse, origin, dir, float(RTAO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, true)) {
-            unoccluded += 1.0;
-        }
-    }
-    return unoccluded / float(RTAO_SAMPLES);
-}
-
+// (computeRTAO removed — ambient occlusion is now the screen-space GTAO in
+// lib/pt/gtao.glsl, computed in d0_accum, fully decoupled from the voxel
+// tracer. computeAO below remains for the legacy VOXEL_AO mode.)
 
 float computeAO(
     usampler3D atlas,
-    sampler2D coarse,
     vec3        worldPos,
     vec3        normalWorld,
     inout uint  seed,
@@ -70,7 +46,7 @@ float computeAO(
         float r1  = randFloat(seed);
         float r2  = randFloat(seed);
         vec3  dir = cosHemisphereDir(normalWorld, r1, r2);
-        if (!traceVoxelRay(atlas, coarse, origin, dir, float(AO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, false)) {
+        if (!traceVoxelRay(atlas, origin, dir, float(AO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, false)) {
             unoccluded += 1.0;
         }
     }

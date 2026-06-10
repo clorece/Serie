@@ -86,7 +86,6 @@ bool screenSpaceRayTrace(vec3 worldRayOrigin, vec3 worldRayDir, float maxDist, v
 // treat out-of-grid as unoccluded (the voxel grid is the source of truth).
 bool traceVoxelRay(
     usampler3D atlas,
-    sampler2D coarse,
     vec3 worldPos,
     vec3 rayDir,
     float maxDist,
@@ -133,19 +132,31 @@ bool traceVoxelRay(
             return screenSpaceRayTrace(worldPos + rayDir * tEntry, rayDir, maxDist - tEntry, camPos, gbufferProj, gbufferMV, depthtex0, 0.5, dummyUV, dummyN, dummyP);
         }
 
-        // --- brick-level empty-space skip ---
-        // If the 8³ brick around `vox` is provably empty, advance straight to its
-        // exit face (skipping up to ~14 voxel steps) instead of marching it.
-        if (brickIsEmpty(coarse, vox)) {
-            vec3 brickMin = vec3((vox >> 3) << 3);
-            vec3 brickMax = brickMin + float(VOXEL_BRICK);
-            vec3 tb = (mix(brickMin, brickMax, dirPos) - localPos) * invRayDir;
-            float tBrickExit = min(tb.x, min(tb.y, tb.z));
-            tEntry = tBrickExit;
-            // land just past the exit face, then reseed the fine DDA from there
-            vox  = ivec3(floor(localPos + rayDir * (tBrickExit + 1e-3)));
-            tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
-            continue;
+        // --- hierarchical empty-space skip (64³ super-brick, then 8³ brick) ---
+        // If the cell around `vox` is provably empty, advance straight to its
+        // exit face (skipping up to ~110 / ~14 voxel steps) instead of marching it.
+        // Single in-grid test shared by both levels (out-of-grid falls through
+        // to a normal fine step, matching brickIsEmpty's old bounds semantics).
+        if (all(greaterThanEqual(vox, ivec3(0))) && all(lessThan(vox, VOXEL_DIMS))) {
+            if (texelFetch(superBrickSampler, vox >> 6, 0).r == 0u) {
+                vec3 cellMin = vec3((vox >> 6) << 6);
+                vec3 tb = (mix(cellMin, cellMin + float(VOXEL_SUPER), dirPos) - localPos) * invRayDir;
+                float tCellExit = min(tb.x, min(tb.y, tb.z));
+                tEntry = tCellExit;
+                // land just past the exit face, then reseed the fine DDA from there
+                vox  = ivec3(floor(localPos + rayDir * (tCellExit + 1e-3)));
+                tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
+                continue;
+            }
+            if (texelFetch(brickSampler, vox >> 3, 0).r == 0u) {
+                vec3 brickMin = vec3((vox >> 3) << 3);
+                vec3 tb = (mix(brickMin, brickMin + float(VOXEL_BRICK), dirPos) - localPos) * invRayDir;
+                float tBrickExit = min(tb.x, min(tb.y, tb.z));
+                tEntry = tBrickExit;
+                vox  = ivec3(floor(localPos + rayDir * (tBrickExit + 1e-3)));
+                tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
+                continue;
+            }
         }
 
         uint vt = sampleVoxel(atlas, vox);

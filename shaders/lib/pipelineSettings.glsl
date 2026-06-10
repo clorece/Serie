@@ -10,15 +10,13 @@ const int RGBA8UI = 11;
 
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
-const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred)
-const int colortex4Format = RGBA8;   // coarse voxel-occupancy buffer (brick = 8³ block of colortex7); .r = non-empty flag (1.0/0.0). Built in prepare2, consumed by the brick-skipping DDA in lib/pt. Resolution 512×256 (coarse grid 64×8×64 for the 512×64×512 voxel grid).
+const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred); final denoised GI lands here for d7_composite
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
 const int colortex6Format = RGBA16F; // SVGF a-trous ping-pong B (deferred). Bloom no longer uses this.
-const int colortex7Format = RGBA8UI; // voxel data atlas (.x = block type, .y = light level, .z = emissive light, .w = unused)
 const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated irradiance, .a = history length)
-const int colortex9Format = RGBA16F; // SVGF moments (.r = linear depth, .g = luma M1, .b = luma M2)
+const int colortex9Format = RGBA16F; // SVGF moments (.r = raw depth, .g = luma M1, .b = luma M2, .a = accumulated RTAO)
 const int colortex10Format = RGBA16F; // ReSTIR reservoir radiance.rgb (clamped <=RESTIR_CLAMP) + M (<=RESTIR_M_CAP); both exact in half, saves bandwidth on this per-frame R/W buffer
-const int colortex11Format = RGBA32F; // ReSTIR reservoir samplePos.xyz + W
+const int colortex11Format = RGBA16F; // ReSTIR reservoir samplePos.xyz + W. samplePos is camera-relative (|x| <= 256); half precision worst-case ~0.25 blocks at the grid edge, and it only feeds the reconnection Jacobian (distance ratios), so 16F is plenty — halves the bandwidth of this per-frame R/W buffer vs the old RGBA32F.
 // Atmosphere rewrite (see shaderpacks/serievx_atmosphere_plan.md):
 // colortex12 = packed atmosphere LUT (Hillaire 2020): T-LUT (0..255,0..63),
 //   MS-LUT (0..31,64..95), Sky-View LUT (0..255,96..255). 256×256 RGBA16F.
@@ -28,14 +26,12 @@ const int colortex11Format = RGBA32F; // ReSTIR reservoir samplePos.xyz + W
 //   wired into this pack's format-enum). Rebuilt every frame by world0/prepare1.fsh.
 const int colortex12Format = RGBA16F;
 const int colortex13Format = RGBA16F;
-const int colortex14Format = RGBA16F; // .xy = ReSTIR reservoir sample-hit normal, .w = raw RTAO scalar
-const int colortex15Format = RGBA16F; // temporal normal history
+const int colortex14Format = RGBA16F; // .xy = ReSTIR reservoir sample-hit normal, .z = selected sample target, .w unused
+const int colortex15Format = RGBA16F; // packed denoise G-buffer + temporal normal history: .xy = octahedral WORLD normal, .z = linear depth, .w = 1. Written once by d0_restir; every a-trous tap reads normal+depth in ONE fetch instead of depthtex0 + colortex1.
 
 const bool colortex3Clear = true;
-const bool colortex4Clear = false;  // prepare2 fully overwrites every valid texel each frame
 const bool colortex5Clear = false;
 const bool colortex6Clear = true;
-const bool colortex7Clear = true;
 const bool colortex8Clear = false;
 const bool colortex9Clear = false;
 const bool colortex10Clear = false;
@@ -52,12 +48,11 @@ const bool colortex14Clear = false;
 const bool colortex15Clear = false;
 
 const int shadowMapResolution = SHADOW_RESOLUTION;
-// Must cover the voxel grid's horizontal radius (VOXEL_DIM_X/2 = 256) or the
-// outer grid never gets voxelized (blocks are only written where the shadow
-// pass rasterizes them). This is the main cost of the doubled PT distance —
-// the shadow pass now renders a 256-radius region. If distant voxels show
-// holes, raise SHADOW_RESOLUTION (more shadow texels per far block).
-const float shadowDistance = 256.0;
+// Must cover the voxel grid's horizontal radius or the outer grid never gets
+// voxelized (blocks are only written where the shadow pass rasterizes them).
+// Tracks the VOXEL_DISTANCE option (chunks * 16 blocks; macro chain in
+// options.glsl). If distant voxels show holes, raise SHADOW_RESOLUTION.
+const float shadowDistance = VOXEL_SHADOW_DISTANCE;
 const float sunPathRotation = -40.0; // [10.0 20.0 30.0 40.0 50.0 60.0]
 const float ambientOcclusionLevel = 0.5;
 const float ambientStrength = 0.0;
@@ -70,8 +65,7 @@ const bool shadowtex1Nearest = false;
 // Required for the multi-scale bloom atlas (mip-sampling colortex0 at LODs 2..8).
 const bool colortex0MipmapEnabled = true;
 
-// TODO colortex6 is now SVGF-only (no longer touched by bloom). It is the ping-pong
-// B buffer for the a-trous chain (d1_atrous_first -> d1..d4_denoise, steps 1/2/4/8/16).
-// To delete it entirely, refactor that chain to single-buffer ping-pong on colortex3.
-// Watch the c3 ping-pong parity warning when doing that.
+// colortex6 is SVGF-only: ping-pong B for the a-trous chain
+// (d1_atrous_first step1 -> ct3, then 2->ct6, 4->ct3, 8->ct6, 16->ct3).
+// The final filtered GI therefore lands on colortex3, which d7_composite reads.
 #endif

@@ -7,7 +7,7 @@
 //  SerieVX voxel grid — ANISOTROPIC, camera-relative, TRUE 3D TEXTURE
 // ============================================================================
 // The grid is wide in X/Z and short in Y (the Minecraft world is mostly
-// horizontal) — see iterationRP's 512×128×512 voxelResolution.
+// horizontal).
 //
 //   512 × 128 × 512  → horizontal radius 256, vertical radius 64.
 //
@@ -19,14 +19,14 @@
 // shifted it off-centre. A 3D image takes explicit dims (up to
 // GL_MAX_3D_TEXTURE_SIZE, ~2048) and is also better for DDA cache locality.
 //
-// Dims must each be a multiple of VOXEL_BRICK (8) (and the X/Z a multiple of
-// COARSE_ATLAS_COLS for the 2D coarse buffer). If you change them, update the
-// X Y Z in the image.voxelImg directive + colortex4's resolution.
+// Dims must each be a multiple of VOXEL_SUPER (64). If you change them, update
+// the X Y Z of image.voxelImg, image.brickImg (dims/8) and image.superBrickImg
+// (dims/64) in shaders.properties.
 //
 // ----------------------------------------------------------------------------
 //  FUTURE WORK [SUBVOXELIZATION FOR NON-CUBE BLOCKS] (stairs/slabs/fences/etc).
-//  Today every solid block is a full cube (category in .r). iterationRP stores
-//  a per-voxel SHAPE ID (voxelID 25–78) and intersects the real block shape in
+//  Today every solid block is a full cube (category in .r). We could store
+//  a per-voxel SHAPE ID (voxelID 25–78) and intersect the real block shape in
 //  the voxel via HitShape_Lite() (a tiny SDF/AABB test per shape). To add: carry
 //  a shape id per voxel (a spare channel of the RGBA8UI, or widen to a second
 //  3D image), and in the DDA hit branch call HitShape(ray, voxelCoord, shapeId,
@@ -34,9 +34,13 @@
 //  Brick-skip is unaffected (a brick is "occupied" if it has any non-air voxel).
 // ============================================================================
 
-#define VOXEL_DIM_X 512
+// X/Z scale with the VOXEL_DISTANCE option (chunks of horizontal radius):
+// dim = radius*2 = chunks*16*2. All option values keep dims a multiple of
+// VOXEL_SUPER (64). The image dims in shaders.properties follow via its own
+// #if VOXEL_DISTANCE chain — keep them in sync.
+#define VOXEL_DIM_X (VOXEL_DISTANCE * 32)
 #define VOXEL_DIM_Y 128
-#define VOXEL_DIM_Z 512
+#define VOXEL_DIM_Z (VOXEL_DISTANCE * 32)
 const ivec3 VOXEL_DIMS       = ivec3(VOXEL_DIM_X, VOXEL_DIM_Y, VOXEL_DIM_Z);
 // half-extent (radius) per axis; the camera sits at the grid centre
 const vec3  VOXEL_RADIUS_VEC = vec3(VOXEL_DIM_X / 2, VOXEL_DIM_Y / 2, VOXEL_DIM_Z / 2);
@@ -48,44 +52,40 @@ const vec3  VOXEL_RADIUS_VEC = vec3(VOXEL_DIM_X / 2, VOXEL_DIM_Y / 2, VOXEL_DIM_
 #define VOXEL_EMISSIVE 3u
 
 
-// --- Coarse occupancy (brick-skipping DDA acceleration) ---
-// Stays a small 2D atlas (colortex4) — it's tiny (64×16×64 cells) and fits the
-// render resolution easily, so it doesn't hit the image-buffer size limit.
-// One coarse cell ("brick") = VOXEL_BRICK³ voxels of the fine atlas. A brick is
-// "occupied" iff any voxel inside it is non-air. Built every frame in prepare2
-// (program/prepare/p2_voxel_mip.glsl) into colortex4, then used by the DDA in
-// ddaTrace.glsl / gi.glsl to skip whole empty bricks in one step.
+// --- Hierarchical occupancy (empty-space-skipping DDA acceleration) ---
+// TWO levels of occupancy, both dedicated 3D images written DURING
+// voxelization (the shadow pass stores 1 into both alongside every fine voxel
+// write — see program/gbuffers/shadow.glsl). This replaced the old prepare2
+// reduction pass, which re-read up to 8³ fine voxels for every one of the
+// 64×16×64 coarse cells every frame (tens of millions of texelFetches/frame,
+// dominated by fully-empty bricks that could never early-out).
+//
+//   level 0: "brick"       =  8³ blocks  → brickImg/brickSampler,      64×16×64 R8UI
+//   level 1: "super-brick" = 64³ blocks  → superBrickImg/superBrickSampler, 8×2×8 R8UI
+//
+// A cell is "occupied" iff any fine voxel inside it was written this frame
+// (exactly the same predicate the old reduction computed). Both images are
+// cleared each frame by Iris (clear=true in shaders.properties), so racing
+// imageStores of the constant 1 are benign.
 #define VOXEL_BRICK 8
-const ivec3 COARSE_DIMS = ivec3(VOXEL_DIM_X / VOXEL_BRICK, VOXEL_DIM_Y / VOXEL_BRICK, VOXEL_DIM_Z / VOXEL_BRICK); // 64×16×64
-#define COARSE_ATLAS_COLS 8
-// coarse atlas: width = 8·64 = 512, height = (64/8)·16 = 128  →  colortex4 ≥ 512×128
+#define VOXEL_SUPER 64
+const ivec3 BRICK_DIMS = VOXEL_DIMS / VOXEL_BRICK; // 64×16×64
+const ivec3 SUPER_DIMS = VOXEL_DIMS / VOXEL_SUPER; // 8×2×8
 
-ivec2 coarseCoordToAtlas(ivec3 c) {
-    int col = c.z % COARSE_ATLAS_COLS;
-    int row = c.z / COARSE_ATLAS_COLS;
-    return ivec2(col * COARSE_DIMS.x + c.x, row * COARSE_DIMS.y + c.y);
-}
-
-// Inverse of coarseCoordToAtlas — used by the prepare2 build pass to turn the
-// fragment's pixel coordinate back into the coarse cell it represents. Returns
-// false for atlas texels that fall outside the valid coarse grid.
-bool coarseAtlasToCoord(ivec2 px, out ivec3 c) {
-    int col = px.x / COARSE_DIMS.x;
-    int cx  = px.x % COARSE_DIMS.x;
-    int row = px.y / COARSE_DIMS.y;
-    int cy  = px.y % COARSE_DIMS.y;
-    int cz  = row * COARSE_ATLAS_COLS + col;
-    c = ivec3(cx, cy, cz);
-    return (col < COARSE_ATLAS_COLS) && (cz < COARSE_DIMS.z);
-}
-
-// True when the brick containing fine voxel `vox` is provably empty (safe to
-// skip). Returns false at/outside grid bounds so the caller falls back to a
-// normal fine step there. Occupancy is stored as 0.0/1.0 in colortex4.r.
-bool brickIsEmpty(sampler2D coarse, ivec3 vox) {
+// True when the 8³ brick containing fine voxel `vox` is provably empty (safe
+// to skip). Returns false at/outside grid bounds so the caller falls back to a
+// normal fine step there.
+bool brickIsEmpty(ivec3 vox) {
     if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, VOXEL_DIMS))) return false;
-    ivec3 brick = vox >> 3; // /VOXEL_BRICK (8)
-    return texelFetch(coarse, coarseCoordToAtlas(brick), 0).r < 0.5;
+    return texelFetch(brickSampler, vox >> 3, 0).r == 0u;
+}
+
+// True when the 64³ super-brick containing fine voxel `vox` is provably empty.
+// Lets open-air rays jump ~64 blocks in one step before descending to the
+// brick level and finally the fine DDA near geometry.
+bool superBrickIsEmpty(ivec3 vox) {
+    if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, VOXEL_DIMS))) return false;
+    return texelFetch(superBrickSampler, vox >> 6, 0).r == 0u;
 }
 
 

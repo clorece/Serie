@@ -125,8 +125,18 @@ float atrousW(int i) {
     return (i == 0) ? (6.0 / 16.0) : (i == 1) ? (4.0 / 16.0) : (1.0 / 16.0);
 }
 
+float atrousW3(int i) {
+    return (i == 0) ? 0.5 : 0.25;
+}
+
 float varFromMoments(float m1, float m2) {
     return max(m2 - m1 * m1, 0.0);
+}
+
+float svgfVarianceFloor(float centerLuma) {
+    float lowLightBoost = mix(3.0, 1.0, smoothstep(0.02, 0.18, abs(centerLuma)));
+    float sigma = max(abs(centerLuma) * SVGF_MIN_LUMA_SIGMA * lowLightBoost, 0.006);
+    return sigma * sigma;
 }
 
 float spatialLumaVariance(sampler2D colorTex, vec2 uv) {
@@ -174,6 +184,141 @@ float getJitterRotation(vec2 uv, int frame) {
 }
 
 vec4 svgfAtrousFirst(
+    vec2 uv, float centerDepth, vec2 depthGrad, vec3 centerN, float histLen,
+    float pxWorld
+) {
+    vec3 cColor = textureLod(colortex8, uv, 0.0).rgb;
+    float cLuma = luma(cColor);
+    vec4 cm = textureLod(colortex9, uv, 0.0);
+    float cVar = varFromMoments(cm.g, cm.b);
+
+    #ifdef SVGF_VAR_HISTNORM
+        float varNorm = 1.0 / max(histLen, 1.0);
+    #else
+        const float varNorm = 1.0;
+    #endif
+    cVar = max(cVar * varNorm, svgfVarianceFloor(cLuma));
+
+    if (histLen < float(SVGF_VAR_BOOST)) {
+        float s1 = 0.0;
+        float s2 = 0.0;
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                float l = luma(textureLod(colortex8, uv + vec2(x, y) * texelSize, 0.0).rgb);
+                s1 += l;
+                s2 += l * l;
+            }
+        }
+        s1 /= 9.0;
+        s2 /= 9.0;
+        cVar = max(cVar, max(s2 - s1 * s1, 0.0)) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
+    }
+
+    float darkGate = mix(2.5, 1.0, smoothstep(0.02, 0.18, cLuma));
+    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) * darkGate + 0.05);
+    float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
+    float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
+    float stepSize = 1.0 + clamp(1.0 - histLen / max(float(SVGF_VAR_BOOST), 1.0), 0.0, 1.0);
+
+    vec3 sumC = vec3(0.0);
+    float sumV = 0.0;
+    float wsum = 0.0;
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 off = vec2(x, y) * stepSize;
+            vec2 nUV = uv + off * texelSize;
+            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
+
+            vec3 nColor = textureLod(colortex8, nUV, 0.0).rgb;
+            vec4 nm = textureLod(colortex9, nUV, 0.0);
+            vec4 ng = textureLod(colortex15, nUV, 0.0);
+
+            float w = atrousW3(abs(x)) * atrousW3(abs(y));
+            if (x != 0 || y != 0) {
+                float expectedD = centerDepth + dot(depthGrad, off);
+                float wz = exp(-abs(ng.z - expectedD) * invSigmaZ);
+                float wn = pow(max(dot(octDecodeNormal(ng.xy), centerN), 0.0), sigmaN);
+                float wl = exp(-abs(cLuma - luma(nColor)) * invSigmaL);
+                w *= wz * wn * wl;
+
+                #ifdef SVGF_WORLD_RADIUS
+                    float tangential = length(off) * pxWorld * abs(centerDepth);
+                    float worldDist = sqrt(tangential * tangential +
+                                           (ng.z - expectedD) * (ng.z - expectedD));
+                    w *= exp(-worldDist / SVGF_SIGMA_WORLD);
+                #endif
+            }
+
+            sumC += nColor * w;
+            sumV += max(varFromMoments(nm.g, nm.b) * varNorm, svgfVarianceFloor(luma(nColor))) * w * w;
+            wsum += w;
+        }
+    }
+
+    return vec4(sumC / max(wsum, 1e-5), sumV / max(wsum * wsum, 1e-5));
+}
+
+vec4 svgfAtrous(
+    sampler2D src, vec2 uv, float stepSize,
+    float centerDepth, vec2 depthGrad, vec3 centerN, float pxWorld,
+    bool centerVarOnly
+) {
+    vec4 c = textureLod(src, uv, 0.0);
+    float cLuma = luma(c.rgb);
+    float varG = centerVarOnly ? c.a : gauss3Var(src, uv);
+    varG = max(varG, svgfVarianceFloor(cLuma));
+
+    float darkGate = mix(2.5, 1.0, smoothstep(0.02, 0.18, cLuma));
+    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(varG, 0.0)) * darkGate + 0.05);
+    float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
+    float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
+
+    vec3 sumC = vec3(0.0);
+    float sumV = 0.0;
+    float wsum = 0.0;
+
+    mat2 rot = mat2(1.0, 0.0, 0.0, 1.0);
+    if (stepSize > 2.0) {
+        float rotAngle = getJitterRotation(uv, frameCounter);
+        rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
+    }
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 off = rot * (vec2(x, y) * stepSize);
+            vec2 nUV = uv + off * texelSize;
+            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
+
+            vec4 n = textureLod(src, nUV, 0.0);
+            vec4 ng = textureLod(colortex15, nUV, 0.0);
+
+            float w = atrousW3(abs(x)) * atrousW3(abs(y));
+            if (x != 0 || y != 0) {
+                float expectedD = centerDepth + dot(depthGrad, off);
+                float wz = exp(-abs(ng.z - expectedD) * invSigmaZ);
+                float wn = pow(max(dot(octDecodeNormal(ng.xy), centerN), 0.0), sigmaN);
+                float wl = exp(-abs(cLuma - luma(n.rgb)) * invSigmaL);
+                w *= wz * wn * wl;
+
+                #ifdef SVGF_WORLD_RADIUS
+                    float tangential = length(off) * pxWorld * abs(centerDepth);
+                    float worldDist = sqrt(tangential * tangential +
+                                           (ng.z - expectedD) * (ng.z - expectedD));
+                    w *= exp(-worldDist / SVGF_SIGMA_WORLD);
+                #endif
+            }
+
+            sumC += n.rgb * w;
+            sumV += n.a * w * w;
+            wsum += w;
+        }
+    }
+
+    return vec4(sumC / max(wsum, 1e-5), sumV / max(wsum * wsum, 1e-5));
+}
+
+vec4 svgfAtrousFirst(
     sampler2D giTex, sampler2D momentTex, sampler2D depthTex, sampler2D normalTex,
     vec2 uv, float stepSize, float centerDepth, vec2 depthGrad, vec3 centerN, float histLen,
     float pxWorld
@@ -182,12 +327,21 @@ vec4 svgfAtrousFirst(
     float cLuma  = luma(cColor);
     vec4  cm     = textureLod(momentTex, uv, 0.0);
     float cVar   = varFromMoments(cm.g, cm.b);
+
+    #ifdef SVGF_VAR_HISTNORM
+        float varNorm = 1.0 / max(histLen, 1.0);
+    #else
+        const float varNorm = 1.0;
+    #endif
+    cVar = max(cVar * varNorm, svgfVarianceFloor(cLuma));
+
     if (histLen < float(SVGF_VAR_BOOST)) {
         float sv = spatialLumaVariance(giTex, uv);
         cVar = max(cVar, sv) * (1.0 + (float(SVGF_VAR_BOOST) - histLen));
     }
     
-    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) + 0.05);
+    float darkGate = mix(2.5, 1.0, smoothstep(0.02, 0.18, cLuma));
+    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(cVar, 0.0)) * darkGate + 0.05);
     float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
     float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 
@@ -237,7 +391,7 @@ vec4 svgfAtrousFirst(
                 #endif
             }
             sumC += nColor * w;
-            sumV += varFromMoments(nm.g, nm.b) * w * w;
+            sumV += max(varFromMoments(nm.g, nm.b) * varNorm, svgfVarianceFloor(luma(nColor))) * w * w;
             wsum += w;
         }
     }
@@ -252,8 +406,10 @@ vec4 svgfAtrous(
     vec4  c      = textureLod(src, uv, 0.0);
     float cLuma  = luma(c.rgb);
     float varG   = gauss3Var(src, uv);
+    varG = max(varG, svgfVarianceFloor(cLuma));
 
-    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(varG, 0.0)) + 0.05);
+    float darkGate = mix(2.5, 1.0, smoothstep(0.02, 0.18, cLuma));
+    float invSigmaL = 1.0 / (SVGF_SIGMA_L * sqrt(max(varG, 0.0)) * darkGate + 0.05);
     float invSigmaZ = 1.0 / (SVGF_SIGMA_Z * abs(centerDepth) * 0.02 + 1e-3);
     float sigmaN = min(float(SVGF_SIGMA_N), 16.0);
 

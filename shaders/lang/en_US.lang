@@ -64,12 +64,38 @@ option.VIGNETTE.comment=Applies a subtle darkening around the edges of the viewp
 option.GI_DEBUG_VIEW=GI Debug View
 option.GI_DEBUG_VIEW.comment=Outputs the raw/denoised GI buffer directly to the screen to visualize the indirect light reaching the surfaces.
 
+option.PT_RASTER_AMBIENT_FLOOR=Raster Ambient Floor
+option.PT_RASTER_AMBIENT_FLOOR.comment=Adds a small neutral floor only where path-traced GI is nearly black, without injecting sky or block lightmap color. Higher values reduce dark unfilled samples indoors; 0 is pure path-traced indirect.
 
-option.VOXEL_GRID_SIZE=Voxel Grid Size
-option.VOXEL_GRID_SIZE.comment=Changes the bounds of the voxel path tracing volume. Higher values trace further but reduce performance.
-value.VOXEL_GRID_SIZE.64=64 (Small)
-value.VOXEL_GRID_SIZE.128=128 (Normal)
-value.VOXEL_GRID_SIZE.256=256 (Large)
+
+option.VOXEL_DISTANCE=Voxelization Distance
+option.VOXEL_DISTANCE.comment=Horizontal radius (in chunks) of the path-tracing voxel volume. Also sets the shadow/voxelization distance. Bigger = GI from further away, but more VRAM and slower voxelization. 12 chunks is a good balance.
+value.VOXEL_DISTANCE.8=8 chunks (34 MB)
+value.VOXEL_DISTANCE.12=12 chunks (76 MB)
+value.VOXEL_DISTANCE.16=16 chunks (134 MB)
+value.VOXEL_DISTANCE.24=24 chunks (302 MB)
+value.VOXEL_DISTANCE.32=32 chunks (537 MB)
+
+option.GI_BOUNCE_SHADOWMAP=Shadow-Map Bounce Sun
+option.GI_BOUNCE_SHADOWMAP.comment=Resolve sunlight visibility at GI bounce surfaces from the shadow map (one fetch) instead of marching a long voxel ray. Faster AND catches sub-block geometry the voxels miss. Disable only for debugging.
+
+option.RESTIR_CHECKERBOARD=Checkerboard Tracing
+option.RESTIR_CHECKERBOARD.comment=Trace new GI candidate rays on half the pixels each frame; the rest reuse their temporal reservoir. Big speedup for a small convergence-speed cost. Disocclusions always trace.
+
+option.RESTIR_SCREEN_BOUNCE=Screen Bounce
+option.RESTIR_SCREEN_BOUNCE.comment=Use previous-frame HDR scene reprojection as secondary-bounce radiance. Can improve multi-bounce richness, but may feed denoised history back into ReSTIR and create blotches in dim areas.
+
+option.SVGF_ADAPTIVE_SKIP=Adaptive Wide-Pass Skip
+option.SVGF_ADAPTIVE_SKIP.comment=Skip the widest denoiser blur passes on pixels that are already converged (low variance). Saves time without touching noisy areas.
+
+option.SVGF_SKIP_REL=Skip Threshold
+option.SVGF_SKIP_REL.comment=Relative noise level below which the wide denoiser passes are skipped. Higher = faster but may leave subtle low-frequency blotches.
+
+option.SVGF_VAR_HISTNORM=Convergence-Aware Sharpening
+option.SVGF_VAR_HISTNORM.comment=Tightens the denoiser's luminance gate as temporal history accumulates, so converged areas keep fine GI detail while fresh/disoccluded areas still get the full blur.
+
+option.SVGF_MIN_LUMA_SIGMA=Denoise Floor
+option.SVGF_MIN_LUMA_SIGMA.comment=Minimum luminance tolerance after convergence-aware sharpening. Higher removes residual speckle and checker patterning; lower preserves sharper indirect-light detail.
 
 # Atmosphere & Sky Settings
 screen.Atmosphere=Atmosphere & Sky
@@ -129,3 +155,12 @@ option.VL_SUN_RISE_SET_STRENGTH.comment=Multiplier for volumetric light strength
 
 option.VL_NIGHT_STRENGTH=Night VL Multiplier
 option.VL_NIGHT_STRENGTH.comment=Multiplier for volumetric light strength during the night (using moonlight crepuscular rays).
+
+option.AO_GTAO=Screen-Space GTAO
+option.AO_GTAO.comment=Ground-truth ambient occlusion computed from the depth buffer at pixel granularity. Decoupled from the voxel path tracer: catches stairs, slabs and decoration contact shading the block-resolution rays could not, at no voxel-trace cost.
+option.GTAO_SLICES=GTAO Slices
+option.GTAO_SLICES.comment=Horizon slices evaluated per pixel per frame. The slice angle rotates each frame, so temporal accumulation fills in the rest; 2 is a good balance.
+option.GTAO_STEPS=GTAO Steps
+option.GTAO_STEPS.comment=Horizon-march samples per slice side. More steps catch occluders at more distances within the AO radius.
+option.GTAO_RADIUS=GTAO Radius
+option.GTAO_RADIUS.comment=World-space ambient occlusion radius in blocks. Short keeps it as tight contact shading; long darkens larger cavities.

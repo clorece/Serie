@@ -1,11 +1,12 @@
 // d1_atrous_first : fused prefilter + first SVGF a-trous iteration (step 1).
-// Replaces the old standalone d1_prefilter pass. Reads the accumulated GI
-// (colortex8.rgb) and the moment buffer (colortex9.g/.b) DIRECTLY, bootstraps
-// variance from the real moments (+ spatial estimate for short histories), and
-// runs the first a-trous tap. Output: colortex3 = filtered GI (.rgb) + variance.
+// Reads the accumulated GI (colortex8.rgb) and the moment buffer
+// (colortex9.g/.b) DIRECTLY, bootstraps variance from the real moments
+// (+ spatial estimate for short histories), and runs the first 3×3 a-trous
+// tap. Output: colortex3 = filtered GI (.rgb) + variance (.a).
 //
-// Folding the prefilter into the first iteration removes a full-screen pass and
-// is strictly more correct than the old prefilter (which approximated variance).
+// Geometry (normal + linear depth) comes from the packed colortex15 G-buffer
+// written by d0_restir. The temporal history feedback is the RAW accumulated
+// GI (colortex8, written by d0_accum), so no pass needs to write history back.
 
 #ifdef VERTEX
 
@@ -28,27 +29,26 @@ void main() {
 in vec2 texCoord;
 
 void main() {
-    float depthC = texture(depthtex0, texCoord).r;
-    if (depthC >= 1.0) {
+    vec4 ngC = texelFetch(colortex15, ivec2(gl_FragCoord.xy), 0);
+    float linDepth = ngC.z;
+    // Screen-space depth gradient in uniform control flow (valid derivatives).
+    vec2 depthGrad = vec2(dFdx(linDepth), dFdy(linDepth));
+
+    // sky pixels store linDepth == far in the packed G-buffer
+    if (linDepth >= far * 0.999) {
         /* RENDERTARGETS: 3 */
         gl_FragData[0] = vec4(0.0);
         return;
     }
 
-    float linDepth  = getDepth(depthC);
-    vec2  depthGrad = vec2(dFdx(linDepth), dFdy(linDepth));
-    vec3  nrm = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
-    float pxWorld = 2.0 * gbufferProjectionInverse[1][1] * texelSize.y;
-
-    float histLen = texture(colortex8, texCoord).a;
-
-    vec4 outv = vec4(texture(colortex8, texCoord).rgb, 0.0);
+    vec4 c8 = texture(colortex8, texCoord);
+    vec4 outv = vec4(c8.rgb, 0.0);
     #if defined(GI_DENOISE) && (defined(VOXEL_GI) || defined(VOXEL_AO))
-        outv = svgfAtrousFirst(colortex8, colortex9, depthtex0, colortex1, texCoord,
-                               1.0, linDepth, depthGrad, nrm, histLen, pxWorld);
+        vec3 nrm = octDecodeNormal(ngC.xy);
+        float pxWorld = 2.0 * gbufferProjectionInverse[1][1] * texelSize.y;
+        outv = svgfAtrousFirst(texCoord, linDepth, depthGrad, nrm, c8.a, pxWorld);
     #endif
 
-    /* RENDERTARGETS: 3 */
     gl_FragData[0] = outv;
 }
 

@@ -242,7 +242,7 @@ void main() {
     }
 
     float aoTerm = 1.0;
-    #ifdef AO_RTAO
+    #ifdef AO_GTAO
         if (depth0 < 1.0) {
             aoTerm = texture(colortex9, texCoord).a;
         }
@@ -250,14 +250,25 @@ void main() {
 
     vec3 indirect;
     #if defined(VOXEL_GI)
-        vec3 gi = texture(colortex6, texCoord).rgb; // denoised GI: 6-iteration a-trous lands on colortex6
-        #ifdef AO_RTAO
+        #ifdef GI_DENOISE
+            vec3 gi = texture(colortex3, texCoord).rgb; // denoised GI: the a-trous chain lands on colortex3
+        #else
+            vec3 gi = texture(colortex8, texCoord).rgb; // denoiser off: raw temporally-accumulated GI (chain passes are disabled)
+        #endif
+        #ifdef AO_GTAO
             #ifdef LIGHTING_AO_FULL
                 gi *= aoTerm;
             #else
                 gi *= mix(1.0, aoTerm, float(AO_GI_STRENGTH) / 100.0);
             #endif
         #endif
+
+        float rasterAmbientFloor = float(PT_RASTER_AMBIENT_FLOOR) * 0.001;
+        if (rasterAmbientFloor > 0.0) {
+            float giLuma = dot(gi, vec3(0.2126, 0.7152, 0.0722));
+            float floorMask = 1.0 - smoothstep(rasterAmbientFloor, rasterAmbientFloor * 4.0, giLuma);
+            gi = max(gi, vec3(rasterAmbientFloor * floorMask));
+        }
 
         // prevent skylight illumination from the path tracer from illuminating sunlit terrain, but ensure that path-traced emissives (blocklight, warm bounces) ignore this restriction.
         float skyRatio = 0.22 / 0.4;
@@ -271,17 +282,21 @@ void main() {
         gi = giSkyComponent + giEmissiveComponent;
 
         indirect = gi;
-    #elif defined(AO_RTAO)
+    #elif defined(AO_GTAO)
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
     #elif defined(VOXEL_AO)
-        float ao = texture(colortex6, texCoord).r; // denoised AO: 6-iteration a-trous lands on colortex6
+        #ifdef GI_DENOISE
+            float ao = texture(colortex3, texCoord).r; // denoised AO: the a-trous chain lands on colortex3
+        #else
+            float ao = texture(colortex8, texCoord).r; // denoiser off: raw temporally-accumulated AO
+        #endif
         float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoFactor;
     #else
         indirect = getLightmap(lightmap) + vec3(ambientStrength);
     #endif
 
-    #if defined(AO_RTAO) && (AO_DIRECT_STRENGTH > 0)
+    #if defined(AO_GTAO) && (AO_DIRECT_STRENGTH > 0)
         direct *= mix(1.0, aoTerm, float(AO_DIRECT_STRENGTH) / 100.0);
     #endif
 
@@ -347,7 +362,11 @@ void main() {
     // We output the raw/denoised GI buffer (colortex6) directly to the screen.
     // This allows you to see exactly the indirect light reaching the surface!
     #ifdef GI_DEBUG_VIEW
-        vec3 debugIllum = texture(colortex6, texCoord).rgb;
+        #ifdef GI_DENOISE
+            vec3 debugIllum = texture(colortex3, texCoord).rgb;
+        #else
+            vec3 debugIllum = texture(colortex8, texCoord).rgb;
+        #endif
         /* RENDERTARGETS: 0 */
         gl_FragData[0] = vec4(debugIllum, 1.0);
     #else

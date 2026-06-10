@@ -99,11 +99,7 @@ void main() {
             vec3 sunDirWorld = normalize(mat3(gbufferModelViewInverse) * lightVector);
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
 
-            #ifdef AO_RTAO
-                uint aoSeed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter * 37 + 9);
-                rawAO = computeRTAO(voxelSampler, colortex4, worldAbs, normalWorld, aoSeed, cameraPosition,
-                                    depthtex0, gbufferProjection, gbufferModelView);
-            #endif
+            // AO_RTAO block removed as computeRTAO is no longer available
 
             vec3 worldPrevRel = worldRel;
             bool isHand = depth0 < 0.56;
@@ -157,7 +153,7 @@ void main() {
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(dirSeed), randFloat(dirSeed));
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory; vec3 rayEmission;
 
-                VoxelHit h = traceVoxelGI(voxelSampler, colortex4, gridOrigin, origin, dir, float(GI_RADIUS));
+                VoxelHit h = traceVoxelGI(voxelSampler, gridOrigin, origin, dir, float(GI_RADIUS));
                 rayEmission = h.emission;
                 vec3 sunVec = normalize(sunPosition);
                 vec3 upVec  = normalize(upPosition);
@@ -202,7 +198,7 @@ void main() {
                         float skyOcc = max(skyLightmap, 0.0);
                         float ndl = max(dot(h.normal, sunDirWorld), 0.0);
                         if (ndl > 0.0 && skyOcc > 0.01) {
-                            bool occluded = traceVoxelRay(voxelSampler, colortex4, h.pos + h.normal * 0.1, sunDirWorld, float(GI_RADIUS), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
+                            bool occluded = traceVoxelRay(voxelSampler, h.pos + h.normal * 0.1, sunDirWorld, float(GI_RADIUS), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
                             if (!occluded) rad += h.albedo * lightColor * ndl * skyOcc;
                         }
 
@@ -211,7 +207,7 @@ void main() {
                         if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) {
                             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
                             float lambertWeight = dot(h.normal, skyProbeDir);
-                            bool  skyEscape     = !traceVoxelRay(voxelSampler, colortex4, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
+                            bool  skyEscape     = !traceVoxelRay(voxelSampler, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
                             // Use luminance-only albedo — skylight is too diffuse/weak
                             // to produce visible color bleeding off surfaces.
                             if (skyEscape) rad += vec3(luma(h.albedo)) * giSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
@@ -297,7 +293,7 @@ void main() {
             }
           #else
             rawGI = computeGI(
-                voxelSampler, colortex4, worldAbs, normalWorld, seed, cameraPosition,
+                voxelSampler, worldAbs, normalWorld, seed, cameraPosition,
                 sunDirWorld, lightColor, giSky, skyLightmap,
                 depthtex0, colortex5, colortex1, gbufferProjection, gbufferModelView
             ) * (float(GI_STRENGTH) / 100.0);
@@ -324,7 +320,7 @@ void main() {
             vec3 worldAbs = worldRel + cameraPosition;
             uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
             rawAO = computeAO(
-                voxelSampler, colortex4, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
+                voxelSampler, worldAbs, normalWorld, seed, cameraPosition, skyLightmap,
                 depthtex0, gbufferProjection, gbufferModelView
             );
         }

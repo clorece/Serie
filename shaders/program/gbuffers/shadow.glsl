@@ -99,6 +99,11 @@ in float skyLight;
 // Fine voxel grid is a dedicated 3D image (image.voxelImg in shaders.properties).
 // Write with the image name `voxelImg`; read elsewhere via the `voxelSampler` usampler3D.
 layout(rgba8ui) uniform writeonly uimage3D voxelImg;
+// Hierarchical occupancy, built here for free instead of by a reduction pass:
+// every fine voxel write also marks its 8³ brick and 64³ super-brick occupied.
+// Both images are cleared each frame; concurrent stores of 1 are benign.
+layout(r8ui) uniform writeonly uimage3D brickImg;
+layout(r8ui) uniform writeonly uimage3D superBrickImg;
 
 void main() {
     // check alpha for discard using per-fragment sampling (needed for leaves/foliage) to maintain the correct block shape in the voxel grid.
@@ -146,6 +151,8 @@ void main() {
     vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
     if (!skipVoxelWrite && worldToVoxel(voxelCenter, gridOrigin, voxelCoord)) {
         imageStore(voxelImg, voxelCoord, voxelData);
+        imageStore(brickImg,      voxelCoord >> 3, uvec4(1u));
+        imageStore(superBrickImg, voxelCoord >> 6, uvec4(1u));
     }
 
     gl_FragData[0] = tex;
