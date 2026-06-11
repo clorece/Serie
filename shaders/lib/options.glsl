@@ -200,6 +200,13 @@
 #define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
 #define GI_EMISSION 0.5   // [1 2 3 4 5 6 7 8] emissive block glow strength
 //#define EXCLUDE_BLOCKLIGHTS_VOXELIZATION // Excludes custom blocklights (torches, lanterns, etc.) from the path-traced GI voxel grid entirely.
+// Sub-block voxel shapes: slabs, stairs, fences, walls, doors, trapdoors,
+// gates, carpets, torches, etc. are voxelized with their real collision-ish
+// shape (1-3 AABBs intersected inside the DDA hit voxel) instead of being
+// excluded from the grid entirely. Costs a few ALU ops only when a ray's hit
+// candidate is a shaped voxel; full-cube voxels keep the existing fast path.
+// When OFF, shaped blocks fall back to the old behaviour (excluded -> air).
+#define VOXEL_SHAPES
 #define GI_FIREFLY 2.0
 #define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
 
@@ -207,7 +214,7 @@
 // When OFF the chain's deferred passes are skipped entirely
 // (program.deferredN.enabled in shaders.properties) and d7_composite reads the
 // raw temporally-accumulated GI.
-#define GI_DENOISE
+//#define GI_DENOISE
 #define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
 #define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power, capped at 16); lower = smoother
 #define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother

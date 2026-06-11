@@ -162,7 +162,19 @@ bool traceVoxelRay(
         uint vt = sampleVoxel(atlas, vox);
 
         // all non-air voxels (including all blocklights) act as solid occluders for shadow rays
-        if (vt != VOXEL_AIR && i > 0) return true;
+        if (vt != VOXEL_AIR && i > 0) {
+            #ifdef VOXEL_SHAPES
+            // sub-block shapes: only occlude if the ray actually crosses the
+            // block's AABB union; a miss keeps marching (slabs/fences/torches
+            // no longer shadow like full cubes)
+            uint shapeId = voxelShapeId(vt);
+            if (shapeId == 0u) return true;
+            float tS; vec3 nS;
+            if (intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, tS, nS) && tS < maxDist) return true;
+            #else
+            return true;
+            #endif
+        }
 
         bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));
         tEntry = min(tMax.x, min(tMax.y, tMax.z));

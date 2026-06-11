@@ -93,13 +93,19 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
                 r.emission += e * float(GI_EMISSION) * 0.35;
             }
         } else if (v.r != VOXEL_AIR) {
-
-            r.hit      = true;
-            r.category = v.r;
-            r.albedo   = vec3(v.gba) / 255.0;
-            r.pos      = worldPos + rayDir * tEntry;
-            r.normal   = -vec3(stepDir) * lastMask; // face we entered through
-
+            // sub-block shapes: intersect the real geometry inside the voxel.
+            // A miss lets the ray continue (with a pass-by glow tap for
+            // emissive blocks — a ray grazing past a torch still sees it).
+            bool  realHit = true;
+            float tHit    = tEntry;
+            vec3  nHit    = -vec3(stepDir) * lastMask; // face we entered through
+            #ifdef VOXEL_SHAPES
+            uint shapeId = voxelShapeId(v.r);
+            if (shapeId != 0u) {
+                realHit = intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, tHit, nHit);
+                if (!realHit) { tHit = tEntry; nHit = -vec3(stepDir) * lastMask; }
+            }
+            #endif
 
             if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
                 vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
@@ -108,9 +114,17 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
                     e = vec3(0.0);
                 }
                 e = max(e, vec3(0.0));
-                r.emission += e * float(GI_EMISSION);
+                r.emission += e * float(GI_EMISSION) * (realHit ? 1.0 : 0.35);
             }
-            return r;
+
+            if (realHit) {
+                r.hit      = true;
+                r.category = v.r;
+                r.albedo   = vec3(v.gba) / 255.0;
+                r.pos      = worldPos + rayDir * tHit;
+                r.normal   = nHit;
+                return r;
+            }
         }
 
         bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));

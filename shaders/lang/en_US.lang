@@ -76,6 +76,9 @@ value.VOXEL_DISTANCE.16=16 chunks (134 MB)
 value.VOXEL_DISTANCE.24=24 chunks (302 MB)
 value.VOXEL_DISTANCE.32=32 chunks (537 MB)
 
+option.VOXEL_SHAPES=Sub-Block Voxel Shapes
+option.VOXEL_SHAPES.comment=Voxelize slabs, stairs, fences, walls, doors, trapdoors, carpets, torches etc. with their real shape (small box intersections inside the hit voxel) instead of excluding them from GI entirely. Slab floors/roofs occlude correctly and torches stop casting full-block shadows. Tiny cost, only paid where rays meet shaped blocks.
+
 option.GI_BOUNCE_SHADOWMAP=Shadow-Map Bounce Sun
 option.GI_BOUNCE_SHADOWMAP.comment=Resolve sunlight visibility at GI bounce surfaces from the shadow map (one fetch) instead of marching a long voxel ray. Faster AND catches sub-block geometry the voxels miss. Disable only for debugging.
 
