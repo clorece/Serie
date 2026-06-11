@@ -230,7 +230,7 @@
 
 #define RESTIR_GI
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] candidate rays generated per frame
-#define RESTIR_M_CAP 48          // [8 12 16 24 32 48] max reservoir confidence (history clamp)
+#define RESTIR_M_CAP 8          // [8 12 16 24 32 48] max reservoir confidence (history clamp)
 #define RESTIR_SCREEN_BOUNCE 0 // [0 1] Reproject previous HDR scene as secondary-bounce radiance. OFF avoids feeding denoised/TAA history back into ReSTIR reservoirs.
 //#define RESTIR_JACOBIAN  // Optional spatial-reuse Jacobian. Keep off unless testing; when enabled it is tightly clamped in d0_accum to avoid grazing samples hijacking flat walls.
 #define RESTIR_SPATIAL          // enable spatial reservoir reuse from neighbours
