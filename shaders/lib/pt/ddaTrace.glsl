@@ -162,17 +162,24 @@ bool traceVoxelRay(
         uint vt = sampleVoxel(atlas, vox);
 
         // all non-air voxels (including all blocklights) act as solid occluders for shadow rays
-        if (vt != VOXEL_AIR && i > 0) {
+        if (vt != VOXEL_AIR) {
             #ifdef VOXEL_SHAPES
             // sub-block shapes: only occlude if the ray actually crosses the
             // block's AABB union; a miss keeps marching (slabs/fences/torches
-            // no longer shadow like full cubes)
+            // no longer shadow like full cubes). Unlike full cubes, shaped
+            // voxels are tested even in the ray's ORIGIN voxel (i == 0) —
+            // that's where the surface under a top slab / at a fence base
+            // lives; boxes the origin sits inside are skipped there so pixels
+            // ON the shape don't self-occlude (originVoxel arg).
             uint shapeId = voxelShapeId(vt);
-            if (shapeId == 0u) return true;
-            float tS; vec3 nS;
-            if (intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, tS, nS) && tS < maxDist) return true;
+            if (shapeId != 0u) {
+                float tS; vec3 nS;
+                if (intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, i == 0, tS, nS)
+                    && tS < maxDist) return true;
+                // miss / origin-self-hit: keep marching
+            } else if (i > 0) return true;
             #else
-            return true;
+            if (i > 0) return true;
             #endif
         }
 

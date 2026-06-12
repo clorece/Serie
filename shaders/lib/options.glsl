@@ -1,6 +1,8 @@
 #ifndef OPTIONS_GLSL
 #define OPTIONS_GLSL
 
+#define RENDER_SCALE 0.75 // [0.25 0.5 0.75 1.0]
+
 #define SHADOW_FILTER
 #define DITHER_FILTER
 

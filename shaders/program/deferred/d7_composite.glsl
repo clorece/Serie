@@ -332,7 +332,12 @@ void main() {
         color = color * (direct + indirect);
     }
 
-    // voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl)
+    // voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl).
+    // Shape-aware: shaped voxels are intersected with their real sub-block
+    // geometry and tinted GREEN; full cubes RED; emissive YELLOW; foliage as-is.
+    // If a slab/fence shows up red here, the block.properties 20xxx id didn't
+    // match (stored as plain opaque); if it doesn't show at all, it voxelized
+    // as air; green = stored + intersected correctly.
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {
         vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
@@ -346,15 +351,36 @@ void main() {
 
         bool hit = false;
         vec3 hitAlbedo = vec3(0.0);
+        vec3 dbgNormal = -rayDir;
         for (int i = 0; i < 768; i++) {
             if (any(lessThan(voxPos, ivec3(0))) || any(greaterThanEqual(voxPos, VOXEL_DIMS))) break;
             VoxelSample vs = readVoxel(voxelSampler, voxPos);
-            if (vs.category != VOXEL_AIR) { hit = true; hitAlbedo = vs.albedo; break; }
+            if (vs.category != VOXEL_AIR) {
+                uint dbgShape = voxelShapeId(vs.category);
+                if (dbgShape != 0u) {
+                    float tS; vec3 nS;
+                    if (intersectVoxelShape(dbgShape, rayOrig - vec3(voxPos), rayDir, i == 0, tS, nS)) {
+                        hit = true; dbgNormal = nS;
+                        hitAlbedo = mix(vs.albedo, vec3(0.1, 1.0, 0.1), 0.4); // green = shaped
+                        break;
+                    }
+                    // shape miss: keep marching
+                } else {
+                    hit = true;
+                    vec3 tint = (vs.category == VOXEL_EMISSIVE || vs.category >= 100u)
+                              ? vec3(1.0, 1.0, 0.1)                        // yellow = emissive
+                              : (vs.category == VOXEL_FOLIAGE ? vec3(0.1, 0.5, 1.0)   // blue = foliage
+                                                              : vec3(1.0, 0.1, 0.1)); // red = full opaque
+                    hitAlbedo = mix(vs.albedo, tint, 0.4);
+                    break;
+                }
+            }
             bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));
             tMax  += vec3(mask) * tDelta;
             voxPos += ivec3(mask) * rayStep;
         }
-        if (hit) color = hitAlbedo;
+        // crude face shading so the 3D form of shapes is readable
+        if (hit) color = hitAlbedo * (0.55 + 0.45 * abs(dot(dbgNormal, normalize(vec3(0.4, 0.8, 0.3)))));
     }
     #endif
 

@@ -82,48 +82,63 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
         }
 
         uvec4 v = texelFetch(atlas, vox, 0);
-        if (first) {
-            if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
-                vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
-                                       : vec3(v.gba) / 255.0;
-                if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
-                    e = vec3(0.0);
-                }
-                e = max(e, vec3(0.0));
-                r.emission += e * float(GI_EMISSION) * 0.35;
-            }
-        } else if (v.r != VOXEL_AIR) {
-            // sub-block shapes: intersect the real geometry inside the voxel.
-            // A miss lets the ray continue (with a pass-by glow tap for
-            // emissive blocks — a ray grazing past a torch still sees it).
-            bool  realHit = true;
-            float tHit    = tEntry;
-            vec3  nHit    = -vec3(stepDir) * lastMask; // face we entered through
+        if (v.r != VOXEL_AIR) {
+            bool isEmis = (v.r == VOXEL_EMISSIVE || v.r >= 100u);
             #ifdef VOXEL_SHAPES
             uint shapeId = voxelShapeId(v.r);
-            if (shapeId != 0u) {
-                realHit = intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, tHit, nHit);
-                if (!realHit) { tHit = tEntry; nHit = -vec3(stepDir) * lastMask; }
-            }
+            #else
+            const uint shapeId = 0u;
             #endif
 
-            if (v.r == VOXEL_EMISSIVE || v.r >= 100u) {
-                vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
-                                       : vec3(v.gba) / 255.0;
-                if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
-                    e = vec3(0.0);
+            if (shapeId == 0u && first) {
+                // full-cube voxel at the ray origin = the surface's own block:
+                // legacy self-skip, but still pick up pass-through emission so
+                // a light at the origin keeps glowing.
+                if (isEmis) {
+                    vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
+                                           : vec3(v.gba) / 255.0;
+                    if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
+                        e = vec3(0.0);
+                    }
+                    e = max(e, vec3(0.0));
+                    r.emission += e * float(GI_EMISSION) * 0.35;
                 }
-                e = max(e, vec3(0.0));
-                r.emission += e * float(GI_EMISSION) * (realHit ? 1.0 : 0.35);
-            }
+            } else {
+                // sub-block shapes: intersect the real geometry inside the
+                // voxel. A miss lets the ray continue (with a pass-by glow tap
+                // for emissive blocks — a ray grazing past a torch still sees
+                // it). Shaped voxels are tested even in the ORIGIN voxel
+                // (first) — that's where the surface under a top slab / at a
+                // fence base lives; boxes the origin sits inside are skipped
+                // there so pixels ON the shape don't self-occlude.
+                bool  realHit = true;
+                float tHit    = tEntry;
+                vec3  nHit    = -vec3(stepDir) * lastMask; // face we entered through
+                #ifdef VOXEL_SHAPES
+                if (shapeId != 0u) {
+                    realHit = intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, first, tHit, nHit);
+                    if (!realHit) { tHit = tEntry; nHit = -vec3(stepDir) * lastMask; }
+                }
+                #endif
 
-            if (realHit) {
-                r.hit      = true;
-                r.category = v.r;
-                r.albedo   = vec3(v.gba) / 255.0;
-                r.pos      = worldPos + rayDir * tHit;
-                r.normal   = nHit;
-                return r;
+                if (isEmis) {
+                    vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
+                                           : vec3(v.gba) / 255.0;
+                    if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
+                        e = vec3(0.0);
+                    }
+                    e = max(e, vec3(0.0));
+                    r.emission += e * float(GI_EMISSION) * (realHit ? 1.0 : 0.35);
+                }
+
+                if (realHit) {
+                    r.hit      = true;
+                    r.category = v.r;
+                    r.albedo   = vec3(v.gba) / 255.0;
+                    r.pos      = worldPos + rayDir * tHit;
+                    r.normal   = nHit;
+                    return r;
+                }
             }
         }
 
