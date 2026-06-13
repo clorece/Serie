@@ -3,44 +3,7 @@
 
 #include "/lib/options.glsl"
 
-// ============================================================================
-//  SerieVX voxel grid — ANISOTROPIC, camera-relative, TRUE 3D TEXTURE
-// ============================================================================
-// The grid is wide in X/Z and short in Y (the Minecraft world is mostly
-// horizontal).
-//
-//   512 × 128 × 512  → horizontal radius 256, vertical radius 64.
-//
-// Stored in a DEDICATED 3D image `voxelImg` / read via `voxelSampler`
-// (declared by `image.voxelImg = ...` in shaders.properties). Direct ivec3
-// addressing — no 2D-atlas packing. We moved here from the old colortex7 2D
-// atlas because Iris would not allocate that atlas larger than ~4096 / the
-// render resolution for an image-bound colortex, which capped the grid and
-// shifted it off-centre. A 3D image takes explicit dims (up to
-// GL_MAX_3D_TEXTURE_SIZE, ~2048) and is also better for DDA cache locality.
-//
-// Dims must each be a multiple of VOXEL_SUPER (64). If you change them, update
-// the X Y Z of image.voxelImg, image.brickImg (dims/8) and image.superBrickImg
-// (dims/64) in shaders.properties.
-//
-// ----------------------------------------------------------------------------
-//  SUB-BLOCK SHAPES (stairs/slabs/fences/doors/torches/etc) — VOXEL_SHAPES.
-//  The shape id is packed INTO the category byte (.r): categories
-//  [VOXEL_SHAPED_BASE .. VOXEL_SHAPED_BASE+VOXEL_SHAPE_MAX] mean "opaque block
-//  whose geometry is shapeId = category - VOXEL_SHAPED_BASE" (albedo stays in
-//  .gba untouched, no extra image / no extra fetch in the DDA). Blocklights
-//  (category 100+mat) derive their shape from the material id at trace time
-//  (lightVoxelShape) for free. On a DDA hit candidate the tracers call
-//  intersectVoxelShape(): 1-3 AABB slab tests inside the voxel; a miss lets
-//  the ray continue marching. Full cubes keep the branchless fast path.
-//  Brick-skip is unaffected (a brick is "occupied" if it has any non-air voxel).
-//  block.properties side: block id 20000+N maps to shapeId N (pure arithmetic
-//  in shadow.vsh) — see the "voxel shapes" section there.
-// ============================================================================
 
-// X/Z scale with the VOXEL_DISTANCE option (chunks of horizontal radius):
-// dim = radius*2 = chunks*16*2. All option values keep dims a multiple of
-// VOXEL_SUPER (64). The image dims in shaders.properties follow via its own
 // #if VOXEL_DISTANCE chain — keep them in sync.
 #define VOXEL_DIM_X (VOXEL_DISTANCE * 32)
 #define VOXEL_DIM_Y 128
@@ -108,11 +71,6 @@ uint voxelShapeId(uint cat) {
     return 0u;
 }
 
-// Ray vs AABB inside one voxel. `ro` = ray origin relative to the voxel min
-// corner, `ird` = 1/rayDir. Keeps the nearest hit in tBest/nBest. With
-// skipInside, a box the ray STARTS inside is ignored (exact self-intersection
-// rejection for surfaces of this very shape); otherwise an inside origin
-// counts as a t=0 hit (nBest keeps its fallback value then).
 bool voxelAabbHit(vec3 ro, vec3 ird, vec3 bmin, vec3 bmax, bool skipInside, inout float tBest, inout vec3 nBest) {
     vec3 t0  = (bmin - ro) * ird;
     vec3 t1  = (bmax - ro) * ird;
@@ -129,14 +87,6 @@ bool voxelAabbHit(vec3 ro, vec3 ird, vec3 bmin, vec3 bmax, bool skipInside, inou
     return true;
 }
 
-// Intersect the ray with the sub-block shape of one voxel. `ro` is the ray
-// origin RELATIVE to the voxel min corner (localPos - vec3(vox)); shapes are
-// unions of 1-3 AABBs built procedurally (no LUTs). Returns the nearest hit.
-// `originVoxel` = the ray starts in this voxel: boxes the origin sits inside
-// are skipped, so pixels ON the shape (e.g. on a fence post, whose ray
-// origins land inside the crossing arm's AABB) don't self-occlude, while
-// near geometry (floor under a top slab, ground beside the post) still
-// occludes at full precision.
 bool intersectVoxelShape(uint shape, vec3 ro, vec3 rd, bool originVoxel, out float tHit, out vec3 nHit) {
     vec3 ird = 1.0 / (rd + vec3(1e-8));
     tHit = 1e30;
@@ -226,38 +176,16 @@ bool intersectVoxelShape(uint shape, vec3 ro, vec3 rd, bool originVoxel, out flo
     return hit;
 }
 
-
-// --- Hierarchical occupancy (empty-space-skipping DDA acceleration) ---
-// TWO levels of occupancy, both dedicated 3D images written DURING
-// voxelization (the shadow pass stores 1 into both alongside every fine voxel
-// write — see program/gbuffers/shadow.glsl). This replaced the old prepare2
-// reduction pass, which re-read up to 8³ fine voxels for every one of the
-// 64×16×64 coarse cells every frame (tens of millions of texelFetches/frame,
-// dominated by fully-empty bricks that could never early-out).
-//
-//   level 0: "brick"       =  8³ blocks  → brickImg/brickSampler,      64×16×64 R8UI
-//   level 1: "super-brick" = 64³ blocks  → superBrickImg/superBrickSampler, 8×2×8 R8UI
-//
-// A cell is "occupied" iff any fine voxel inside it was written this frame
-// (exactly the same predicate the old reduction computed). Both images are
-// cleared each frame by Iris (clear=true in shaders.properties), so racing
-// imageStores of the constant 1 are benign.
 #define VOXEL_BRICK 8
 #define VOXEL_SUPER 64
 const ivec3 BRICK_DIMS = VOXEL_DIMS / VOXEL_BRICK; // 64×16×64
 const ivec3 SUPER_DIMS = VOXEL_DIMS / VOXEL_SUPER; // 8×2×8
 
-// True when the 8³ brick containing fine voxel `vox` is provably empty (safe
-// to skip). Returns false at/outside grid bounds so the caller falls back to a
-// normal fine step there.
 bool brickIsEmpty(ivec3 vox) {
     if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, VOXEL_DIMS))) return false;
     return texelFetch(brickSampler, vox >> 3, 0).r == 0u;
 }
 
-// True when the 64³ super-brick containing fine voxel `vox` is provably empty.
-// Lets open-air rays jump ~64 blocks in one step before descending to the
-// brick level and finally the fine DDA near geometry.
 bool superBrickIsEmpty(ivec3 vox) {
     if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, VOXEL_DIMS))) return false;
     return texelFetch(superBrickSampler, vox >> 6, 0).r == 0u;
@@ -271,8 +199,6 @@ bool worldToVoxel(vec3 worldPos, vec3 gridOrigin, out ivec3 coord) {
            all(lessThan(coord, VOXEL_DIMS));
 }
 
-
-// Fine voxel read — direct 3D addressing into the dedicated voxel image.
 uint sampleVoxel(usampler3D atlas, ivec3 coord) {
     return texelFetch(atlas, coord, 0).r;
 }

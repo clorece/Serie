@@ -11,6 +11,8 @@
 
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 out vec3 sunVector;
 out vec3 moonVector;
@@ -22,6 +24,8 @@ out vec3 ambientColor;
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
     #include "/lib/vectors.glsl"
     #include "/lib/colors.glsl"
 }
@@ -51,18 +55,17 @@ vec3 clipSpace;
 
 void main() {
 #ifndef VOLUMETRIC_LIGHT
-    gl_FragData[0] = vec4(texture(colortex0, texCoord).rgb, 1.0);
+    gl_FragData[0] = vec4(texture(colortex0, texCoord * renderScale).rgb, 1.0);
     return;
 #else
-    vec3 sceneColor = texture(colortex0, texCoord).rgb;
+    vec3 sceneColor = texture(colortex0, texCoord * renderScale).rgb;
 
-    // Unjitter for accurate depth + world-position derivation.
     vec2 unjit = texCoord;
     #ifdef TAA
     unjit -= getTaaJitter() / vec2(viewWidth, viewHeight);
     #endif
 
-    float depth = texture(depthtex0, unjit).r;
+    float depth = texture(depthtex0, unjit * renderScale).r;
     if (depth >= 1.0) {
         // Sky pixel — d8's sampleSky() already handled it.
         gl_FragData[0] = vec4(sceneColor, 1.0);
@@ -87,8 +90,6 @@ void main() {
 
     vec3  worldLightDir = mat3(gbufferModelViewInverse) * lightVector;
 
-    // Light-below-horizon early-out: when the active light source is well below the horizon,
-    // we can skip integration to save performance.
     if (worldLightDir.y < -0.2) {
         gl_FragData[0] = vec4(sceneColor, 1.0);
         return;
@@ -109,14 +110,12 @@ void main() {
     vec3 trans   = vec3(1.0);
     vec3 scatter = vec3(0.0);
 
-    // Adapt light color based on TimeState
     float lightFade = t.shadowFade;
     vec3 lightColorBase = t.lightColor * mix(1.0, SUN_ILLUMINANCE, t.sunActivity);
 
     for (int i = 0; i < N; ++i) {
         float t = (float(i) + dither) * stepLen;
 
-        // Shadow sample at the world-relative sample position.
         vec4 shadowPos = toShadowSpace(vec4(worldDir * t, 1.0));
         float shadow = 1.0;
         if (shadowPos.x >= 0.0 && shadowPos.x <= 1.0 &&
@@ -125,8 +124,6 @@ void main() {
             float receiverDepth = shadowPos.z - 0.0001;
             shadow = step(receiverDepth, texture(shadowtex0, shadowPos.xy).r);
         }
-
-        // Atmospheric integration.
         vec3  p_t      = posCenter + worldDir * t;
         float altitude = length(p_t);
         vec3  density  = GetAtmosphereDensity(altitude);
@@ -137,14 +134,12 @@ void main() {
         vec3 sigma_e   = sigma_s + COEFF_OZONE * density.z;
 
         float mu_light = dot(normalize(p_t), worldLightDir);
-        // Single-tap T-LUT.
         vec3  lightT = sampleTransmittanceLUT_fast(mu_light, altitude);
 
         vec3  psi_ms_light = sampleMultiScatterLUT_fast(mu_light, altitude);
 
         const float phaseIsotropic = 1.0 / (4.0 * pi);
-        // Use a Mie-dominated scattering for the visible crepuscular rays (god rays)
-        // to match dust/fog scattering and perfectly reflect the light source color (eliminating blue god rays).
+
         vec3 phaseScatterLight = (sigma_s_r * 0.02) * phaseLight.x + sigma_s_m * phaseLight.y;
         vec3 inscatter = (lightT * phaseScatterLight + psi_ms_light * (sigma_s_r * 0.02 + sigma_s_m) * (phaseIsotropic * lightFade)) * lightColorBase * shadow;
 
@@ -154,7 +149,6 @@ void main() {
         trans   *= stepT;
     }
 
-    // Match SkyView LUT tone space so VL scatter blends with sky pixels.
     scatter = pow(max(scatter, 0.0), vec3(1.0 / 1.35));
 
     vec3 finalColor = sceneColor * trans + scatter * (VL_INTENSITY * vlMultiplier);

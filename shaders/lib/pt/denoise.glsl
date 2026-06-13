@@ -25,25 +25,13 @@ vec3 YCoCgtoRGB(vec3 c) {
     return vec3(tmp + c.y, c.x + c.z, tmp - c.y);
 }
 
-vec3 clipHistory(vec3 history, vec3 center, sampler2D currentTex, vec2 uv) {
-    vec3 m1 = vec3(0.0), m2 = vec3(0.0);
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            vec3 c = RGBtoYCoCg(textureLod(currentTex, uv + vec2(x, y) * texelSize, 0.0).rgb);
-            m1 += c; m2 += c * c;
-        }
-    }
-    m1 /= 9.0; m2 /= 9.0;
+vec3 clipHistoryMoments(vec3 history, vec3 m1, vec3 m2) {
     vec3 std = sqrt(max(m2 - m1 * m1, 0.0));
-
     std = min(std, m1 * 2.0);
-    
+
     // Box clamp history to [mean - k*std, mean + k*std]
     vec3 h = RGBtoYCoCg(history);
-    vec3 aabbMin = m1 - std * 1.5;
-    vec3 aabbMax = m1 + std * 1.5;
-    
-    return YCoCgtoRGB(clamp(h, aabbMin, aabbMax));
+    return YCoCgtoRGB(clamp(h, m1 - std * 1.5, m1 + std * 1.5));
 }
 
 bool fetchBilateralHistory(
@@ -163,19 +151,6 @@ float gauss3Var(sampler2D src, vec2 uv) {
     return v / wsum;
 }
 
-// À-trous kernel rotation, PHASE-LOCKED to the TAA jitter cycle.
-// Two independent problems are addressed:
-//   * SPATIAL: the old version quantized to 8x8-pixel blocks (`floor(uv*viewSize/8.0)`),
-//     so at the large dilations of d2/d3/d4 (4/8/16) the per-block-constant rotation left
-//     discontinuities at block borders -> a distance-based grid/maze. We use a per-pixel
-//     base angle instead (no block structure).
-//   * TEMPORAL: the old version animated the rotation on `frame % 64`. TAA jitters on a
-//     `frame % 8` cycle (see getTaaJitter), so a 64-frame rotation beating against the
-//     8-frame TAA cycle never settled inside TAA's ~20-frame memory -> the edge blur
-//     changed every frame = refraction-like shimmer on block edges. We cycle the temporal
-//     component in lock-step with TAA (period 8, even 45-deg steps). Each pixel then
-//     repeats the SAME 8 orientations every 8 frames, so TAA (and the GI history) converge
-//     to their rotational average -> stable, while staying spatially decorrelated.
 float getJitterRotation(vec2 uv, int frame) {
     vec2 p = uv * vec2(viewWidth, viewHeight);
     float perPixel = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * 6.2831853;
@@ -228,7 +203,7 @@ vec4 svgfAtrousFirst(
         for (int x = -1; x <= 1; x++) {
             vec2 off = vec2(x, y) * stepSize;
             vec2 nUV = uv + off * texelSize;
-            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
+            if (nUV.x < 0.0 || nUV.x > renderScale || nUV.y < 0.0 || nUV.y > renderScale) continue; // uv is BUFFER space; rendered region ends at renderScale
 
             vec3 nColor = textureLod(colortex8, nUV, 0.0).rgb;
             vec4 nm = textureLod(colortex9, nUV, 0.0);
@@ -288,7 +263,7 @@ vec4 svgfAtrous(
         for (int x = -1; x <= 1; x++) {
             vec2 off = rot * (vec2(x, y) * stepSize);
             vec2 nUV = uv + off * texelSize;
-            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
+            if (nUV.x < 0.0 || nUV.x > renderScale || nUV.y < 0.0 || nUV.y > renderScale) continue; // uv is BUFFER space; rendered region ends at renderScale
 
             vec4 n = textureLod(src, nUV, 0.0);
             vec4 ng = textureLod(colortex15, nUV, 0.0);
@@ -361,7 +336,7 @@ vec4 svgfAtrousFirst(
         for (int y = -tapRange; y <= tapRange; y++) {
             vec2 off = rot * (vec2(x, y) * stepSize);
             vec2 nUV = uv + off * texelSize;
-            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
+            if (nUV.x < 0.0 || nUV.x > renderScale || nUV.y < 0.0 || nUV.y > renderScale) continue; // uv is BUFFER space; rendered region ends at renderScale
 
             vec3  nColor = textureLod(giTex, nUV, 0.0).rgb;
             vec4  nm     = textureLod(momentTex, nUV, 0.0);
@@ -429,7 +404,7 @@ vec4 svgfAtrous(
         for (int y = -tapRange; y <= tapRange; y++) {
             vec2 off = rot * (vec2(x, y) * stepSize);
             vec2 nUV = uv + off * texelSize;
-            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
+            if (nUV.x < 0.0 || nUV.x > renderScale || nUV.y < 0.0 || nUV.y > renderScale) continue; // uv is BUFFER space; rendered region ends at renderScale
 
             vec4  n      = textureLod(src, nUV, 0.0);
             float nLuma  = luma(n.rgb);

@@ -1,31 +1,50 @@
 #ifndef OPTIONS_GLSL
 #define OPTIONS_GLSL
 
-#define RENDER_SCALE 0.75 // [0.25 0.5 0.75 1.0]
+#define RENDER_SCALE 0.67 // [0.33 0.5 0.59 0.67 0.77 1.0] ultra performance, performance, balanced, quality, ultra quality, native
+const float renderScale = RENDER_SCALE;
+
+// Upscaler / TAA reconstruction filter (lib/post/taa.glsl, runs in c0_taa).
+//   0 = TAA     : variance clamp, bilinear current. Softest & most temporally
+//                 stable, but the least sharp / least detail.
+//   1 = TAAU    : min/max neighbourhood clamp, Catmull-Rom current. Sharper
+//                 edges than TAA with still-good stability — a balanced default.
+//   2 = Lanczos : Lanczos-2 reconstruction. Most clarity / detail,
+//                 but more prone to temporal instability (shimmer / fireflies).
+// Pair any mode with TAA_SHARPNESS (CAS) below to recover TAA blur.
+#define UPSCALE_MODE 2 // [0 1 2]
+
+//   0 = off (normal image)
+//   1 = raw SOURCE colortex0, upscaled bilinear (no TAA) — specks here = pre-TAA
+//   2 = SOURCE anomaly map: RED = NaN/Inf, GREEN = magenta(green-deficient) pixel
+//   3 = OUTPUT anomaly map: same classifier on the resolved TAA output
+//   4 = SOURCE green-deficit heatmap (continuous) — how green-starved each pixel is
+// Source is CLEAN (1/2 confirmed) -> taa() makes the specks. Split taa internals:
+//   5 = currentColor only (reconstruction, NO history blend) — specks here = recon
+//   6 = clipped history only (prevColor)                      — specks here = history
+//   7 = |reconstruction - history| x6 (where they disagree, amplified)
+#define TAA_DEBUG 0 // [0 1 2 3 4 5 6 7]
 
 #define SHADOW_FILTER
 #define DITHER_FILTER
 
-#define SHADOW_RESOLUTION 2048 //[512 1024 1563 2048 3072 4096 6144 8192]
-#define SHADOW_FILTER_QUALITY 8 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
+#define SHADOW_RESOLUTION 3072 //[512 1024 1563 2048 3072 4096 6144 8192]
+#define SHADOW_FILTER_QUALITY 12 //[1 2 3 4 6 8 10 12 14 16 18 20 22 24]
 #define SHADOW_MAP_BIAS 0.85 //Increase this if you get shadow acne. Decrease this if you get peter panning. [0.000 0.001 0.002 0.003 0.004 0.005 0.006 0.007 0.008 0.009 0.010 0.012 0.014 0.016 0.018 0.020 0.022 0.024 0.026 0.028 0.030 0.035 0.040 0.045 0.050]
 #define SCREENSPACE_SHADOWS // Screen-space contact + infinite shadows multiplied onto the shadow map.
 
 //#define FAKE_SSS  // WIP
 #define SCATTER_AMOUNT 2.0; // [1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0]
 
-#define VOLUMETRIC_LIGHT
+//#define VOLUMETRIC_LIGHT
 #define VL_STEPS 3 // [2 3 4 6 8 12 16 20 24 32 48] dithered raymarch steps for atmospheric god rays (3 looks fine with TAA)
 #define VL_INTENSITY 5.0 // [0.1 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] brightness of the in-scattered sun term
 #define VL_NOON_STRENGTH 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at noon.
 #define VL_SUN_RISE_SET_STRENGTH 25.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at sunrise and sunset.
 #define VL_NIGHT_STRENGTH 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at night.
 
-#define SKY_LUT_STEPS 10       // [4 6 8 10 12 14 16 20 24 28 32 40 48] uniform raymarching steps for the SkyView LUT build (lib/fragment/atmosphereLUT.glsl)
+#define SKY_LUT_STEPS 10       // [4 6 8 10 12 14 16 20 24 28 32 40 48]
 
-// --- Sky-View debug (set non-zero to diagnose the sunrise "layers" artifact) ---
-// Sky pixels only. Output bypasses dynamic-light/discs/ground-blend so you see
-// the raw thing. Exposure/tonemap still apply but won't hide hard edges.
 //   0  off (normal sky)
 //   1  raw SkyView LUT, bilinear  (is the artifact already in the LUT?)
 //   2  raw SkyView LUT, NEAREST   (compare to 1: layers only here = upscale/filter)
@@ -38,10 +57,6 @@
 #define SKY_DEBUG 0
 #define SKY_DEBUG_GAIN 1.0   // [0.05 0.1 0.25 0.5 1.0 2.0 4.0 8.0 16.0] brightness multiplier for debug terms (10-14) so dim ones are visible
 
-// --- Belt of Venus (Earth's-shadow term in the SkyView build) ---
-// Per-march-sample smooth planet-shadow on the DIRECT sun in-scatter: the low
-// anti-solar atmosphere falls into shadow (dark band) while the atmosphere above
-// stays lit (pink band). Kept smooth/wide so it can't alias into march "shells".
 #define BELT_OF_VENUS
 #define BELT_SHADOW_SOFTNESS 0.06 // [0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.14 0.20] angular half-width of Earth's shadow penumbra (sun cosine units). Smaller = crisper belt (more banding risk); larger = softer/washed out.
 
@@ -62,8 +77,7 @@
 // Ozone concentration peak (scaled by 1e-6, default: 8e-6)
 #define OZONE_PEAK 8.0 // [0.0 2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0] Peak ozone concentration
 
-// --- Volumetric clouds (see shaderpacks/serievx_atmosphere_plan.md §5) ---
-#define CLOUDS // master toggle; cloud raymarch (Phase 6) and cloud-shadow build (Phase 5) both gated on this
+#define CLOUDS
 #define CLOUDS_COVERAGE 0.80          // [0.20 0.30 0.40 0.45 0.50 0.55 0.60 0.65 0.70 75 0.80 0.90] global cumulus coverage (0 = clear sky, 1 = overcast)
 #define CLOUDS_ALTITUDE_MULTIPLIER 0.75 // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00 2.50 3.00] Multiplier for how high in the air clouds render
 #define CLOUDS_HEIGHT_MULTIPLIER 0.35 // [0.1 0.15 0.2 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95 1.0 1.05 1.10 1.15 1.20 1.25 1.30 1.50 1.75 2.00] Multiplier for the cloud layer's vertical thickness
@@ -71,24 +85,23 @@
 #define CLOUDS_DENSITY 0.03           // [0.01 0.02 0.03 0.05 0.08 0.12 0.18 0.25] cloud extinction coefficient (higher = denser/darker interiors)
 #define CLOUDS_LAYER_BOTTOM 1500.0    // [600.0 900.0 1200.0 1500.0 1800.0 2400.0 3000.0] cumulus base altitude (m above planet surface)
 #define CLOUDS_LAYER_TOP    5400.0    // [2400.0 3000.0 3600.0 4500.0 5400.0 6400.0 7500.0] cumulus top altitude (m above planet surface)
-#define CLOUDS_WIND_SPEED 6.0         // [0.0 1.0 2.0 4.0 6.0 9.0 12.0 18.0 25.0] m/s — cloud advection speed
+#define CLOUDS_WIND_SPEED 12.0         // [0.0 1.0 2.0 4.0 6.0 9.0 12.0 18.0 25.0] m/s — cloud advection speed
 #define CLOUDS_WIND_DIR_X 1.0         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction X
 #define CLOUDS_WIND_DIR_Z 0.3         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction Z
-//#define CLOUDS_SHADOW                 // cloud shadow on terrain (Phase 5); cheap, free terrain shadowing under clouds
-#define CLOUDS_SHADOW_STEPS 6         // [2 3 4 6 8 12] light-march steps along sun ray when building the cloud shadow map
-#define CLOUDS_SHADOW_EXTENT 2048.0   // [512.0 1024.0 1536.0 2048.0 3072.0 4096.0] world extent (m, half-width) covered by the 512² distortion-warped shadow projection
-// Phase 6 — primary cloud raymarch (only fires when CLOUDS is defined above)
-#define CLOUDS_PRIMARY_STEPS 16       // [8 16 24 32 48 64 96] primary raymarch steps through the cloud layer (lerped horizon→zenith)
-#define CLOUDS_LIGHT_STEPS 4          // [2 3 4 6 8] cone-march taps along sun ray for self-shadowing
-#define CLOUDS_MS_OCTAVES 6           // [1 2 3 4 6] Wrenninge multiple-scattering octaves (each octave attenuates scatter/extinction)
-#define CLOUDS_MAX_DISTANCE 16000.0   // [4000.0 8000.0 12000.0 16000.0 24000.0 32000.0] hard cap on cloud-layer ray distance (m); skip far cloud sampling
+//#define CLOUDS_SHADOW                
+#define CLOUDS_SHADOW_STEPS 6         // [2 3 4 6 8 12]
+#define CLOUDS_SHADOW_EXTENT 2048.0   // [512.0 1024.0 1536.0 2048.0 3072.0 4096.0]
+#define CLOUDS_PRIMARY_STEPS 16       // [8 16 24 32 48 64 96]
+#define CLOUDS_LIGHT_STEPS 4          // [2 3 4 6 8]
+#define CLOUDS_MS_OCTAVES 6           // [1 2 3 4 6]
+#define CLOUDS_MAX_DISTANCE 16000.0   // [4000.0 8000.0 12000.0 16000.0 24000.0 32000.0]
 #define CLOUDS_MIN_TRANSMITTANCE 0.01 // [0.001 0.005 0.01 0.02 0.05] early-out when accumulated transmittance falls below this
 #define CLOUDS_DEBUG 0
 
 #define TAA
-#define TAA_JITTER_AMOUNT 1.0
-#define TAA_JITTER_SPREAD 1.0
+#define TAA_JITTER_SCALE 0.75 // [0.0 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
 #define TAA_BLEND_WEIGHT 0.95 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
+#define TAA_SHARPNESS 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.7 0.8 0.9 1.0]
 
 #define BLOOM
 #define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
@@ -103,7 +116,7 @@
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
 #define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
-#define COLOR_SATURATION 1.1 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_SATURATION 1.12 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 //#define VIGNETTE
 
@@ -141,10 +154,6 @@
 #define WATER_ROUGHNESS 0.02 // [0.0 0.005 0.01 0.02 0.04 0.08 0.16] surface roughness for reflections (higher = blurrier/more diffuse reflections, lower = sharper/mirror-like reflections)
 
 #define WATER_FOG
-
-// Underwater sun-shaft godray raymarch (Phase 7). Additive on top of the
-// analytic Beer-Lambert fog. Samples computeWaterCaustics() at each volume
-// step so caustic banding propagates along the visible shafts.
 //#define WATER_GODRAYS
 #define WATER_GODRAY_STEPS 2     // [4 6 8 10 12 16 20 24] dithered raymarch steps from camera to fragment
 #define WATER_GODRAY_STRENGTH 20.0 // [0.0 0.1 0.2 0.4 0.6 0.8 1.0 1.5 2.0] overall scatter intensity
@@ -164,16 +173,7 @@
 #define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
 
 #define VOXEL_GI
-// Horizontal voxelization radius in CHUNKS. Drives the voxel grid X/Z dims
-// (radius*2 blocks, see lib/pt/voxelData.glsl), the brick/super-brick
-// occupancy image dims (#if chain in shaders.properties), and shadowDistance
-// (the shadow pass voxelizes, so it must cover the grid). Vertical stays ±64.
-// VRAM for the fine grid: 8ch=34MB, 12ch=76MB, 16ch=134MB, 24ch=302MB, 32ch=537MB.
-// 12 chunks (=192 blocks) is plenty for diffuse GI — bounce light from further
-// away is below perceptibility, so bigger mostly costs clear/trace bandwidth.
 #define VOXEL_DISTANCE 12 // [8 12 16 24 32] horizontal voxelization radius (chunks)
-// shadowDistance literal for pipelineSettings (Iris wants a plain value after
-// preprocessing). Keep in sync: VOXEL_DISTANCE * 16.
 #if VOXEL_DISTANCE == 8
     #define VOXEL_SHADOW_DISTANCE 128.0
 #elif VOXEL_DISTANCE == 12
@@ -188,35 +188,17 @@
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
 #define GI_MAX_STEPS 192 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
-#define GI_STRENGTH 100 // [25 50 75 100 150 200]
+#define GI_STRENGTH 200 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
-
-// Bounce-surface SUN visibility from the shadow map (1 texture fetch via
-// isInShadow) instead of a GI_RADIUS-block voxel DDA ray. The shadow map
-// covers exactly the voxel region (shadowDistance == grid radius), resolves
-// sub-block geometry the cube voxels can't, and is far cheaper. Disable to
-// fall back to the voxel shadow ray.
 #define GI_BOUNCE_SHADOWMAP
 #define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
 #define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
-#define GI_EMISSION 0.5   // [1 2 3 4 5 6 7 8] emissive block glow strength
-//#define EXCLUDE_BLOCKLIGHTS_VOXELIZATION // Excludes custom blocklights (torches, lanterns, etc.) from the path-traced GI voxel grid entirely.
-// Sub-block voxel shapes: slabs, stairs, fences, walls, doors, trapdoors,
-// gates, carpets, torches, etc. are voxelized with their real collision-ish
-// shape (1-3 AABBs intersected inside the DDA hit voxel) instead of being
-// excluded from the grid entirely. Costs a few ALU ops only when a ray's hit
-// candidate is a shaped voxel; full-cube voxels keep the existing fast path.
-// When OFF, shaped blocks fall back to the old behaviour (excluded -> air).
+#define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
 #define VOXEL_SHAPES
 #define GI_FIREFLY 2.0
 #define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
-
-// --- SVGF denoiser (5-pass a-trous chain, steps 1/2/4/8/16) ---
-// When OFF the chain's deferred passes are skipped entirely
-// (program.deferredN.enabled in shaders.properties) and d7_composite reads the
-// raw temporally-accumulated GI.
-//#define GI_DENOISE
+#define GI_DENOISE
 #define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
 #define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power, capped at 16); lower = smoother
 #define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
@@ -225,12 +207,6 @@
 #define SVGF_MIN_LUMA_SIGMA 0.08 // [0.0 0.02 0.035 0.05 0.08 0.12 0.16] minimum relative luminance gate after history normalization. Higher removes more residual/checker noise; lower keeps crisper fine bounce detail.
 #define SVGF_WORLD_RADIUS // bound the kernel's world-space footprint (keeps distant geometry from over-blurring)
 #define SVGF_SIGMA_WORLD 2.0
-// PERF: skip the WIDE a-trous iterations (steps 8/16) on pixels whose filtered
-// variance is already below SKIP_REL × luma — converged pixels gain nothing
-// from large dilations (they only fight low-frequency noise, which converged
-// pixels don't have). Narrow steps 1/2/4 always run, so high-frequency residue
-// is still cleaned everywhere. Raise SKIP_REL for more skipping (risk: subtle
-// low-freq blotch in barely-converged areas), lower for quality.
 //#define SVGF_ADAPTIVE_SKIP
 #define SVGF_SKIP_REL 0.05 // [0.02 0.03 0.05 0.08 0.12] relative std (vs luma) below which wide passes skip
 //TODO merge GI_ACCUM_FRAMES and AO_ACCUM_FRAMES into one general "temporal accumulation length" macro and use it for both GI and AO denoising, call it SVGF_ACCUMULATION_LENGTH or something
@@ -245,42 +221,17 @@
 #define RESTIR_SPATIAL          // enable spatial reservoir reuse from neighbours
 #define RESTIR_SPATIAL_SAMPLES 1 // [1 2 3 4 5] neighbour reservoirs merged per pixel
 #define RESTIR_SPATIAL_RADIUS 8.0 // [4.0 8.0 16.0 24.0 32.0] neighbour search radius (pixels)
-
-// --- Low-level perf (Wyman, "What Does Optimizing ReSTIR Look Like?", SIGGRAPH 2023) ---
-// Lesson: "highly randomized sampling is bad for caching." A tile of pixels shares
-// the candidate cosine-hemisphere random pair, so neighbouring pixels march coherent
-// rays through voxelSampler -> the DDA hits the same cache lines instead of thrashing.
-// Per-pixel normals + per-frame rotation + ReSTIR spatiotemporal reuse dissolve the
-// resulting correlation ("artifacts disappear after reuse"). 1 = independent per pixel.
 #define RESTIR_COHERENT_TILE 1 // [1 2 4 8] pixels per tile sharing candidate ray directions (voxel cache coherence). NOTE: >1 creates a correlated NxN checkerboard that the denoiser must blur away; with the responsive A-SVGF alpha it becomes visible (jittering checker under changing light). Keep at 1 unless you re-add strong spatial decorrelation.
-// Lesson: "ReSTIR is a stochastic LoD; important paths change slowly." On fully
-// converged + camera-static pixels, stochastically skip the primary candidate trace
-// and ride the temporal reservoir. Saves voxel traces in static views; slightly slows
-// response to lighting changes. Opt-in.
+
 //#define RESTIR_CONVERGED_SKIP
 #define RESTIR_CONVERGED_SKIP_PROB 0.5 // [0.25 0.5 0.75] fraction of converged-static frames to skip the trace on
-
-// PERF: checkerboard candidate tracing — only half the pixels trace a new
-// candidate ray each frame (alternating parity); the other half ride their
-// temporal reservoir, and spatial reuse + the denoiser fill in. Guarded: a
-// pixel only skips if its reprojection is valid AND its previous reservoir
-// has confidence (M >= 4), so disocclusions/new-area pixels always trace.
-// Halves the dominant d0_restir trace cost for a small convergence-speed hit
-// (effective 0.5 spp; M-cap reached in ~2x the frames).
-//#define RESTIR_CHECKERBOARD
 
 // TODO these might be dead macros to fix spatial reservoir reuse
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] clamp on the unbiased reservoir weight W 
 #define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] absolute firefly clamp on the resolved GI
 
-// Screen-space GTAO (ground-truth ambient occlusion, Jimenez 2016) — computed
-// in d0_accum from the packed depth/normal G-buffer (lib/pt/gtao.glsl) and
-// temporally accumulated into colortex9.a. DECOUPLED from the path tracer:
-// pixel-granularity contact detail (stairs, slabs, decoration) the cube-voxel
-// rays couldn't resolve, zero voxel traces, and a fresh sample on every pixel
-// every frame (the old voxel RTAO went checkered under RESTIR_CHECKERBOARD).
 #define AO_GTAO
-#define AO_GI_STRENGTH 100    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
+#define AO_GI_STRENGTH 50    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
 #define GTAO_SLICES 2        // [1 2 3 4] horizon slices per pixel per frame (rotates over the TAA cycle)
 #define GTAO_STEPS 4         // [2 3 4 6 8] horizon-march taps per slice side

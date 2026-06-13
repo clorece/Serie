@@ -32,6 +32,8 @@ void main() {
     #ifdef TAA
         gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);
     #endif
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif

@@ -53,6 +53,8 @@ void main() {
     #ifdef TAA
         gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);
     #endif
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif
@@ -89,9 +91,7 @@ void main() {
                    : (material >= 0.95) ? (1.0 / 3.0)
                    :                       0.0;
 
-    // Packed/blue ice (opaque, id 10008): GENERATED NORMALS from the texture luminance gradient
-    // (tangent space) for surface relief, and colortex2.b = 0.25 so c_water adds a glossy reflection
-    // on top of the lit ice. All other opaque blocks are unchanged.
+
     vec3  outNormal = normal;
     float iceFlag   = 0.0;
     if (isSolidIce > 0.5) {

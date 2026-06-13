@@ -25,9 +25,38 @@ void main() {
     #ifdef TAA
         vec4 finalColor = taa(currentPos, vec2(viewWidth, viewHeight), colortex0, colortex5);
     #else
-        vec4 finalColor = texture(colortex0, texCoord);
+        vec4 finalColor = texture(colortex0, min(texCoord * renderScale, vec2(renderScale) - 1.0 / vec2(viewWidth, viewHeight)));
     #endif
-    
+
+    #if TAA_DEBUG > 0
+    {
+        vec2 sUV  = min(texCoord * renderScale, vec2(renderScale) - 1.0 / vec2(viewWidth, viewHeight));
+        vec3 src  = texture(colortex0, sUV).rgb;
+        vec3 outc = finalColor.rgb;
+
+        float srcMaxRB = max(src.r,  src.b);
+        float outMaxRB = max(outc.r, outc.b);
+        float srcDef = (srcMaxRB > 0.02) ? clamp(1.0 - src.g  / max(srcMaxRB, 1e-5), 0.0, 1.0) : 0.0;
+        float outDef = (outMaxRB > 0.02) ? clamp(1.0 - outc.g / max(outMaxRB, 1e-5), 0.0, 1.0) : 0.0;
+        bool srcBad = any(isnan(src))  || any(isinf(src));
+        bool outBad = any(isnan(outc)) || any(isinf(outc));
+
+        #if TAA_DEBUG == 1
+            finalColor.rgb = src;                                         // raw source, as-is
+        #elif TAA_DEBUG == 2
+            if (srcBad)            finalColor.rgb = vec3(1.0, 0.0, 0.0);  // RED   = NaN/Inf in SOURCE
+            else if (srcDef > 0.6) finalColor.rgb = vec3(0.0, 1.0, 0.0);  // GREEN = magenta in SOURCE
+            else                   finalColor.rgb = src * 0.15;           // dim context
+        #elif TAA_DEBUG == 3
+            if (outBad)            finalColor.rgb = vec3(1.0, 0.0, 0.0);  // RED   = NaN/Inf in OUTPUT
+            else if (outDef > 0.6) finalColor.rgb = vec3(0.0, 1.0, 0.0);  // GREEN = magenta in OUTPUT
+            else                   finalColor.rgb = outc * 0.15;
+        #elif TAA_DEBUG == 4
+            finalColor.rgb = vec3(srcDef);                               // SOURCE green-deficit heatmap
+        #endif
+    }
+    #endif
+
     float prevExposure = texelFetch(colortex5, ivec2(0), 0).a;
     if (prevExposure <= 0.001 || isnan(prevExposure) || isinf(prevExposure)) {
         prevExposure = 1.0;
@@ -43,7 +72,7 @@ void main() {
         for (float x = -0.01; x <= 0.011; x += 0.01) {
             for (float y = -0.01; y <= 0.011; y += 0.01) {
                 vec2 uv = vec2(0.5) + vec2(x, y);
-                vec3 rawColor = texture(colortex0, uv).rgb;
+                vec3 rawColor = texture(colortex0, uv * renderScale).rgb;
                 float luma = dot(rawColor, vec3(0.2126, 0.7152, 0.0722));
                 
                 sumLuma += log2(max(luma, 0.0001));

@@ -25,6 +25,8 @@ void main() {
     #ifdef TAA
         gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);
     #endif
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif
@@ -45,8 +47,6 @@ in vec4 color;
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;
 
-    // Blending is disabled for this pass (see shaders.properties), so discard
-    // fully-transparent fragments instead of writing them as opaque pixels.
     if (albedo.a < 0.1) discard;
 
     /* DRAWBUFFERS:012 */

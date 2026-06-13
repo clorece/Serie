@@ -15,6 +15,7 @@ flat out vec3 voxelCenter;
 flat out vec3 voxelNormal;
 flat out uint voxelBlockCategory;
 flat out int biomeTintedBlock;
+flat out float isBlockGeom; // 1 = real block (at_midBlock valid -> mid-texcoord write gate usable)
 out float skyLight;
 
 
@@ -41,6 +42,13 @@ void main() {
 	position.xyz += cameraPosition.xyz;
 
     voxelCenter = position.xyz + at_midBlock / 64.0;
+
+    // Entities/block-entities run through this same shadow program but get
+    // default-zero block attributes (at_midBlock == 0, mc_midTexCoord == 0).
+    // For them the mid-texcoord write gate in the fragment stage would be
+    // meaningless and silently drop their voxels — flag real block geometry
+    // (at_midBlock is the vertex->block-center offset: nonzero for blocks).
+    isBlockGeom = any(notEqual(at_midBlock, vec3(0.0))) ? 1.0 : 0.0;
 
 
     voxelNormal = normalize(mat3(shadowModelViewInverse) * (gl_NormalMatrix * gl_Normal));
@@ -103,14 +111,10 @@ flat in vec3 voxelCenter;
 flat in vec3 voxelNormal;
 flat in uint voxelBlockCategory;
 flat in int biomeTintedBlock;
+flat in float isBlockGeom;
 in float skyLight;
 
-// Fine voxel grid is a dedicated 3D image (image.voxelImg in shaders.properties).
-// Write with the image name `voxelImg`; read elsewhere via the `voxelSampler` usampler3D.
 layout(rgba8ui) uniform writeonly uimage3D voxelImg;
-// Hierarchical occupancy, built here for free instead of by a reduction pass:
-// every fine voxel write also marks its 8³ brick and 64³ super-brick occupied.
-// Both images are cleared each frame; concurrent stores of 1 are benign.
 layout(r8ui) uniform writeonly uimage3D brickImg;
 layout(r8ui) uniform writeonly uimage3D superBrickImg;
 
@@ -122,7 +126,8 @@ void main() {
     }
 
     vec4 tex = texture(texture, vMidTexCoord);
-    if (tex.a < 0.1) {
+    bool midTransparent = tex.a < 0.1; // remembered for the voxel-write gate below
+    if (midTransparent) {
         // if the tile center is transparent, use the fragment color as a fallback but this should be rare for solid blocks
         tex = texFrag;
     }
@@ -154,7 +159,10 @@ void main() {
     uvec4 voxelData = uvec4(finalCategory, uvec3(clamp(albedo, 0.0, 1.0) * 255.0 + 0.5));
 
     bool isTopFace = voxelNormal.y > 0.5;
-    bool skipVoxelWrite = ((biomeTintedBlock == 1) && !isTopFace) || (finalCategory == 0u);
+
+    bool centerFrag = all(lessThanEqual(abs(texCoord - vMidTexCoord), fwidth(texCoord)));
+    bool skipVoxelWrite = ((biomeTintedBlock == 1) && !isTopFace) || (finalCategory == 0u)
+                       || !(centerFrag || midTransparent || isBlockGeom < 0.5);
 
     ivec3 voxelCoord;
     vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;

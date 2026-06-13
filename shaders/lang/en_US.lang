@@ -1,18 +1,24 @@
 # en_US.lang
 # Post-Processing Overhaul
 
+option.RENDER_SCALE=Render Scale
+value.RENDER_SCALE.0.33=Ultra Performance
+value.RENDER_SCALE.0.5=Performance
+value.RENDER_SCALE.0.59=Balanced
+value.RENDER_SCALE.0.67=Quality
+value.RENDER_SCALE.0.77=Ultra Quality
+value.RENDER_SCALE.1.0=Native
+
+option.UPSCALE_MODE=Upscale Method
+value.UPSCALE_MODE.0=TAA
+value.UPSCALE_MODE.1=TAAU
+value.UPSCALE_MODE.2=Lanczos-2
+
+option.TAA_JITTER_SCALE=TAA Jitter Amount
+
+option.TAA_SHARPNESS=Image Sharpening
+
 option.BLOOM_STRENGTH=Bloom Strength
-value.BLOOM_STRENGTH.0.01=0.01 (Minimal)
-value.BLOOM_STRENGTH.0.03=0.03 (Soft)
-value.BLOOM_STRENGTH.0.06=0.06 (Bright)
-value.BLOOM_STRENGTH.0.08=0.08 (Dreamy)
-value.BLOOM_STRENGTH.0.10=0.10 (Ethereal)
-value.BLOOM_STRENGTH.0.12=0.12 (Intense)
-value.BLOOM_STRENGTH.0.15=0.15 (Overloaded)
-value.BLOOM_STRENGTH.0.18=0.18 (Extreme)
-value.BLOOM_STRENGTH.0.22=0.22 (Nebula)
-value.BLOOM_STRENGTH.0.26=0.26 (Supernova)
-value.BLOOM_STRENGTH.0.30=0.30 (Hypernova)
 option.BLOOM_STRENGTH.comment=Controls the brightness and intensity of the soft-knee bloom glow around light sources.
 
 option.AUTO_EXPOSURE=Auto Exposure
@@ -45,17 +51,6 @@ option.COLOR_SATURATION=Saturation
 option.COLOR_SATURATION.comment=Controls the vibrant saturation levels of the scene.
 
 option.COLOR_TEMP=Color Temperature
-value.COLOR_TEMP.-0.5=-0.5 (Icy Cool)
-value.COLOR_TEMP.-0.4=-0.4
-value.COLOR_TEMP.-0.3=-0.3
-value.COLOR_TEMP.-0.2=-0.2 (Cool)
-value.COLOR_TEMP.-0.1=-0.1
-value.COLOR_TEMP.0.0=0.0 (Neutral)
-value.COLOR_TEMP.0.1=0.1
-value.COLOR_TEMP.0.2=0.2 (Warm)
-value.COLOR_TEMP.0.3=0.3
-value.COLOR_TEMP.0.4=0.4
-value.COLOR_TEMP.0.5=0.5 (Warm Amber)
 option.COLOR_TEMP.comment=Shifts color temperature. Negative values introduce cooler blue tones, positive values add warmer golden-hour amber tones.
 
 option.VIGNETTE=Cinematic Vignette

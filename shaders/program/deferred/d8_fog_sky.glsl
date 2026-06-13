@@ -5,6 +5,8 @@
 
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 out vec3 lightColor;
 out vec3 ambientColor;
@@ -17,6 +19,8 @@ out vec3 moonVector;
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 
     #include "/lib/vectors.glsl"
     #include "/lib/colors.glsl"
@@ -43,14 +47,13 @@ in vec3 sunVector;
 in vec3 moonVector;
 
 
-float depth0 = texture(depthtex0, texCoord).x;
+float depth0 = texture(depthtex0, texCoord * renderScale).x;
 
 vec3 clipSpace;
 
 #include "/lib/util/positions.glsl"
 #include "/lib/fragment/sky.glsl"
 #include "/lib/fragment/clouds.glsl"
-// fog.glsl + atmosphere.glsl deleted — legacy raymarch superseded by the LUT path.
 
 void main() {
     vec2 unjitteredTexCoord = texCoord;
@@ -59,7 +62,7 @@ void main() {
     #endif
     clipSpace = vec3(unjitteredTexCoord, depth0) * 2.0 - 1.0;
 
-    vec3 color = texture(colortex0, texCoord).rgb;
+    vec3 color = texture(colortex0, texCoord * renderScale).rgb;
 
 
 	vec3 fragPosition = getFragPosition().xyz;
@@ -78,27 +81,13 @@ void main() {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
 
         #ifdef CLOUDS
-        // Pick the active celestial light. At night the sun is below the
-        // horizon — feeding worldSunDir + SUN_COLOR_BASE into the per-step
-        // T-LUT inside raymarchClouds samples the atmosphere at negative
-        // cosLightZenith, which returns the boundary-extrapolated sunset
-        // tint → clouds end up red at midnight. Switch to moon below the
-        // horizon, and scale by the existing sun/moon activity factors so
-        // direct cloud light fades smoothly through twilight.
+
         float cloudMidAlt = (CLOUDS_LAYER_BOTTOM + CLOUDS_LAYER_TOP) * 0.5;
         vec3  ambient     = getSkyAmbient(cloudMidAlt);
 
         TimeState t = getTimeState();
         vec3  lightDir = t.activeLightDir;
         
-        // Clouds need the raw, un-attenuated exo-atmospheric light color because 
-        // raymarchClouds() natively evaluates the atmospheric transmittance (T-LUT) 
-        // and planet shadow per-step. Using t.sunColor here double-dims the light,
-        // causing sunset clouds to look grey and dull instead of vibrant orange.
-        // We scale the moon UP massively because MOON_ILLUMINANCE is naturally very low (0.02)
-        // and the physical T-LUT attenuates it further. Multiplying it here provides enough raw
-        // energy to make night clouds bright and clear.
-        // Adjusted to 10.0 based on user feedback for a balanced night sky.
         vec3 exoSun  = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
         vec3 exoMoon = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE * 10.0;
         
@@ -113,11 +102,7 @@ void main() {
     }
     #ifndef VOLUMETRIC_LIGHT
     else {
-        // Aerial perspective: 8-step march from camera to surface samples the
-        // T-LUT for sun visibility per step, then `color = scene * T + scatter`.
-        // Distant terrain dissolves into the same sky color at depth==1.
-        // When VOLUMETRIC_LIGHT is on, d9_vl handles this with shadow-aware
-        // integration (god rays); skip here to avoid double-integration.
+
         AerialPerspective ap = computeAerialPerspective(
             worldDir, worldSunDir, worldMoonDir, eyeAltitude, dist);
         color = color * ap.transmittance + ap.scatter;

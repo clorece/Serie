@@ -48,36 +48,37 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
     vec3  lastMask = vec3(0.0);
     float tEntry   = 0.0;
     bool  first    = true; // true until the first fine sample / skip (was `i == 0`)
-    // generous cap; rays terminate far earlier via actualMaxDist / brick-skips
+
+    ivec3 lastBrick = ivec3(-1);
     for (int i = 0; i < GI_MAX_STEPS; i++) {
         if (tEntry > actualMaxDist) break;
 
-        // --- hierarchical empty-space skip (64³ super-brick, then 8³ brick) ---
-        // Empty cells contain no occluders and no emissive voxels (emissive is
-        // non-air), so jumping them never drops a hit or a glow tap.
-        // Single in-grid test shared by both levels.
         if (all(greaterThanEqual(vox, ivec3(0))) && all(lessThan(vox, VOXEL_DIMS))) {
-            if (texelFetch(superBrickSampler, vox >> 6, 0).r == 0u) {
-                vec3 cellMin = vec3((vox >> 6) << 6);
-                vec3 tb = (mix(cellMin, cellMin + float(VOXEL_SUPER), dirPos) - localPos) * invRayDir;
-                float tCellExit = min(tb.x, min(tb.y, tb.z));
-                lastMask = vec3(lessThanEqual(tb, vec3(tCellExit))); // entry face of the next cell
-                tEntry = tCellExit;
-                vox  = ivec3(floor(localPos + rayDir * (tCellExit + 1e-3)));
-                tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
-                first = false;
-                continue;
-            }
-            if (texelFetch(brickSampler, vox >> 3, 0).r == 0u) {
-                vec3 brickMin = vec3((vox >> 3) << 3);
-                vec3 tb = (mix(brickMin, brickMin + float(VOXEL_BRICK), dirPos) - localPos) * invRayDir;
-                float tBrickExit = min(tb.x, min(tb.y, tb.z));
-                lastMask = vec3(lessThanEqual(tb, vec3(tBrickExit))); // entry face of the next brick
-                tEntry = tBrickExit;
-                vox  = ivec3(floor(localPos + rayDir * (tBrickExit + 1e-3)));
-                tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
-                first = false;
-                continue;
+            ivec3 curBrick = vox >> 3;
+            if (curBrick != lastBrick) {
+                if (texelFetch(superBrickSampler, vox >> 6, 0).r == 0u) {
+                    vec3 cellMin = vec3((vox >> 6) << 6);
+                    vec3 tb = (mix(cellMin, cellMin + float(VOXEL_SUPER), dirPos) - localPos) * invRayDir;
+                    float tCellExit = min(tb.x, min(tb.y, tb.z));
+                    lastMask = vec3(lessThanEqual(tb, vec3(tCellExit))); // entry face of the next cell
+                    tEntry = tCellExit;
+                    vox  = ivec3(floor(localPos + rayDir * (tCellExit + 1e-3)));
+                    tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
+                    first = false;
+                    continue;
+                }
+                if (texelFetch(brickSampler, curBrick, 0).r == 0u) {
+                    vec3 brickMin = vec3(curBrick << 3);
+                    vec3 tb = (mix(brickMin, brickMin + float(VOXEL_BRICK), dirPos) - localPos) * invRayDir;
+                    float tBrickExit = min(tb.x, min(tb.y, tb.z));
+                    lastMask = vec3(lessThanEqual(tb, vec3(tBrickExit))); // entry face of the next brick
+                    tEntry = tBrickExit;
+                    vox  = ivec3(floor(localPos + rayDir * (tBrickExit + 1e-3)));
+                    tMax = (vec3(vox) + max(vec3(stepDir), 0.0) - localPos) * invRayDir;
+                    first = false;
+                    continue;
+                }
+                lastBrick = curBrick; // occupied brick: skip re-tests until we leave it
             }
         }
 
@@ -91,9 +92,6 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
             #endif
 
             if (shapeId == 0u && first) {
-                // full-cube voxel at the ray origin = the surface's own block:
-                // legacy self-skip, but still pick up pass-through emission so
-                // a light at the origin keeps glowing.
                 if (isEmis) {
                     vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
                                            : vec3(v.gba) / 255.0;
@@ -104,13 +102,6 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
                     r.emission += e * float(GI_EMISSION) * 0.35;
                 }
             } else {
-                // sub-block shapes: intersect the real geometry inside the
-                // voxel. A miss lets the ray continue (with a pass-by glow tap
-                // for emissive blocks — a ray grazing past a torch still sees
-                // it). Shaped voxels are tested even in the ORIGIN voxel
-                // (first) — that's where the surface under a top slab / at a
-                // fence base lives; boxes the origin sits inside are skipped
-                // there so pixels ON the shape don't self-occlude.
                 bool  realHit = true;
                 float tHit    = tEntry;
                 vec3  nHit    = -vec3(stepDir) * lastMask; // face we entered through
@@ -183,8 +174,6 @@ vec3 giRayRadiance(
 
         float ndl = max(dot(h.normal, sunDir), 0.0);
         if (ndl > 0.0 && skyOcc > 0.01) {
-            // bounce sun visibility from the shadow map (1 fetch) — see
-            // GI_BOUNCE_SHADOWMAP in options.glsl
             #ifdef GI_BOUNCE_SHADOWMAP
                 bool occluded = isInShadow(h.pos + h.normal * 0.1 - camPos);
             #else
@@ -200,8 +189,6 @@ vec3 giRayRadiance(
             float lambertWeight = dot(h.normal, skyProbeDir);
             bool  skyEscape     = !traceVoxelRay(atlas, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), camPos, depthtex0, gbufferProj, gbufferMV, false);
             vec3 probeSky = skyColor;
-            // Use luminance-only albedo — skylight is too diffuse/weak
-            // to produce visible color bleeding off surfaces.
             if (skyEscape) rad += vec3(dot(h.albedo, vec3(0.2126, 0.7152, 0.0722))) * probeSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
         }
 
@@ -209,10 +196,6 @@ vec3 giRayRadiance(
         hitNormal = h.normal;
         return rad;
     }
-    
-    // Voxel ray missed everything within the grid → sky. (The old screen-space
-    // GI fallback here is removed: with the radius-256 voxel grid the voxel pass
-    // is the source of truth; screen-space ray tracing is kept only for RTAO.)
     wasHit      = false;
     hitCategory = VOXEL_AIR;
     hitPos      = h.pos;

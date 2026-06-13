@@ -1,10 +1,15 @@
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    // TAAU: render into the bottom-left renderScale region (no-op at 1.0).
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif
@@ -51,7 +56,11 @@ bool waterReflectSSR(vec3 viewOrigin, vec3 viewDir, float dither, out vec2 hitUV
     float rayLen = min(tEdge.x, tEdge.y);
 
     vec3  rayStep = screenDir * (rayLen / float(WATER_REFLECTION_STEPS));
-    vec2  viewSize = vec2(viewWidth, viewHeight);
+    // Scaled-region buffer size: the ray marches in LOGICAL screen uv [0,1] but
+    // the depth/flag buffers only hold data in the bottom-left renderScale
+    // region, so every ivec2(logicalUv * viewSize) below lands on the right
+    // texel once viewSize carries the renderScale factor.
+    vec2  viewSize = vec2(viewWidth, viewHeight) * renderScale;
 
     // Dynamic depth tolerance scaled to prevent background ghosting & near-plane skipping
     float depthTol = max(abs(rayStep.z) * 3.0, 0.02 / max(1.0, viewOrigin.z * viewOrigin.z));
@@ -100,12 +109,12 @@ bool waterReflectSSR(vec3 viewOrigin, vec3 viewDir, float dither, out vec2 hitUV
 void main() {
     vec2 uv = texCoord;
 
-    float d0 = texture(depthtex0, uv).r; // water surface (translucent depth)
-    float d1 = texture(depthtex1, uv).r; // opaque behind (may equal d0 in this pack)
-    vec4  c1 = texture(colortex1, uv);
-    vec3  scene = texture(colortex0, uv).rgb;
+    float d0 = texture(depthtex0, uv * renderScale).r; // water surface (translucent depth)
+    float d1 = texture(depthtex1, uv * renderScale).r; // opaque behind (may equal d0 in this pack)
+    vec4  c1 = texture(colortex1, uv * renderScale);
+    vec3  scene = texture(colortex0, uv * renderScale).rgb;
 
-    vec4  c2 = texture(colortex2, uv);      // .rg = lightmap, .b = flag, .a = packed glass colour
+    vec4  c2 = texture(colortex2, uv * renderScale);      // .rg = lightmap, .b = flag, .a = packed glass colour
 
     float flag       = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
     bool  isWater    = flag > 0.875;
@@ -175,7 +184,7 @@ void main() {
                 float nz = waterDither(gl_FragCoord.xy, frameCounter);
                 vec2 hUV;
                 if (waterReflectSSR(viewWater + Nb * 0.1, reflect(I, Nb), nz, hUV)) {
-                    vec3 rawRefl = textureLod(colortex0, hUV, 0.0).rgb;
+                    vec3 rawRefl = textureLod(colortex0, hUV * renderScale, 0.0).rgb;
                     reflColor = rawRefl * reflTrans + scatter * (1.0 - reflTrans);
                 }
             }
@@ -267,10 +276,10 @@ void main() {
         }
         #endif
 
-        float we0 = textureLod(colortex2, uv + vec2(-1.5, 0.0) * texelSize, 0.0).b;
-        float we1 = textureLod(colortex2, uv + vec2( 1.5, 0.0) * texelSize, 0.0).b;
-        float we2 = textureLod(colortex2, uv + vec2(0.0, -1.5) * texelSize, 0.0).b;
-        float we3 = textureLod(colortex2, uv + vec2(0.0,  1.5) * texelSize, 0.0).b;
+        float we0 = textureLod(colortex2, uv * renderScale + vec2(-1.5, 0.0) * texelSize, 0.0).b;
+        float we1 = textureLod(colortex2, uv * renderScale + vec2( 1.5, 0.0) * texelSize, 0.0).b;
+        float we2 = textureLod(colortex2, uv * renderScale + vec2(0.0, -1.5) * texelSize, 0.0).b;
+        float we3 = textureLod(colortex2, uv * renderScale + vec2(0.0,  1.5) * texelSize, 0.0).b;
         float waterNeighbor = (we0 + we1 + we2 + we3) * 0.25;
 
         foggedScene = mix(foggedScene, foggedScene * exp(-absorption * 1.0) + scatter * (1.0 - exp(-absorption * 1.0)), smoothstep(0.0, 0.5, waterNeighbor));
@@ -315,8 +324,8 @@ void main() {
             if (dot(rDir, rDir) > 1e-6) {
                 vec2 rUV = viewToScreen(viewSurf + rDir * TRANSLUCENT_REFRACTION_DEPTH).xy;
                 if (clamp(rUV, 0.0, 1.0) == rUV &&
-                    texelFetch(colortex2, ivec2(rUV * vec2(viewWidth, viewHeight)), 0).b > 0.125) {
-                    bg = textureLod(colortex0, rUV, 0.0).rgb;
+                    texelFetch(colortex2, ivec2(rUV * vec2(viewWidth, viewHeight) * renderScale), 0).b > 0.125) {
+                    bg = textureLod(colortex0, rUV * renderScale, 0.0).rgb;
                 }
             }
         }
@@ -348,7 +357,7 @@ void main() {
             float nz = waterDither(gl_FragCoord.xy, frameCounter);
             vec2 hUV;
             if (waterReflectSSR(viewSurf + tN * 0.1, viewReflDir, nz, hUV)) {
-                reflectColor = textureLod(colortex0, hUV, 0.0).rgb;
+                reflectColor = textureLod(colortex0, hUV * renderScale, 0.0).rgb;
             }
         }
         #endif
@@ -437,10 +446,10 @@ void main() {
     float dist = length(viewWater);
     float distFade = 3.0 / max(dist, 3.0);
 
-    float w0 = textureLod(colortex2, uv + vec2(-1.5, 0.0) * texelSize, 0.0).b;
-    float w1 = textureLod(colortex2, uv + vec2(1.5, 0.0) * texelSize, 0.0).b;
-    float w2 = textureLod(colortex2, uv + vec2(0.0, -1.5) * texelSize, 0.0).b;
-    float w3 = textureLod(colortex2, uv + vec2(0.0, 1.5) * texelSize, 0.0).b;
+    float w0 = textureLod(colortex2, uv * renderScale + vec2(-1.5, 0.0) * texelSize, 0.0).b;
+    float w1 = textureLod(colortex2, uv * renderScale + vec2(1.5, 0.0) * texelSize, 0.0).b;
+    float w2 = textureLod(colortex2, uv * renderScale + vec2(0.0, -1.5) * texelSize, 0.0).b;
+    float w3 = textureLod(colortex2, uv * renderScale + vec2(0.0, 1.5) * texelSize, 0.0).b;
     float edgeFade = clamp((w0 + w1 + w2 + w3) * 0.25, 0.0, 1.0);
     edgeFade = smoothstep(0.0, 1.0, edgeFade);
 
@@ -450,9 +459,9 @@ void main() {
     bool refractedHit = false;
     float seabedDepth = 0.0;
     vec3  seabedWorld = vec3(0.0);
-    if (texture(colortex2, refrUV).b > 0.875) {
-        refractColor = textureLod(colortex0, refrUV, 0.0).rgb;
-        float dR = texture(depthtex1, refrUV).r;
+    if (texture(colortex2, refrUV * renderScale).b > 0.875) {
+        refractColor = textureLod(colortex0, refrUV * renderScale, 0.0).rgb;
+        float dR = texture(depthtex1, refrUV * renderScale).r;
         thickness = min(distance(screenToView(refrUV, d0), screenToView(refrUV, dR)), WATER_THICKNESS_MAX);
         if (dR < 1.0) {
             vec3 seabedView   = screenToView(refrUV, dR);
@@ -493,7 +502,7 @@ void main() {
         float nz = waterDither(gl_FragCoord.xy, frameCounter);
         vec2 hitUV;
         if (waterReflectSSR(viewWater + viewNormal * 0.1, viewReflDir, nz, hitUV)) {
-            reflectColor = textureLod(colortex0, hitUV, 0.0).rgb;
+            reflectColor = textureLod(colortex0, hitUV * renderScale, 0.0).rgb;
         }
     }
     #endif

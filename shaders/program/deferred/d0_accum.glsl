@@ -8,11 +8,15 @@
 
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif
@@ -28,6 +32,7 @@ in vec2 texCoord;
 
 
 #include "/lib/pt/denoise.glsl"
+#include "/lib/pt/gtao.glsl"
 
 vec3 clipSpace;
 #include "/lib/util/positions.glsl"
@@ -60,12 +65,6 @@ float calculateJacobian(vec3 shadingPos, vec3 neighborShadingPos, vec3 samplePos
     return clamp(jacobian, 0.05, 20.0);
 }
 
-// PER-PIXEL random disk offset for spatial reservoir reuse. The old version used a
-// frame-uniform offset combined with `q = p ^ delta`; XOR-ing every pixel by the same
-// constant produces the classic XOR/Sierpinski maze texture, which the reused reservoir
-// radiance then stamps onto flat surfaces (visible once the denoiser stopped over-blurring
-// it). Giving each pixel its own random rotation+radius and ADDING the offset yields
-// unstructured noise the temporal accumulation + a-trous handle cleanly.
 vec2 getSpatialOffset(int sampleIdx, int frame, ivec2 pixel) {
     uint s = pcgHash(uint(pixel.x) ^ (uint(pixel.y) << 16u) ^ (uint(frame) * 9781u) ^ (uint(sampleIdx) * 26699u));
     float r1 = float(s >> 8u) * (1.0 / float(1u << 24u));
@@ -79,47 +78,58 @@ vec2 getSpatialOffset(int sampleIdx, int frame, ivec2 pixel) {
 
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
-    vec2 prevJitter    = getTaaJitter(frameCounter - 1) * texelSize;
 
-    vec2 uvUnjittered = texCoord - currentJitter;
-    float depth0 = texture(depthtex0, uvUnjittered).r;
-    
+    vec2 sampleCenter = clamp((texCoord + currentJitter) * renderScale, vec2(0.0), vec2(renderScale));
+    float depth0 = texture(depthtex0, sampleCenter).r;
+
     if (depth0 >= 1.0) {
         gl_FragData[0] = vec4(0.0);
         gl_FragData[1] = vec4(1.0, 0.0, 0.0, 1.0);
         return;
     }
 
-    clipSpace = vec3(uvUnjittered, depth0) * 2.0 - 1.0;
+    clipSpace = vec3(texCoord, depth0) * 2.0 - 1.0;
     float linDepth = getDepth(depth0);
 
-    vec3  normal = normalize(texture(colortex1, uvUnjittered).rgb * 2.0 - 1.0);
+    vec3  normal = normalize(texture(colortex1, sampleCenter).rgb * 2.0 - 1.0);
     vec3  normalWorld = normalize(mat3(gbufferModelViewInverse) * normal);
     vec3  worldRel = getWorldPosition().xyz;
 
-    vec3  rawGI = texture(colortex3, texCoord).rgb;
-    float rawAO = texture(colortex14, texCoord).w;
+    vec3  rawGI = texture(colortex3, texCoord * renderScale).rgb;
 
+    #ifdef AO_GTAO
+        float rawAO = computeGTAO(texCoord, linDepth, normalWorld, frameCounter);
+    #else
+        float rawAO = 1.0;
+    #endif
+
+    ivec2 pixCenter = ivec2(gl_FragCoord.xy);
+    ivec2 pixMax    = ivec2(vec2(viewWidth, viewHeight) * renderScale) - 1; // clamp the 3x3 walk to the rendered region
+    vec3 ycCenter = RGBtoYCoCg(rawGI);
+    vec3 ycM1 = ycCenter;
+    vec3 ycM2 = ycCenter * ycCenter;
     vec3 neighborSum = vec3(0.0);
     float neighborWeight = 0.0;
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
             if (x == 0 && y == 0) continue;
-            vec2 nUV = texCoord + vec2(x, y) * texelSize;
-            
+            ivec2 nPix = clamp(pixCenter + ivec2(x, y), ivec2(0), pixMax);
 
-            if (nUV.x < 0.0 || nUV.x > 1.0 || nUV.y < 0.0 || nUV.y > 1.0) continue;
-            
-            float nDepth0 = textureLod(depthtex0, nUV, 0.0).r;
+            vec3 nGI = texelFetch(colortex3, nPix, 0).rgb;
+            vec3 nYC = RGBtoYCoCg(nGI);
+            ycM1 += nYC; ycM2 += nYC * nYC;
+
+            float nDepth0 = texelFetch(depthtex0, nPix, 0).r;
             float nLinDepth = getDepth(nDepth0);
-            vec3 nNormal = normalize(textureLod(colortex1, nUV, 0.0).rgb * 2.0 - 1.0);
-            
+            vec3 nNormal = normalize(texelFetch(colortex1, nPix, 0).rgb * 2.0 - 1.0);
+
             if (abs(nLinDepth - linDepth) < 0.1 * linDepth && dot(normal, nNormal) > 0.8) {
-                neighborSum += textureLod(colortex3, nUV, 0.0).rgb;
+                neighborSum += nGI;
                 neighborWeight += 1.0;
             }
         }
     }
+    ycM1 /= 9.0; ycM2 /= 9.0;
     float centerLumaRaw = dot(rawGI, vec3(0.2126, 0.7152, 0.0722));
     float neighborLuma = centerLumaRaw;
     if (neighborWeight > 0.1) {
@@ -134,7 +144,7 @@ void main() {
     
     #if defined(VOXEL_GI) && defined(RESTIR_GI) && defined(RESTIR_SPATIAL)
         uint seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter + 1);
-        Reservoir shade = readReservoir(colortex10, colortex11, colortex14, texCoord);
+        Reservoir shade = readReservoir(colortex10, colortex11, colortex14, texCoord * renderScale);
         shade.wSum = luma(shade.radiance) * shade.W * shade.M;
         
         const float spDepthGate  = 0.10; // 10% relative depth
@@ -161,16 +171,13 @@ void main() {
             ivec2 q = p + delta;
             vec2 nUV = (vec2(q) + 0.5) * texelSize;
 
-            // Mirror the offset back inside if it ran off-screen, so edge pixels keep
-            // their spatial-sample count (the old XOR folded pixels in for free; additive
-            // offsets do not, which would otherwise leave a noisy border).
-            if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x ||
-                nUV.y < paddingSpatial.y || nUV.y > 1.0 - paddingSpatial.y) {
+            if (nUV.x < paddingSpatial.x || nUV.x > renderScale - paddingSpatial.x ||
+                nUV.y < paddingSpatial.y || nUV.y > renderScale - paddingSpatial.y) {
                 q  = p - delta;
                 nUV = (vec2(q) + 0.5) * texelSize;
             }
-            if (nUV.x < paddingSpatial.x || nUV.x > 1.0 - paddingSpatial.x ||
-                nUV.y < paddingSpatial.y || nUV.y > 1.0 - paddingSpatial.y) continue;
+            if (nUV.x < paddingSpatial.x || nUV.x > renderScale - paddingSpatial.x ||
+                nUV.y < paddingSpatial.y || nUV.y > renderScale - paddingSpatial.y) continue;
 
 
             float nDepthRaw = textureLod(depthtex0, nUV, 0.0).r;
@@ -184,13 +191,9 @@ void main() {
             Reservoir n = readReservoir(colortex10, colortex11, colortex14, nUV);
             n.M = min(n.M, float(RESTIR_M_CAP));
 
-            // Each reuse step is another RIS iteration (Wyman 2023): the neighbour's
-            // sample is reconnected to THIS shading point, so its contribution must be
-            // reweighted by the geometric (solid-angle) Jacobian. Previously hardcoded
-            // to 1.0, which biased the estimate and capped the usable reuse radius.
             float jacobian = 1.0;
             #ifdef RESTIR_JACOBIAN
-                vec3 nShadePos = getNeighborWorldPosition(nUV, nDepthRaw);
+                vec3 nShadePos = getNeighborWorldPosition(nUV / renderScale, nDepthRaw); // unprojection needs LOGICAL uv
                 jacobian = calculateJacobian(worldRel, nShadePos, n.samplePos, n.sampleNormal);
             #endif
 
@@ -216,7 +219,6 @@ void main() {
         vec4 viewPrev = gbufferPreviousModelView * vec4(worldPrevRel, 1.0);
         vec4 clipPrev = gbufferPreviousProjection * viewPrev;
         uvPrev   = (clipPrev.xy / clipPrev.w) * 0.5 + 0.5;
-        uvPrev += prevJitter;
         expectedClipZ = clipPrev.z / clipPrev.w;
     }
 
@@ -231,13 +233,13 @@ void main() {
 
     if (validReproj) {
         vec4 prev8, p9_tmp;
-        if (fetchBilateralHistory(uvPrev, expectedClipZ, normalWorld, colortex8, colortex9, colortex15, prev8, p9_tmp)) {
+        if (fetchBilateralHistory(uvPrev * renderScale, expectedClipZ, normalWorld, colortex8, colortex9, colortex15, prev8, p9_tmp)) {
             if (prev8.a > 0.5) {
                 giHist = min(prev8.a + 1.0, float(GI_ACCUM_FRAMES));
 
-                vec3 clampedHistory = clipHistory(prev8.rgb, rawGI, colortex3, texCoord);
+                vec3 clampedHistory = clipHistoryMoments(prev8.rgb, ycM1, ycM2);
                 float prevStd = sqrt(max(p9_tmp.b - p9_tmp.g * p9_tmp.g, 0.0));
-                float tol     = prevStd * GI_TEMPORAL_REJECT + 0.05 * p9_tmp.g + 0.01;
+                float tol     = prevStd * GI_TEMPORAL_REJECT + 0.01 * p9_tmp.g + 0.01;
                 float reject  = clamp((abs(neighborLuma - p9_tmp.g) - tol) / (tol + 1e-3), 0.0, 1.0);
 
 
@@ -245,7 +247,7 @@ void main() {
                 reject = max(reject, smoothstep(0.1, 1.0, motion) * 0.75);
 
                 float clampDiff = length(prev8.rgb - clampedHistory) / max(luma(prev8.rgb), 0.001);
-                reject = max(reject, clamp(clampDiff * 0.5, 0.0, 0.8));
+                reject = max(reject, clamp(clampDiff * 0.5, 0.0, 0.9));
 
                 reject *= reject;
 

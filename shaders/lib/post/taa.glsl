@@ -59,26 +59,77 @@ vec4 textureCatmullRom(sampler2D tex, vec2 uv, vec2 texSize) {
 }
 
 
-void getVariance3x3(sampler2D currentFrame, vec2 uv, vec2 screenSize, vec3 currentColor, out vec3 avgColor, out vec3 variance) {
-    vec3 m1 = vec3(0.0);
-    vec3 m2 = vec3(0.0);
-    
+#if UPSCALE_MODE == 2
+float lanczos2sq(float x2) {
+    x2 = min(x2, 4.0);
+    float a = (2.0 / 5.0) * x2 - 1.0;
+    float b = (1.0 / 4.0) * x2 - 1.0;
+    return ((25.0 / 16.0) * a * a - (25.0 / 16.0 - 1.0)) * (b * b);
+}
 
-    vec3 c0 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2(-1, -1) / screenSize, 0.0).rgb);
-    vec3 c1 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 0, -1) / screenSize, 0.0).rgb);
-    vec3 c2 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 1, -1) / screenSize, 0.0).rgb);
-    vec3 c3 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2(-1,  0) / screenSize, 0.0).rgb);
-    vec3 c4 = RGBtoYCoCg(currentColor);
-    vec3 c5 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 1,  0) / screenSize, 0.0).rgb);
-    vec3 c6 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2(-1,  1) / screenSize, 0.0).rgb);
-    vec3 c7 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 0,  1) / screenSize, 0.0).rgb);
-    vec3 c8 = RGBtoYCoCg(textureLod(currentFrame, uv + vec2( 1,  1) / screenSize, 0.0).rgb);
+vec3 sampleLanczos(sampler2D tex, vec2 uv, vec2 texSize) {
+    vec2 invSize = 1.0 / texSize;
+    vec2 p    = uv * texSize - 0.5;
+    vec2 base = floor(p);
+    vec2 f    = p - base;
 
-    m1 = c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
-    m2 = c0*c0 + c1*c1 + c2*c2 + c3*c3 + c4*c4 + c5*c5 + c6*c6 + c7*c7 + c8*c8;
-    
-    avgColor = m1 / 9.0;
-    variance = sqrt(max(m2 / 9.0 - avgColor * avgColor, 0.0));
+    vec2 hi = vec2(renderScale) - 0.5 * invSize;
+    vec2 lo = 0.5 * invSize;
+
+    float kbias = min(1.25, (1.0 / renderScale - 1.0) + 1.0);
+
+    vec3 acc = vec3(0.0); float wsum = 0.0;
+    for (int j = 0; j < 4; j++) {
+        for (int i = 0; i < 4; i++) {
+            vec2 tc = clamp((base + vec2(float(i) - 1.0, float(j) - 1.0) + 0.5) * invSize, lo, hi);
+            vec3 c  = textureLod(tex, tc, 0.0).rgb;
+            vec2 off = (vec2(float(i) - 1.0, float(j) - 1.0) - f) * kbias; // FSR-biased offset
+            float w  = lanczos2sq(dot(off, off));
+            acc += c * w; wsum += w;
+        }
+    }
+    return max(acc / max(wsum, 1e-4), 0.0);
+}
+#endif
+
+void analyzeUpscale(sampler2D tex, vec2 cuv, vec2 screenSize, vec3 centerRGB,
+                    out vec3 boxCenter, out vec3 boxHalf, out vec3 reconRGB) {
+    vec2 px = 1.0 / screenSize;
+
+    // Current-frame reconstruction.
+    #if UPSCALE_MODE == 2
+        reconRGB = sampleLanczos(tex, cuv, screenSize);  // sharp Lanczos-2 (texel-centre point taps)
+    #else
+        reconRGB = centerRGB;                             // modes 0/1 reconstruct in taa()
+    #endif
+
+    // 3x3 YCoCg neighbourhood (bilinear taps — shared by ALL modes).
+    vec3 s0 = RGBtoYCoCg(textureLod(tex, cuv + vec2(-1, -1) * px, 0.0).rgb);
+    vec3 s1 = RGBtoYCoCg(textureLod(tex, cuv + vec2( 0, -1) * px, 0.0).rgb);
+    vec3 s2 = RGBtoYCoCg(textureLod(tex, cuv + vec2( 1, -1) * px, 0.0).rgb);
+    vec3 s3 = RGBtoYCoCg(textureLod(tex, cuv + vec2(-1,  0) * px, 0.0).rgb);
+    vec3 s4 = RGBtoYCoCg(centerRGB);
+    vec3 s5 = RGBtoYCoCg(textureLod(tex, cuv + vec2( 1,  0) * px, 0.0).rgb);
+    vec3 s6 = RGBtoYCoCg(textureLod(tex, cuv + vec2(-1,  1) * px, 0.0).rgb);
+    vec3 s7 = RGBtoYCoCg(textureLod(tex, cuv + vec2( 0,  1) * px, 0.0).rgb);
+    vec3 s8 = RGBtoYCoCg(textureLod(tex, cuv + vec2( 1,  1) * px, 0.0).rgb);
+
+    #if UPSCALE_MODE == 0
+        // Mode 0: mean ± stddev (variance) box — legacy behaviour.
+        vec3 m1 = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8;
+        vec3 m2 = s0*s0 + s1*s1 + s2*s2 + s3*s3 + s4*s4 + s5*s5 + s6*s6 + s7*s7 + s8*s8;
+        boxCenter = m1 / 9.0;
+        boxHalf   = sqrt(max(m2 / 9.0 - boxCenter * boxCenter, 0.0));
+    #else
+        vec3 mnP = min(min(min(s1, s3), min(s5, s7)), s4);
+        vec3 mxP = max(max(max(s1, s3), max(s5, s7)), s4);
+        vec3 mnA = min(mnP, min(min(s0, s2), min(s6, s8)));
+        vec3 mxA = max(mxP, max(max(s0, s2), max(s6, s8)));
+        vec3 mn = (mnP + mnA) * 0.5;
+        vec3 mx = (mxP + mxA) * 0.5;
+        boxCenter = (mn + mx) * 0.5;
+        boxHalf   = (mx - mn) * 0.5 * 1.1;
+    #endif
 }
 
 
@@ -106,49 +157,36 @@ float getClosestDepth(vec2 uv, vec2 screenSize) {
 }
 
 vec2 getPreviousUV(vec2 uv, vec2 screenSize, out vec3 velocityPixels) {
-    float depth0 = getClosestDepth(uv, screenSize);
-
     vec2 currentJitter = getTaaJitter(frameCounter) / screenSize;
-    vec2 prevJitter    = getTaaJitter(frameCounter - 1) / screenSize;
-    vec2 uvUnjittered  = uv - currentJitter;
+    vec2 sampleCoord   = clamp((uv + currentJitter) * renderScale,
+                               2.0 / screenSize, vec2(renderScale) - 2.0 / screenSize);
+    float depth0 = getClosestDepth(sampleCoord, screenSize);
 
     if (depth0 >= 1.0) {
-        // Sky / cloud reprojection. The depth-based velocity path below is
-        // meaningless for sky pixels (depth==1.0 → a far-plane point "at
-        // infinity"), and the old code just bailed with prevUV = uv. That left
-        // the cloud history pinned to a fixed screen position, so turning the
-        // camera smeared the clouds across the sky. Sky is effectively at
-        // infinity, so only camera *rotation* contributes (translation gives no
-        // parallax): rotate this pixel's view ray into world space and project
-        // it through the previous frame's view+projection. The ray's magnitude
-        // is irrelevant for the final reprojection — the perspective divide
-        // cancels it — but we still divide by w to recover the correct ray
-        // *sign* (gbufferProjectionInverse can return a negative w that would
-        // otherwise flip the direction into the wrong hemisphere).
-        vec4 viewH    = gbufferProjectionInverse * vec4(uvUnjittered * 2.0 - 1.0, 1.0, 1.0);
+        vec4 viewH    = gbufferProjectionInverse * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
         vec3 viewDir  = viewH.xyz / viewH.w;
         vec3 worldDir = mat3(gbufferModelViewInverse) * viewDir;
         vec3 prevView = mat3(gbufferPreviousModelView) * worldDir;
         vec4 prevClip = gbufferPreviousProjection * vec4(prevView, 1.0);
         vec2 prevUV   = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
 
-        velocityPixels = vec3((uvUnjittered - prevUV) * screenSize, 0.0);
-        return prevUV + prevJitter;
+        velocityPixels = vec3((uv - prevUV) * screenSize, 0.0);
+        return prevUV;
     }
 
-    vec4 clipPos = vec4(uvUnjittered * 2.0 - 1.0, depth0 * 2.0 - 1.0, 1.0);
-    
+    vec4 clipPos = vec4(uv * 2.0 - 1.0, depth0 * 2.0 - 1.0, 1.0);
+
     vec4 viewPosVal = gbufferProjectionInverse * clipPos;
     vec3 viewPos = viewPosVal.xyz / viewPosVal.w;
     vec3 worldPos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
-    
+
     vec3 previousWorldPos = worldPos + (cameraPosition - previousCameraPosition);
-    
+
     vec4 previousClipPos = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(previousWorldPos, 1.0));
     vec2 prevUV = (previousClipPos.xy / previousClipPos.w) * 0.5 + 0.5;
-    
-    velocityPixels = vec3((uvUnjittered - prevUV) * screenSize, 0.0);
-    return prevUV + prevJitter;
+
+    velocityPixels = vec3((uv - prevUV) * screenSize, 0.0);
+    return prevUV;
 }
 
 bool inScreen(vec2 uv) {
@@ -157,64 +195,76 @@ bool inScreen(vec2 uv) {
 
 vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D historyFrame) {
     vec2 uv = currentPos / screenSize;
-    
 
-    vec4 currentColorData = textureLod(currentFrame, uv, 0.0);
-    vec3 currentColor = currentColorData.rgb;
-    float exposureData = currentColorData.a; // Preserve auto-exposure state
+    vec2 currentJitter = getTaaJitter(frameCounter) / screenSize;
+    vec2 cuv = clamp((uv + currentJitter) * renderScale,
+                     2.0 / screenSize, vec2(renderScale) - 2.0 / screenSize);
 
+    vec4 currentColorData = textureLod(currentFrame, cuv, 0.0);
+    float exposureData = currentColorData.a;
+
+    vec3 boxCenter, boxHalf, reconRGB;
+    analyzeUpscale(currentFrame, cuv, screenSize, currentColorData.rgb, boxCenter, boxHalf, reconRGB);
+
+    vec3 currentColor;
+    #if UPSCALE_MODE == 1
+        // Sharper current reconstruction to pair with the min/max clamp.
+        currentColor = max(textureCatmullRom(currentFrame, cuv, screenSize).rgb, 0.0);
+    #elif UPSCALE_MODE == 2
+        currentColor = max(reconRGB, 0.0); // Lanczos-2
+    #else
+        currentColor = currentColorData.rgb; // bilinear
+    #endif
 
     vec3 velocityPixels;
     vec2 prevUV = getPreviousUV(uv, screenSize, velocityPixels);
-    
+
     if (!inScreen(prevUV)) {
-        return currentColorData;
+        return vec4(currentColor, exposureData); // disocclusion / off-screen: take current
     }
-    
 
     vec4 prevColorData = textureCatmullRom(historyFrame, prevUV, screenSize);
-    vec3 prevColorYCoCg = RGBtoYCoCg(max(prevColorData.rgb, 0.0));
-    
 
-    vec3 avgColorYCoCg, variance;
-    getVariance3x3(currentFrame, uv, screenSize, currentColor, avgColorYCoCg, variance);
-    
+    vec3 prevRGB = prevColorData.rgb;
+    if (any(isnan(prevRGB)) || any(isinf(prevRGB))) prevRGB = currentColor;
+    vec3 prevColorYCoCg = RGBtoYCoCg(max(prevRGB, 0.0));
 
-    bool isWater = textureLod(colortex2, uv, 0.0).b > 0.5;
-    bool isSky   = textureLod(depthtex0, uv, 0.0).r >= 1.0;
+    bool isWater = textureLod(colortex2, cuv, 0.0).b > 0.5;
+    bool isSky   = textureLod(depthtex0, cuv, 0.0).r >= 1.0;
 
-    // Clouds/sky are low-frequency, but the per-frame raymarch jitter injects
-    // fresh neighbourhood variance every frame; a tight AABB clamp keeps
-    // re-admitting that jitter as edge flicker / "boiling". Widen the clamp for
-    // sky (as we already do for water) so more of the now-correctly-reprojected
-    // history survives and the noise averages out instead of being clipped back
-    // in each frame.
     float aggression = (isWater || isSky) ? 3.0 : 1.0;
 
-    prevColorYCoCg = clipAABB(avgColorYCoCg, variance, prevColorYCoCg, aggression);
+    prevColorYCoCg = clipAABB(boxCenter, boxHalf, prevColorYCoCg, aggression);
+
+    float yY = max(prevColorYCoCg.x, 0.0);
+    prevColorYCoCg.z = clamp(prevColorYCoCg.z, -yY, yY);
+    float coLim = max(yY - prevColorYCoCg.z, 0.0);
+    prevColorYCoCg.y = clamp(prevColorYCoCg.y, -coLim, coLim);
     vec3 prevColor = max(YCoCgtoRGB(prevColorYCoCg), 0.0);
 
-
     float blendWeight = TAA_BLEND_WEIGHT;
-    // Sky now reprojects correctly (rotational), so we can lean harder on
-    // history to smooth the cloud raymarch noise without reintroducing smear.
     if (isSky) blendWeight = max(blendWeight, 0.97);
 
     float velocityReject = clamp(pow(dot(velocityPixels.xy, velocityPixels.xy), 0.25) * 0.1, 0.0, 1.0);
-    if (isWater) {
-        velocityReject *= 0.25; // keep history blending stable for water during camera movement
-    }
-    if (isSky) {
-        velocityReject *= 0.5;  // reprojection handles rotation; only trim residual ghosting
-    }
+    if (isWater) velocityReject *= 0.25; // stable history for water during camera movement
+    if (isSky)   velocityReject *= 0.5;  // reprojection handles rotation; trim residual ghosting
     blendWeight *= (1.0 - velocityReject);
 
+    #if TAA_DEBUG == 5
+        return vec4(currentColor, exposureData);                     // reconstruction only (no history)
+    #elif TAA_DEBUG == 6
+        return vec4(prevColor, exposureData);                        // clipped history only
+    #elif TAA_DEBUG == 7
+        return vec4(abs(currentColor - prevColor) * 6.0, exposureData); // recon vs history disagreement
+    #endif
 
     vec3 tonemappedHistory = ReinhardTonemap(prevColor);
     vec3 tonemappedCurrent = ReinhardTonemap(currentColor);
     vec3 blended = mix(tonemappedCurrent, tonemappedHistory, blendWeight);
-    
-    return vec4(ReinhardInverse(blended), exposureData);
+
+    vec3 outColor = ReinhardInverse(blended);
+    if (any(isnan(outColor)) || any(isinf(outColor))) outColor = currentColor;
+    return vec4(outColor, exposureData);
 }
 
 #endif

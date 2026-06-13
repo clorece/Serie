@@ -68,7 +68,6 @@ vec3 applyTonemap(vec3 color) {
     #elif TONEMAP_OPERATOR == 3
         return Uncharted2(color);
     #else
-        // Cleaned up Original curve
         float exposureVal = 1.0;
         color = max(vec3(0.0), color - vec3(0.2 / exposureVal));
         color = (color * (exposureVal * color + 0.5)) / (color * (exposureVal * color + 1.7) + 0.5);

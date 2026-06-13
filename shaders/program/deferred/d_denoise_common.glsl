@@ -15,11 +15,16 @@
 
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    // TAAU: render into the bottom-left renderScale region (no-op at 1.0).
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif
@@ -38,42 +43,34 @@ in vec2 texCoord;
 #endif
 
 void main() {
-    float depthC   = texture(depthtex0, texCoord).r;
-    float linDepth = getDepth(depthC);
-    // Screen-space depth gradient in uniform control flow (valid derivatives).
+    vec4  ngC = texelFetch(colortex15, ivec2(gl_FragCoord.xy), 0);
+    float linDepth = ngC.z;
     vec2  depthGrad = vec2(dFdx(linDepth), dFdy(linDepth));
-    vec3  nrm = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
 
-    // World blocks spanned per screen-pixel per unit linear depth (vertical FOV
-    // term). The a-trous taps then convert their pixel offset into a world-space
-    // distance so the kernel's WORLD footprint stays bounded at any range.
     float pxWorld = 2.0 * gbufferProjectionInverse[1][1] * texelSize.y;
 
-    // accumulated temporal history length (colortex8.a) — preserved into the
-    // history feedback (last iter), and used by the optional early-out /
-    // detail-preserve blend.
-    float histLen = texture(colortex8, texCoord).a;
-
-    vec4 outv = texture(DENOISE_SRC, texCoord);
+    vec4 outv = texture(DENOISE_SRC, texCoord * renderScale);
     #if defined(GI_DENOISE) && (defined(VOXEL_GI) || defined(VOXEL_AO))
-        // The a-trous spatial filter runs on EVERY surface pixel. (SVGF_EARLY_OUT,
-        // off by default, would skip it on long-converged pixels — but at 1 spp
-        // the temporal mean still carries spatial noise, so that leaves the static
-        // image undenoised while only in-motion pixels get filtered.)
-        if (depthC < 1.0
+        if (linDepth < far * 0.999
             #ifdef SVGF_EARLY_OUT
-                && histLen <= 48.0
+                && texture(colortex8, texCoord * renderScale).a <= 48.0
             #endif
         ) {
-            outv = svgfAtrous(DENOISE_SRC, depthtex0, colortex1, texCoord,
-                              float(DENOISE_STEP), linDepth, depthGrad, nrm, pxWorld);
+            vec3 nrm = octDecodeNormal(ngC.xy);
+            #ifdef DENOISE_WIDE
+                const bool centerVarOnly = true;
+            #else
+                const bool centerVarOnly = false;
+            #endif
+            outv = svgfAtrous(DENOISE_SRC, texCoord * renderScale, float(DENOISE_STEP),
+                              linDepth, depthGrad, nrm, pxWorld, centerVarOnly);
         }
     #endif
 
     #ifdef DENOISE_LAST_ITER
-        // colortex8 holds the RAW accumulated GI + history length (histLen,
-        // already read above) from d0_accum.
-        vec4  c8 = texture(colortex8, texCoord);
+        // colortex8 holds the RAW accumulated GI + history length from d0_accum.
+        vec4  c8 = texture(colortex8, texCoord * renderScale);
+        float histLen = c8.a;
 
         // Displayed result (colortex6 or colortex8 via DRAWBUFFERS)
         vec3 displayColor = outv.rgb;

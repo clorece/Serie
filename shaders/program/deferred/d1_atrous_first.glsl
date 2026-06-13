@@ -10,11 +10,15 @@
 
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 }
 
 #endif
@@ -31,7 +35,6 @@ in vec2 texCoord;
 void main() {
     vec4 ngC = texelFetch(colortex15, ivec2(gl_FragCoord.xy), 0);
     float linDepth = ngC.z;
-    // Screen-space depth gradient in uniform control flow (valid derivatives).
     vec2 depthGrad = vec2(dFdx(linDepth), dFdy(linDepth));
 
     // sky pixels store linDepth == far in the packed G-buffer
@@ -41,12 +44,12 @@ void main() {
         return;
     }
 
-    vec4 c8 = texture(colortex8, texCoord);
+    vec4 c8 = texture(colortex8, texCoord * renderScale);
     vec4 outv = vec4(c8.rgb, 0.0);
     #if defined(GI_DENOISE) && (defined(VOXEL_GI) || defined(VOXEL_AO))
         vec3 nrm = octDecodeNormal(ngC.xy);
         float pxWorld = 2.0 * gbufferProjectionInverse[1][1] * texelSize.y;
-        outv = svgfAtrousFirst(texCoord, linDepth, depthGrad, nrm, c8.a, pxWorld);
+        outv = svgfAtrousFirst(texCoord * renderScale, linDepth, depthGrad, nrm, c8.a, pxWorld);
     #endif
 
     gl_FragData[0] = outv;

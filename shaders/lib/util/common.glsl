@@ -21,7 +21,6 @@ float getDepth(float depth) {
     return 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
 }
 
-// Octahedral unit-vector encoding (Cigolle et al. 2014) for packing a normal into vec2.
 vec2 octEncodeNormal(vec3 n) {
     n /= (abs(n.x) + abs(n.y) + abs(n.z));
     vec2 e = (n.z >= 0.0)
@@ -67,15 +66,6 @@ bool isInShadow(vec3 worldPosCamRel) {
         return false;
     }
 
-    // Sample shadowtex1 (opaque blockers only) — shadowtex0 includes the water
-    // surface as an occluder, so every sub-water pixel would always read as
-    // shadowed and kill caustics. shadowtex1 is depth excluding translucents,
-    // which is exactly what we want for the "is the receiver in OPAQUE-block
-    // shade" question.
-    //
-    // No normal bias is applied (the function deliberately doesn't take a
-    // normal — keep the call site simple). Without it the tiny depth bias
-    // getShadow uses self-shadows everywhere, so we ramp ~20x to compensate.
     float bias = 0.0015 * (4096.0 / float(SHADOW_RESOLUTION));
     float depth = texture(shadowtex1, sp.xy).r;
     return depth < (sp.z - bias);

@@ -23,9 +23,6 @@ struct TimeState {
     vec3 moonColor;
 };
 
-// Requires:
-// uniform vec3 sunPosition;
-// uniform mat4 gbufferModelViewInverse;
 TimeState getTimeState() {
     TimeState t;
     
@@ -35,12 +32,9 @@ TimeState getTimeState() {
     t.sunUp = worldSunDir.y;
     t.moonUp = worldMoonDir.y;
     
-    // Activity weights
     t.sunActivity  = smoothstep(-0.1, 0.16, t.sunUp);
     t.moonActivity = smoothstep(-0.1, 0.10, t.moonUp);
-    
-    // Photon-style continuous weights
-    // We create a fade out window around elevation = 0.18 for morning/evening
+
     float meFade = (t.sunUp < 0.18) ? (0.37 + 1.2 * max(0.0, -t.sunUp)) : 1.7;
     float meWeight = pow(clamp(1.0 - meFade * abs(t.sunUp - 0.18), 0.0, 1.0), 2.0);
     
@@ -49,17 +43,10 @@ TimeState getTimeState() {
     t.timeNoon     = ((t.sunUp > 0.0) ? 1.0 : 0.0) * (1.0 - meWeight);
     t.timeMidnight = ((t.sunUp < 0.0) ? 1.0 : 0.0) * (1.0 - meWeight);
     
-    // Shadow map flips exactly when active light flips.
-    // In typical setups, this is worldTime 12700 / 23250.
-    // This happens when sun is roughly at y = -0.05.
-    // We want shadowFade to drop to 0 perfectly at this point.
     t.shadowFade = 1.0 - (smoothstep(-0.02, -0.05, t.sunUp) * smoothstep(-0.08, -0.05, t.sunUp));
 
     t.activeLightDir = (t.sunUp > -0.05) ? worldSunDir : worldMoonDir;
-    
-    // Light Color logic
-    // Adjusted daytime tint (sunUp > 0) to be warmer and more golden (1.0, 0.95, 0.9) 
-    // instead of the original cooler (1.0, 1.0, 1.1).
+
     vec3 sunColorBase  = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 0.95, 0.9), max(t.sunUp, 0.0));
     t.sunColor      = sunColorBase * t.sunActivity;
 

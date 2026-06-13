@@ -6,6 +6,8 @@
 
 #ifdef VERTEX
 
+#include "/lib/options.glsl"
+
 out vec2 texCoord;
 out vec3 lightColor;
 out vec3 ambientColor;
@@ -18,6 +20,8 @@ out vec3 moonVector;
 void main() {
     gl_Position = ftransform();
     texCoord = gl_MultiTexCoord0.xy;
+
+    gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
 
     #include "/lib/vectors.glsl"
     #include "/lib/colors.glsl"
@@ -40,10 +44,10 @@ in vec3 ambientColor;
 in vec3 lightVector;
 
 
-float depth0 = texture(depthtex0, texCoord).r;
+float depth0 = texture(depthtex0, texCoord * renderScale).r;
 float material = texelFetch(colortex1, ivec2(gl_FragCoord.xy), 0).a;
-vec3 normal = normalize(texture(colortex1, texCoord).rgb * 2.0 - 1.0);
-vec3 lightmap = texture(colortex2, texCoord).rgb;
+vec3 normal = normalize(texture(colortex1, texCoord * renderScale).rgb * 2.0 - 1.0);
+vec3 lightmap = texture(colortex2, texCoord * renderScale).rgb;
 
 vec3 clipSpace;
 
@@ -122,7 +126,7 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
 
-        float depth = textureLod(depthtex0, uv, 0.0).r;
+        float depth = textureLod(depthtex0, uv * renderScale, 0.0).r;
         if (depth >= 1.0) break;
 
         vec4 sampleClip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -168,7 +172,7 @@ void main() {
     #endif
     clipSpace = vec3(unjitteredTexCoord, depth0) * 2.0 - 1.0;
 
-    vec3 color = texture(colortex0, texCoord).rgb;
+    vec3 color = texture(colortex0, texCoord * renderScale).rgb;
 
     #ifdef SSPT_DEBUG
         if (depth0 < 1.0) {
@@ -213,11 +217,7 @@ void main() {
         directShadow *= getInfiniteShadows(viewPos, lightVector, ditherVal, normal, material);
     }
     #endif
-    // Cloud shadow on direct sun. The 512² distortion-warped projection
-    // (built in prepare1) gives free per-pixel sun occlusion under cumulus.
-    // Fade with rainStrength because vanilla rain replaces cumulus rendering
-    // with a uniform overcast — applying cumulus-shaped shadows during rain
-    // would look out of place.
+
     float cloudShadow = 1.0;
     if (depth0 < 1.0) {
         vec3 worldPosAbs = getWorldPosition().xyz + cameraPosition;
@@ -244,16 +244,16 @@ void main() {
     float aoTerm = 1.0;
     #ifdef AO_GTAO
         if (depth0 < 1.0) {
-            aoTerm = texture(colortex9, texCoord).a;
+            aoTerm = texture(colortex9, unjitteredTexCoord * renderScale).a; // GI buffers are jitter-free: sample at this surface's logical uv
         }
     #endif
 
     vec3 indirect;
     #if defined(VOXEL_GI)
         #ifdef GI_DENOISE
-            vec3 gi = texture(colortex3, texCoord).rgb; // denoised GI: the a-trous chain lands on colortex3
+            vec3 gi = texture(colortex3, unjitteredTexCoord * renderScale).rgb; // denoised GI: the a-trous chain lands on colortex3 (jitter-free → sample at surface logical uv)
         #else
-            vec3 gi = texture(colortex8, texCoord).rgb; // denoiser off: raw temporally-accumulated GI (chain passes are disabled)
+            vec3 gi = texture(colortex8, unjitteredTexCoord * renderScale).rgb; // denoiser off: raw temporally-accumulated GI (chain passes are disabled; jitter-free)
         #endif
         #ifdef AO_GTAO
             #ifdef LIGHTING_AO_FULL
@@ -286,9 +286,9 @@ void main() {
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
     #elif defined(VOXEL_AO)
         #ifdef GI_DENOISE
-            float ao = texture(colortex3, texCoord).r; // denoised AO: the a-trous chain lands on colortex3
+            float ao = texture(colortex3, unjitteredTexCoord * renderScale).r; // denoised AO (jitter-free → surface logical uv)
         #else
-            float ao = texture(colortex8, texCoord).r; // denoiser off: raw temporally-accumulated AO
+            float ao = texture(colortex8, unjitteredTexCoord * renderScale).r; // denoiser off: raw temporally-accumulated AO (jitter-free)
         #endif
         float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoFactor;
@@ -332,12 +332,6 @@ void main() {
         color = color * (direct + indirect);
     }
 
-    // voxel grid debug overlay (enable PT_DEBUG_VOXELS in options.glsl).
-    // Shape-aware: shaped voxels are intersected with their real sub-block
-    // geometry and tinted GREEN; full cubes RED; emissive YELLOW; foliage as-is.
-    // If a slab/fence shows up red here, the block.properties 20xxx id didn't
-    // match (stored as plain opaque); if it doesn't show at all, it voxelized
-    // as air; green = stored + intersected correctly.
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {
         vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
@@ -384,14 +378,11 @@ void main() {
     }
     #endif
 
-    // DEBUG VIEW: Skylight Illumination
-    // We output the raw/denoised GI buffer (colortex6) directly to the screen.
-    // This allows you to see exactly the indirect light reaching the surface!
     #ifdef GI_DEBUG_VIEW
         #ifdef GI_DENOISE
-            vec3 debugIllum = texture(colortex3, texCoord).rgb;
+            vec3 debugIllum = texture(colortex3, unjitteredTexCoord * renderScale).rgb; // jitter-free GI buffer
         #else
-            vec3 debugIllum = texture(colortex8, texCoord).rgb;
+            vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb; // jitter-free GI buffer
         #endif
         /* RENDERTARGETS: 0 */
         gl_FragData[0] = vec4(debugIllum, 1.0);

@@ -87,8 +87,17 @@ vec3 getShadow(float material) {
             bDir = vec2(bDir.x * cosGold - bDir.y * sinGold, bDir.x * sinGold + bDir.y * cosGold);
         }
 
+        // PCSS early-out: the blocker search just probed 64 shadowtex0 texels
+        // across the FULL maxFilterRadius disk (a superset of any PCF radius
+        // below, and shadowtex1's occluders are a subset of shadowtex0's). No
+        // blockers found => fully lit; skip the whole PCF loop. This is the
+        // common case for open sunlit terrain.
+        if (numBlockers == 0) {
+            return vec3(1.0);
+        }
+
         float filterRadius = minFilterRadius;
-        
+
         if (numBlockers > 0) {
             float avgBlockerDepth = blockerSum / float(numBlockers);
             float penumbra = max(receiverDepth - avgBlockerDepth, 0.0);

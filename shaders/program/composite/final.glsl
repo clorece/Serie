@@ -19,12 +19,15 @@ in vec2 texCoord;
 #include "/lib/util/dither.glsl"
 #include "/lib/post/bloom.glsl"
 #include "/lib/post/tonemap.glsl"
+#include "/lib/post/sharpen.glsl"
 
 void main() {
-    // SCENE & EXPOSURE FETCH
+    #if defined(TAA) && TAA_SHARPNESS > 0.0
+    vec3 sceneColor = casSharpen(colortex0, texCoord, vec2(viewWidth, viewHeight), TAA_SHARPNESS);
+    #else
     vec3 sceneColor = texture(colortex0, texCoord).rgb;
+    #endif
 
-    // Apply dynamic camera-like temporal auto-exposure with manual bias
     float totalExposure = EXPOSURE;
     #ifdef AUTO_EXPOSURE
     float autoExposure = texelFetch(colortex0, ivec2(0), 0).a;

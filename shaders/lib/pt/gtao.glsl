@@ -1,26 +1,9 @@
 #ifndef GTAO_GLSL
 #define GTAO_GLSL
 
-// Screen-space ground-truth ambient occlusion (Jimenez et al. 2016),
-// DECOUPLED from the voxel path tracer.
-//
-// Why screen-space here: the old RTAO rode the GI candidate's voxel ray, so it
-//  - was quantized to whole blocks (no stairs/slabs/decoration contact detail),
-//  - went checkered when RESTIR_CHECKERBOARD skipped the candidate,
-//  - died beyond the voxel grid.
-// GTAO works at PIXEL granularity from the packed linear-depth/world-normal
-// G-buffer (colortex15, written by d0_restir), samples EVERY pixel EVERY
-// frame, and costs zero voxel traces. The per-frame noise (few slices) is
-// smoothed by the existing temporal AO accumulation in d0_accum (colortex9.a).
-//
-// All taps read colortex15.z (linear depth) — cache-coherent 2D fetches, no
-// getDepth() unprojection per tap.
-
 #include "/lib/options.glsl"
 #include "/lib/util/common.glsl"
 
-// view-space position from pixel-grid uv + linear depth
-// (clip.x = P00*view.x, w = -view.z = linDepth => view.x = ndc.x*linDepth/P00)
 vec3 gtaoViewPos(vec2 uv, float linDepth) {
     vec2 ndc = uv * 2.0 - 1.0;
     return vec3(ndc * vec2(1.0 / gbufferProjection[0][0],
@@ -28,22 +11,15 @@ vec3 gtaoViewPos(vec2 uv, float linDepth) {
                 -linDepth);
 }
 
-// returns visibility in [0,1] (1 = unoccluded), cosine-weighted
 float computeGTAO(vec2 uv, float linDepth, vec3 normalWorld, int frame) {
     vec3 viewPos    = gtaoViewPos(uv, linDepth);
     vec3 viewNormal = mat3(gbufferModelView) * normalWorld;
     vec3 V          = normalize(-viewPos);
 
-    // world-space AO radius projected to pixels at this depth. The clamp's
-    // low end keeps taps meaningful up close; past the point where 2px spans
-    // more than GTAO_RADIUS the distance falloff fades AO out naturally.
     float radiusPx = (float(GTAO_RADIUS) * gbufferProjection[1][1] * 0.5 * viewHeight)
                    / max(linDepth, 0.5);
     radiusPx = clamp(radiusPx, 2.0, 48.0);
 
-    // per-pixel spatial decorrelation + TAA-phase-locked temporal rotation
-    // (period 8, same scheme as the a-trous kernel rotation — see the lesson
-    // in denoise.glsl: free-running per-frame angles shimmer against TAA)
     vec2 p = uv * vec2(viewWidth, viewHeight);
     float baseAng = fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) * PI
                   + float(frame % 8) * (PI / 8.0);
@@ -54,7 +30,6 @@ float computeGTAO(vec2 uv, float linDepth, vec3 normalWorld, int frame) {
         float ang  = baseAng + float(s) * (PI / float(GTAO_SLICES));
         vec2 omega = vec2(cos(ang), sin(ang));
 
-        // slice frame: marching direction, slice-plane axis, projected normal
         vec3 dirV     = vec3(omega, 0.0);
         vec3 orthoDir = dirV - dot(dirV, V) * V;
         vec3 axis     = normalize(cross(dirV, V));
@@ -76,7 +51,7 @@ float computeGTAO(vec2 uv, float linDepth, vec3 normalWorld, int frame) {
             // +side
             {
                 vec2 uvS = clamp(uv + offUV, vec2(0.0), vec2(1.0));
-                float dS = textureLod(colortex15, uvS, 0.0).z;
+                float dS = textureLod(colortex15, uvS * renderScale, 0.0).z; // uvS logical (view-pos), scaled only for the fetch
                 vec3 ws  = gtaoViewPos(uvS, dS) - viewPos;
                 float dist = length(ws);
                 float cosH = dot(ws, V) / max(dist, 1e-5);
@@ -87,7 +62,7 @@ float computeGTAO(vec2 uv, float linDepth, vec3 normalWorld, int frame) {
             // -side
             {
                 vec2 uvS = clamp(uv - offUV, vec2(0.0), vec2(1.0));
-                float dS = textureLod(colortex15, uvS, 0.0).z;
+                float dS = textureLod(colortex15, uvS * renderScale, 0.0).z; // uvS logical (view-pos), scaled only for the fetch
                 vec3 ws  = gtaoViewPos(uvS, dS) - viewPos;
                 float dist = length(ws);
                 float cosH = dot(ws, V) / max(dist, 1e-5);

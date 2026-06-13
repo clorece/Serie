@@ -20,10 +20,6 @@ vec3 cosHemisphereDir(vec3 n, float r1, float r2) {
     return normalize(t * (sinTheta * cos(phi)) + b * (sinTheta * sin(phi)) + n * cosTheta);
 }
 
-// (computeRTAO removed — ambient occlusion is now the screen-space GTAO in
-// lib/pt/gtao.glsl, computed in d0_accum, fully decoupled from the voxel
-// tracer. computeAO below remains for the legacy VOXEL_AO mode.)
-
 float computeAO(
     usampler3D atlas,
     vec3        worldPos,
@@ -50,8 +46,6 @@ float computeAO(
             unoccluded += 1.0;
         }
     }
-    
-    // apply sky lightmap to prevent leaking in areas beyond the AO search radius
     return (unoccluded / float(AO_SAMPLES)) * sqrt(skyLightmap);
 }
 
