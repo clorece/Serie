@@ -235,6 +235,19 @@ void main() {
         vec4 prev8, p9_tmp;
         if (fetchBilateralHistory(uvPrev * renderScale, expectedClipZ, normalWorld, colortex8, colortex9, colortex15, prev8, p9_tmp)) {
             if (prev8.a > 0.5) {
+                // --- temporal-moment firefly clamp (MollyVX-style variance reject) ---
+                // History luma mean/variance (stored in colortex9 by the SVGF) is a
+                // reliable reference for accumulated pixels; cap the CURRENT sample's
+                // luminance to mean + k*std so a current-frame outlier can't punch
+                // through the blend. Valid-history-gated -> disocclusion untouched.
+                float histMean = p9_tmp.g;
+                float histStd  = sqrt(max(p9_tmp.b - histMean * histMean, 0.0));
+                float fireflyCeil = histMean + max(histStd * 4.0, histMean) + 0.02;
+                if (lr > fireflyCeil) {
+                    rawGI *= fireflyCeil / lr;
+                    lr = fireflyCeil;
+                }
+
                 giHist = min(prev8.a + 1.0, float(GI_ACCUM_FRAMES));
 
                 vec3 clampedHistory = clipHistoryMoments(prev8.rgb, ycM1, ycM2);

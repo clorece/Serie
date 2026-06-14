@@ -93,6 +93,19 @@ bool fetchBilateralHistory(
 
     validW *= pow(normalW, vec4(16.0));
 
+    #ifdef ACCUM_NO_EDGE_REJECT
+        // Drop the NORMAL/edge gate (it rejected convex-corner & footprint-straddle
+        // edges, stopping them from accumulating -> the edge fireflies) but keep a
+        // LOOSE relative-depth DISOCCLUSION gate: a genuine depth jump (new geometry)
+        // still flushes stale history, so disocclusion stays clean without bringing
+        // the edge fireflies back. Tune ACCUM_DISOCC_DEPTH (relative depth tolerance).
+        #ifndef ACCUM_DISOCC_DEPTH
+            #define ACCUM_DISOCC_DEPTH 0.1
+        #endif
+        vec4 histLinD = vec4(getDepth(c9_00.r), getDepth(c9_10.r), getDepth(c9_01.r), getDepth(c9_11.r));
+        validW = step(abs(histLinD - expectedLinDepth) / max(expectedLinDepth, 1e-3), vec4(ACCUM_DISOCC_DEPTH));
+    #endif
+
     w *= validW;
 
     float wSum = dot(w, vec4(1.0));
@@ -212,8 +225,13 @@ vec4 svgfAtrousFirst(
             float w = atrousW3(abs(x)) * atrousW3(abs(y));
             if (x != 0 || y != 0) {
                 float expectedD = centerDepth + dot(depthGrad, off);
-                float wz = exp(-abs(ng.z - expectedD) * invSigmaZ);
-                float wn = pow(max(dot(octDecodeNormal(ng.xy), centerN), 0.0), sigmaN);
+                #ifdef DENOISE_NO_EDGE_REJECT
+                    float wz = 1.0; // EXPERIMENT: geometric edge rejection OFF -> kernel crosses block edges so trapped edge fireflies get blurred (cost: GI bleeds across edges)
+                    float wn = 1.0;
+                #else
+                    float wz = exp(-abs(ng.z - expectedD) * invSigmaZ);
+                    float wn = pow(max(dot(octDecodeNormal(ng.xy), centerN), 0.0), sigmaN);
+                #endif
                 float wl = exp(-abs(cLuma - luma(nColor)) * invSigmaL);
                 w *= wz * wn * wl;
 
@@ -271,8 +289,13 @@ vec4 svgfAtrous(
             float w = atrousW3(abs(x)) * atrousW3(abs(y));
             if (x != 0 || y != 0) {
                 float expectedD = centerDepth + dot(depthGrad, off);
-                float wz = exp(-abs(ng.z - expectedD) * invSigmaZ);
-                float wn = pow(max(dot(octDecodeNormal(ng.xy), centerN), 0.0), sigmaN);
+                #ifdef DENOISE_NO_EDGE_REJECT
+                    float wz = 1.0; // EXPERIMENT: geometric edge rejection OFF (see svgfAtrousFirst)
+                    float wn = 1.0;
+                #else
+                    float wz = exp(-abs(ng.z - expectedD) * invSigmaZ);
+                    float wn = pow(max(dot(octDecodeNormal(ng.xy), centerN), 0.0), sigmaN);
+                #endif
                 float wl = exp(-abs(cLuma - luma(n.rgb)) * invSigmaL);
                 w *= wz * wn * wl;
 
