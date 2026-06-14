@@ -318,19 +318,40 @@ void main() {
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
 
-    // TODO reimplement
-    if (material > 0.83) {
-        float albedoBrightness = max(color.r, max(color.g, color.b));
-        float isGlowing = smoothstep(0.3, 0.7, albedoBrightness);
+    vec3 albedoRaw = color; // colortex0 is untouched albedo here
 
-        vec3 shadedColor = color * (direct + indirect);
-        float emissiveBoost = mix(2.5 * float(GI_EMISSION), 1.0, lightmap.y);
-        vec3 glowingColor = color * (direct + indirect * emissiveBoost);
+    #ifdef SPECIAL_BLOCKLIGHT
+        // Separate blocklight path: shade the surface normally, then ADD an
+        // unshaded self-emission term driven by the per-texel emissive strength
+        // (colortex2.a, written in gbuffers_terrain). Only the glowing texels emit
+        // -> a torch's stick shades like wood while its flame blazes, and lava
+        // self-emits regardless of which way its face points (no NdotL darkening).
+        color = albedoRaw * (direct + indirect);
+        if (material > 0.83) {
+            float emissionStrength = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).a;
+            // damp emissive surfaces in open daylight, matching getLightmap's suppression
+            vec3  sunVec = normalize(sunPosition);
+            vec3  upVec  = normalize(upPosition);
+            float sunUp  = clamp(dot(sunVec, upVec), 0.0, 1.0);
+            float skyExposure = smoothstep(0.75, 0.9, lightmap.y);
+            float blocklightSuppression = mix(1.0, 0.2, sunUp * skyExposure);
+            color += albedoRaw * emissionStrength * float(EMISSIVE_BRIGHTNESS) * blocklightSuppression;
+        }
+    #else
+        // Legacy whole-block glow hack (kept for A/B comparison).
+        if (material > 0.83) {
+            float albedoBrightness = max(color.r, max(color.g, color.b));
+            float isGlowing = smoothstep(0.3, 0.7, albedoBrightness);
 
-        color = mix(shadedColor, glowingColor, isGlowing);
-    } else {
-        color = color * (direct + indirect);
-    }
+            vec3 shadedColor = color * (direct + indirect);
+            float emissiveBoost = mix(2.5 * float(GI_EMISSION), 1.0, lightmap.y);
+            vec3 glowingColor = color * (direct + indirect * emissiveBoost);
+
+            color = mix(shadedColor, glowingColor, isGlowing);
+        } else {
+            color = color * (direct + indirect);
+        }
+    #endif
 
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {

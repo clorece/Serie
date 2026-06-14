@@ -64,6 +64,37 @@ uint lightVoxelShape(uint mat) {
     return 0u;
 }
 
+// Emissive sub-box (local 0..1) for a special-light material (category 100+mat).
+// Concentrating the emission inside the block lets the occluder shape cast a real
+// shadow: a torch emits only from a flame box at the top of its post, so surfaces
+// low and behind the stick fall into the post's shadow. Defaults to the full cube
+// for area emitters (lava, glowstone, froglight, end rod, vines).
+void lightEmissiveAabb(uint mat, out vec3 bmin, out vec3 bmax) {
+    bmin = vec3(0.0); bmax = vec3(1.0); // full-cube emitter fallback
+    if (mat == 2u || mat == 28u || mat == 35u) {           // torch / soul / redstone torch: flame cap above the post
+        bmin = vec3(5.0 / 16.0, 7.0 / 16.0, 5.0 / 16.0);
+        bmax = vec3(11.0 / 16.0, 13.0 / 16.0, 11.0 / 16.0);
+    } else if (mat == 15u || mat == 30u) {                 // campfire / soul campfire: low central embers
+        bmin = vec3(3.0 / 16.0, 1.0 / 16.0, 3.0 / 16.0);
+        bmax = vec3(13.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0);
+    } else if (mat == 12u || mat == 29u || mat == 40u ||   // lantern / soul lantern / brewing stand
+               (mat >= 70u && mat <= 80u)) {               // candles
+        bmin = vec3(5.0 / 16.0, 1.0 / 16.0, 5.0 / 16.0);
+        bmax = vec3(11.0 / 16.0, 9.0 / 16.0, 11.0 / 16.0);
+    }
+}
+
+// Ray/AABB entry-exit test that does NOT disturb any running best-hit state.
+// tn is the entry distance (clamped to >= 0 for an origin inside the box).
+bool aabbEntry(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tn, out float tf) {
+    vec3 ird = 1.0 / (rd + vec3(1e-8));
+    vec3 t0  = (bmin - ro) * ird;
+    vec3 t1  = (bmax - ro) * ird;
+    tn = max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z));
+    tf = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
+    return tf >= max(tn, 0.0);
+}
+
 uint voxelShapeId(uint cat) {
     if (cat >= VOXEL_SHAPED_BASE && cat <= VOXEL_SHAPED_BASE + VOXEL_SHAPE_MAX)
         return cat - VOXEL_SHAPED_BASE;

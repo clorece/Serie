@@ -3,6 +3,9 @@
 #ifdef VERTEX
 
 #include "/lib/util/jitter.glsl"
+#ifdef SPECIAL_BLOCKLIGHT
+#include "/lib/blocklightColors.glsl"
+#endif
 
 
 
@@ -12,6 +15,8 @@ out vec2 lightmapCoord;
 out vec3 normal;
 out vec4 color;
 flat out float isSolidIce;
+flat out float emissiveIntensity; // per-material self-emission scale (0 = not a special light)
+flat out int   emissiveMat;       // special-light material id (mc_Entity-10100), or -1
 out vec3 viewTangent;
 out float tangentW;
 
@@ -35,6 +40,21 @@ void main() {
     if (mc_Entity.x == 10001 || (mc_Entity.x >= 10100 && mc_Entity.x <= 10199)) material = 2.0; // emissive
     if (mc_Entity.x == 10002) material = 0.0; // structural excluded (slabs, fences) - normal shading
     if (mc_Entity.x == 10005) material = 1.1; // grass, flowers (soft constant NdotL)
+
+    // Per-material self-emission scale for the special blocklight path. Known
+    // light blocks (10100-10199) carry an id; map it to an HDR intensity so lava
+    // blazes and faint emitters only glimmer. The legacy emissive flag (10001)
+    // has no id, so give it a generic mid intensity.
+    emissiveIntensity = 0.0;
+    emissiveMat = -1;
+    #ifdef SPECIAL_BLOCKLIGHT
+        if (mc_Entity.x >= 10100 && mc_Entity.x <= 10199) {
+            emissiveMat = int(mc_Entity.x) - 10100;
+            emissiveIntensity = specialLightIntensity(emissiveMat);
+        } else if (mc_Entity.x == 10001) {
+            emissiveIntensity = 0.5; // legacy emissive flag: generic mask (mat = -1)
+        }
+    #endif
 
     #ifdef WIND_MOVEMENT
         if (mc_Entity.x == 10000 || mc_Entity.x == 10005) gl_Position.xyz = wind(gl_Position.xyz);
@@ -72,9 +92,14 @@ in vec2 lightmapCoord;
 in vec3 normal;
 in vec4 color;
 flat in float isSolidIce;
+flat in float emissiveIntensity;
+flat in int   emissiveMat;
 in vec3 viewTangent;
 in float tangentW;
 
+#ifdef SPECIAL_BLOCKLIGHT
+#include "/lib/blocklightColors.glsl"
+#endif
 
 void main() {
     vec4 albedo = texture(texture, texCoord) * color;
@@ -107,10 +132,23 @@ void main() {
         iceFlag = 0.25;
     }
 
+    // Per-texel self-emission strength -> colortex2.a (free for opaque terrain;
+    // c_water only reads .a on translucent/ice pixels, gated by .b). The mask
+    // isolates the glowing texels (flame, hot lava) from the structural ones
+    // (stick, cage); intensity scales it per material. Solid ice keeps .a = 1.0
+    // because c_water reads it as a packed color for that .b flag.
+    float emissionStrength = 0.0;
+    #ifdef SPECIAL_BLOCKLIGHT
+        if (emissiveIntensity > 0.0 && iceFlag <= 0.0) {
+            emissionStrength = clamp(emissiveMaskForMat(emissiveMat, albedo.rgb) * emissiveIntensity, 0.0, 1.0);
+        }
+    #endif
+    float c2a = (iceFlag > 0.0) ? 1.0 : emissionStrength;
+
     /* DRAWBUFFERS:012 */
     gl_FragData[0] = albedo;
     gl_FragData[1] = vec4(outNormal * 0.5 + 0.5, matAlpha);
-    gl_FragData[2] = vec4(lightmapCoord, iceFlag, 1.0);
+    gl_FragData[2] = vec4(lightmapCoord, iceFlag, c2a);
 }
 
 #endif

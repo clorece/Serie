@@ -196,6 +196,24 @@ const float renderScale = RENDER_SCALE;
 #define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
 #define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
 #define VOXEL_SHAPES
+
+// --- Special blocklight detail ------------------------------------------------
+// A dedicated lighting path for light-emitting blocks (torches, lava, lanterns,
+// redstone...). Without it, emissive blocks are shaded like any opaque surface
+// (NdotL sun + GI) plus a flat whole-block glow hack -> lava darkens when it
+// faces away from the sun and a torch's wooden stick glows as brightly as the
+// flame. With it ON, a per-texel emissive MASK (heuristic from albedo, no labPBR
+// needed) drives an UNSHADED self-emission term, so only the genuinely glowing
+// texels (flame, hot lava, lit filament) emit and the rest shade normally.
+#define SPECIAL_BLOCKLIGHT // master toggle for the per-texel self-emission path (d7_composite)
+#define EMISSIVE_THRESHOLD_LO 0.42 // [0.20 0.28 0.35 0.42 0.50 0.58 0.66] albedo value below which a texel is treated as non-emissive (the stick). Lower = more of the block glows.
+#define EMISSIVE_THRESHOLD_HI 0.72 // [0.55 0.62 0.66 0.72 0.78 0.85 0.92] albedo value at/above which a texel is fully emissive (the flame). Raise to confine the glow to only the brightest texels.
+#define EMISSIVE_BRIGHTNESS 6.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0] HDR strength of the self-emission added to emissive texels. The texel's own albedo supplies the color.
+// Experimental: make the voxelization aware of WHERE on a blocklight the emission
+// comes from. A torch's emission is concentrated in a flame sub-box at the top of
+// its post while the post stays an opaque occluder, so nearby surfaces low behind
+// the stick fall into its shadow (fancy directional blocklight detail in GI).
+#define VOXEL_EMISSIVE_SHAPES // gate the gi.glsl emissive sub-box logic; off = whole-voxel emission (legacy)
 #define GI_FIREFLY 2.0
 #define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
 #define GI_DENOISE

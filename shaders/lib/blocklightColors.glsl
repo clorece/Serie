@@ -39,7 +39,7 @@ void AddSpecialLightDetail(inout vec3 light, vec3 albedo, float emission) {
 	light += pow2(lightM / (albedo + 0.1));
 }
 
-vec3 fireSpecialLightColor = vec3(1.7, 0.6, 0.2) * 1.8;
+vec3 fireSpecialLightColor = vec3(1.7, 0.6, 0.2) * 3.8;
 vec3 lavaSpecialLightColor = vec3(3.0, 0.9, 0.2) * 4.0;
 
 vec3 netherPortalSpecialLightColor = vec3(1.8, 0.4, 2.2) * 0.8;
@@ -203,6 +203,118 @@ vec4 GetSpecialBlocklightColor(int mat) {
 	}
 
 	return vec4(blocklightCol * 20.0, 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Per-texel emissive mask (no labPBR): isolate the genuinely glowing texels of
+// a light-emitting block from its non-emitting parts (a torch's wooden stick, a
+// lantern's iron cage) using albedo alone. We key off the channel MAXIMUM (value)
+// rather than luminance so deep-but-saturated emitters (redstone, soul fire) are
+// not unfairly dimmed by the luma weights. A mild saturation bonus pulls warm /
+// vivid pixels above the threshold while keeping grey structural pixels below it.
+#ifndef EMISSIVE_THRESHOLD_LO
+#define EMISSIVE_THRESHOLD_LO 0.42
+#endif
+#ifndef EMISSIVE_THRESHOLD_HI
+#define EMISSIVE_THRESHOLD_HI 0.72
+#endif
+float emissiveMask(vec3 albedo) {
+    float maxc = max(albedo.r, max(albedo.g, albedo.b));
+    float minc = min(albedo.r, min(albedo.g, albedo.b));
+    float sat  = (maxc - minc) / max(maxc, 1e-4);
+    float key  = clamp(maxc + sat * 0.25 * maxc, 0.0, 1.0); // saturated highlights count for more
+    return smoothstep(EMISSIVE_THRESHOLD_LO, EMISSIVE_THRESHOLD_HI, key);
+}
+
+// ---------------------------------------------------------------------------
+// Per-MATERIAL emissive mask (the approach Complementary/Allium and Photon use):
+// brightness alone can't tell a torch's flame from its pale stick or a campfire's
+// flame from its logs, because the wood is bright too. The discriminator is HUE +
+// SATURATION: an emissive flame is a saturated warm/cyan hue, while wood, stone
+// and metal cages are desaturated. We classify by the known light material and
+// gate the per-texel albedo on the hue/saturation/value that block's glow occupies.
+vec3 rgbToHsl(vec3 c) {
+    float mx = max(c.r, max(c.g, c.b));
+    float mn = min(c.r, min(c.g, c.b));
+    float l  = (mx + mn) * 0.5;
+    float h  = 0.0, s = 0.0;
+    float d  = mx - mn;
+    if (d > 1e-5) {
+        s = (l > 0.5) ? d / max(2.0 - mx - mn, 1e-5) : d / max(mx + mn, 1e-5);
+        if      (mx == c.r) h = (c.g - c.b) / d + (c.g < c.b ? 6.0 : 0.0);
+        else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+        else                h = (c.r - c.g) / d + 4.0;
+        h /= 6.0;
+    }
+    return vec3(h, s, l); // hue 0..1, sat 0..1, lightness 0..1
+}
+
+// 1 when hue01 is within `width` degrees of `targetDeg`, fading to 0 by 1.5*width.
+float isolateHue(float hue01, float targetDeg, float widthDeg) {
+    float d = abs(hue01 * 360.0 - targetDeg);
+    d = min(d, 360.0 - d);
+    return 1.0 - smoothstep(widthDeg, widthDeg * 1.5, d);
+}
+
+float emissiveMaskForMat(int mat, vec3 albedo) {
+    vec3  hsl = rgbToHsl(albedo);
+    float val = max(albedo.r, max(albedo.g, albedo.b));
+    float sat = hsl.y;
+
+    // white-hot flame tip / filament: very bright AND desaturated -> the warm-hue
+    // gates below would miss it, so add it back for every flame.
+    float whiteHot = smoothstep(0.90, 1.0, val) * (1.0 - smoothstep(0.20, 0.50, sat));
+
+    // Soul fire family (cyan flame): emit the saturated cyan, drop the wood/cage.
+    if (mat == 27 || mat == 28 || mat == 29 || mat == 30) {
+        float cyan = isolateHue(hsl.x, 188.0, 50.0);
+        return clamp(max(cyan * smoothstep(0.22, 0.48, sat) * smoothstep(0.42, 0.72, val), whiteHot), 0.0, 1.0);
+    }
+    // Warm fire / flame blocks (torch, fire, lantern, campfire, furnaces, candles,
+    // copper bulb, brewing stand): the flame is a SATURATED orange/yellow. Wood,
+    // birch logs and metal cages share the warm hue but are far less saturated, so
+    // the saturation gate is what rejects them (this is the campfire-log fix).
+    if (mat == 2 || mat == 5 || mat == 11 || mat == 12 || mat == 15 ||
+        mat == 21 || mat == 22 || mat == 23 || mat == 40 || mat == 55 || mat == 56 ||
+        mat == 24 || (mat >= 70 && mat <= 80)) {
+        float orange = isolateHue(hsl.x, 42.0, 42.0);
+        return clamp(max(orange * smoothstep(0.42, 0.62, sat) * smoothstep(0.45, 0.72, val), whiteHot), 0.0, 1.0);
+    }
+    // Redstone (ore specks, torch, wire, repeater, block): saturated red only.
+    if (mat == 31 || mat == 32 || mat == 35 || mat == 41 || mat == 66 || mat == 67) {
+        float redness = clamp(albedo.r - max(albedo.g, albedo.b), 0.0, 1.0);
+        return clamp(smoothstep(0.12, 0.30, redness) * smoothstep(0.28, 0.52, val), 0.0, 1.0);
+    }
+    // Face emitters (glowstone, sea lantern, froglight, lava, magma, shroomlight,
+    // end rod, beacon, redstone lamp...): the whole face glows, BUT the texture
+    // still has darker detail — mortar lines, cracks, froglight pores, lava crust
+    // veins — that must stay dark, otherwise the block bleaches to a flat slab of
+    // light. So track the per-texel brightness with a steep cubic (no floor): the
+    // bright cells blaze while the dark grout emits ~nothing, preserving the texture.
+    if (mat == 3 || mat == 4 || mat == 7 || mat == 8 || mat == 9 || mat == 10 ||
+        mat == 13 || mat == 14 || mat == 16 || mat == 17 || mat == 18 || mat == 19 ||
+        mat == 37 || mat == 58) {
+        float v = smoothstep(0.12, 1.0, val);
+        return v * v * v;
+    }
+    // Metal ores with small glowing flecks (gold, iron, copper, lapis, emerald,
+    // diamond, quartz, nether gold, gilded blackstone, ancient debris): emit the
+    // bright saturated speck only.
+    if (mat >= 43 && mat <= 52) {
+        return clamp(smoothstep(0.45, 0.72, val) * smoothstep(0.18, 0.40, sat), 0.0, 1.0);
+    }
+    // Everything else (amethyst, dragon egg, chorus, glow lichen, sculk, legacy
+    // emissive...): generic brightness + mild saturation bonus.
+    return emissiveMask(albedo);
+}
+
+// HDR intensity of a special-light material, normalised so the brightest vanilla
+// emitter (~end rod / glowstone, total ~12-16) maps near 1.0. Used to scale the
+// self-emission so lava/glowstone blaze while dim emitters (redstone ore, glow
+// lichen) only faintly glow.
+float specialLightIntensity(int mat) {
+    vec4 c = GetSpecialBlocklightColor(mat);
+    return clamp(GetLuminance(c.rgb) / 4.0, 0.0, 1.0);
 }
 
 #endif // BLOCKLIGHT_COLORS_GLSL

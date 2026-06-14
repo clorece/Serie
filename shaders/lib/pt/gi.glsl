@@ -18,6 +18,31 @@ struct VoxelHit {
     vec3  emission;  // emission gathered from non-occluding blocklights the ray passed through
 };
 
+// Emission weight for a special-light voxel (category 100+mat) the ray is
+// crossing. With VOXEL_EMISSIVE_SHAPES emission comes only from the material's
+// emissive sub-box: if the ray stops on a shaped occluder (a torch post), it
+// emits only when the hit point lands on the emissive region (the flame cap) and
+// stays dark on the stick below -> the post casts a real shadow. Rays that pass
+// the post emit when they cross the flame box. localRo/rayDir are in the voxel's
+// local 0..1 frame (same as intersectVoxelShape); occT is the occluder hit dist.
+float specialEmisFactor(uint mat, vec3 localRo, vec3 rayDir, bool realHit, float occT, bool hasShape) {
+#ifdef VOXEL_EMISSIVE_SHAPES
+    vec3 bmin, bmax;
+    lightEmissiveAabb(mat, bmin, bmax);
+    const float EB = 2.0 / 64.0; // edge tolerance (~0.03 block)
+    if (realHit && hasShape) {
+        vec3 hp = localRo + rayDir * occT; // where the ray meets the occluder shape
+        bool onEmis = all(greaterThanEqual(hp, bmin - EB)) && all(lessThanEqual(hp, bmax + EB));
+        return onEmis ? 1.0 : 0.0;         // flame cap glows, stick stays in shadow
+    }
+    float tn, tf;
+    if (aabbEntry(localRo, rayDir, bmin, bmax, tn, tf)) return 1.0; // crosses / hits the flame box
+    return realHit ? 1.0 : 0.0;            // full-cube emitter hit head-on
+#else
+    return realHit ? 1.0 : 0.35;
+#endif
+}
+
 VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 rayDir, float maxDist) {
     VoxelHit r;
     r.hit = false; r.pos = worldPos; r.normal = vec3(0.0); r.category = VOXEL_AIR; r.albedo = vec3(0.0); r.emission = vec3(0.0);
@@ -105,9 +130,12 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
                 bool  realHit = true;
                 float tHit    = tEntry;
                 vec3  nHit    = -vec3(stepDir) * lastMask; // face we entered through
+                vec3  shapeRo = localPos - vec3(vox);      // ray origin in this voxel's local 0..1 frame
+                float occT    = 0.0;                       // occluder hit distance in that local frame
                 #ifdef VOXEL_SHAPES
                 if (shapeId != 0u) {
-                    realHit = intersectVoxelShape(shapeId, localPos - vec3(vox), rayDir, first, tHit, nHit);
+                    realHit = intersectVoxelShape(shapeId, shapeRo, rayDir, first, tHit, nHit);
+                    occT    = tHit;
                     if (!realHit) { tHit = tEntry; nHit = -vec3(stepDir) * lastMask; }
                 }
                 #endif
@@ -119,7 +147,9 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
                         e = vec3(0.0);
                     }
                     e = max(e, vec3(0.0));
-                    r.emission += e * float(GI_EMISSION) * (realHit ? 1.0 : 0.35);
+                    float emisF = (v.r >= 100u) ? specialEmisFactor(v.r - 100u, shapeRo, rayDir, realHit, occT, shapeId != 0u)
+                                                : (realHit ? 1.0 : 0.35); // simple emissive cube
+                    r.emission += e * float(GI_EMISSION) * emisF;
                 }
 
                 if (realHit) {

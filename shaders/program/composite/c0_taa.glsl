@@ -66,31 +66,47 @@ void main() {
     
     #ifdef AUTO_EXPOSURE
     if (ivec2(gl_FragCoord.xy) == ivec2(0)) {
+        // Whole-screen weighted log-average luminance. The old meter sampled a 2%
+        // spot at the crosshair, so exposure tracked whatever you pointed at — a
+        // torch in a dark cave would crash exposure, and small camera moves made it
+        // flicker. We now meter a coarse grid over the FULL frame (cheap: this runs
+        // only on the (0,0) fragment) with an optional center bias, and guard NaN.
         float sumLuma = 0.0;
         float totalWeight = 0.0;
 
-        for (float x = -0.01; x <= 0.011; x += 0.01) {
-            for (float y = -0.01; y <= 0.011; y += 0.01) {
-                vec2 uv = vec2(0.5) + vec2(x, y);
+        const int N = 16; // 16x16 = 256 taps across the whole screen
+        for (int xi = 0; xi < N; xi++) {
+            for (int yi = 0; yi < N; yi++) {
+                vec2 uv = (vec2(xi, yi) + 0.5) / float(N); // 0..1 across the frame
                 vec3 rawColor = texture(colortex0, uv * renderScale).rgb;
                 float luma = dot(rawColor, vec3(0.2126, 0.7152, 0.0722));
-                
-                sumLuma += log2(max(luma, 0.0001));
-                totalWeight += 1.0;
+                if (isnan(luma) || isinf(luma)) continue;     // skip bad pixels
+                luma = clamp(luma, 0.0, 60.0);                // one emissive texel can't dominate
+
+                // center weighting (AUTO_EXPOSURE_CENTER_WEIGHT): 0 = flat average,
+                // 1 = fully center-biased gaussian. Default keeps a mild bias.
+                vec2  d = uv - 0.5;
+                float centerW = exp(-dot(d, d) * 8.0);
+                float w = mix(1.0, centerW, AUTO_EXPOSURE_CENTER_WEIGHT);
+
+                sumLuma += w * log2(max(luma, 0.0001));
+                totalWeight += w;
             }
         }
-        
-        float avgLuma = exp2(sumLuma / totalWeight);
+
+        float avgLuma = exp2(sumLuma / max(totalWeight, 1e-5));
         avgLuma = clamp(avgLuma, 0.001, 10.0);
 
         float targetExposure = AUTO_EXPOSURE_TARGET / avgLuma;
-        
-
         targetExposure = clamp(targetExposure, AUTO_EXPOSURE_MIN, AUTO_EXPOSURE_MAX);
 
+        // Adapt fast when the scene gets brighter (stop down quickly to avoid
+        // blinding), slower when it gets darker (open up gently), like an eye.
         float rate = targetExposure > prevExposure ? 1.0 : 2.0;
         rate *= AUTO_EXPOSURE_SPEED;
-        exposure = mix(prevExposure, targetExposure, 1.0 - exp(-rate * frameTime));
+        float blend = clamp(1.0 - exp(-rate * max(frameTime, 1e-4)), 0.0, 1.0);
+        exposure = mix(prevExposure, targetExposure, blend);
+        if (isnan(exposure) || isinf(exposure)) exposure = prevExposure; // never propagate a bad value
     }
     #else
     exposure = EXPOSURE;
