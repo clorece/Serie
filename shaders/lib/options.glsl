@@ -101,7 +101,7 @@ const float renderScale = RENDER_SCALE;
 #define TAA
 #define TAA_JITTER_SCALE 0.75 // [0.0 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
 #define TAA_BLEND_WEIGHT 0.95 // [0.85 0.86 0.87 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99]
-#define TAA_SHARPNESS 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.7 0.8 0.9 1.0]
+#define TAA_SHARPNESS 0.6 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 #define BLOOM
 #define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
@@ -201,7 +201,7 @@ const float renderScale = RENDER_SCALE;
 #define GI_DENOISE
 //#define DENOISE_NO_EDGE_REJECT // EXPERIMENT (denoiser phase): disable a-trous geometric edge-stopping. Kept OFF now; testing the ACCUM phase instead.
 #define ACCUM_NO_EDGE_REJECT // Accumulation: drop the NORMAL/edge rejection in fetchBilateralHistory (it stopped edge pixels accumulating -> the edge fireflies) but KEEP a loose relative-depth DISOCCLUSION gate (ACCUM_DISOCC_DEPTH) so new geometry still flushes stale history. Fixes the edge fireflies while keeping disocclusion clean.
-#define ACCUM_DISOCC_DEPTH 0.85 // [0.03 0.05 0.07 0.1 0.15 0.2] relative depth jump that counts as disocclusion (history flush). Lower = crisper disocclusion but risks edge fireflies returning on slopes; higher = more tolerant but more disocclusion ghosting.
+#define ACCUM_DISOCC_DEPTH 0.2 // [0.03 0.05 0.07 0.1 0.15 0.2] relative depth jump that counts as disocclusion (history flush). Lower = crisper disocclusion but risks edge fireflies returning on slopes; higher = more tolerant but more disocclusion ghosting.
 #define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
 #define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power, capped at 16); lower = smoother
 #define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
@@ -215,6 +215,22 @@ const float renderScale = RENDER_SCALE;
 //TODO merge GI_ACCUM_FRAMES and AO_ACCUM_FRAMES into one general "temporal accumulation length" macro and use it for both GI and AO denoising, call it SVGF_ACCUMULATION_LENGTH or something
 #define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] temporal frames to blend in denoiser
 #define AO_ACCUM_FRAMES 128   // [8 16 32 48 64 128 192 256]
+
+// --- History reconstruction (edge / disocclusion prefilter) -------------------
+// Dedicated pass (d0b_historyfix) between temporal accumulation and the a-trous
+// chain. Pixels that never build history (silhouette edges, convex corners,
+// disocclusions) sit at giHist~1 and would display raw 1-spp GI -> edge fireflies.
+// This pools accumulated GI from geometrically-similar, higher-history neighbours
+// (Karis-weighted to damp outliers) and blends it in by (1 - history), writing it
+// back to the history so the temporal filter and a-trous both inherit it. Converged
+// pixels pass through untouched. See lib/pt/historyfix.glsl.
+#define HISTORY_FIX
+#define HISTORYFIX_MIN_FRAMES 1   // [1 2 4] history length at/below which the fix is full strength
+#define HISTORYFIX_MAX_FRAMES 8   // [4 6 8 12 16 24] history length at/above which no fix is applied (detail preserved)
+#define HISTORYFIX_SAMPLES 16     // [8 12 16] pooled taps (Vogel disk)
+#define HISTORYFIX_RADIUS 24.0    // [8.0 16.0 24.0 32.0 48.0] max pooling radius in pixels (scaled by 1-history)
+#define HISTORYFIX_SIGMA_N 8.0    // [2.0 4.0 8.0 16.0 32.0] normal edge-stopping for taps (higher = tighter to surface)
+#define HISTORYFIX_DEPTH_TOL 0.1  // [0.03 0.05 0.1 0.2 0.5] relative depth tolerance for taps
 
 #define RESTIR_GI
 #define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] candidate rays generated per frame

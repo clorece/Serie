@@ -39,7 +39,7 @@ void AddSpecialLightDetail(inout vec3 light, vec3 albedo, float emission) {
 	light += pow2(lightM / (albedo + 0.1));
 }
 
-vec3 fireSpecialLightColor = vec3(1.7, 0.9, 0.4) * 3.8;
+vec3 fireSpecialLightColor = vec3(1.7, 0.6, 0.2) * 1.8;
 vec3 lavaSpecialLightColor = vec3(3.0, 0.9, 0.2) * 4.0;
 
 vec3 netherPortalSpecialLightColor = vec3(1.8, 0.4, 2.2) * 0.8;

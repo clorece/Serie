@@ -102,8 +102,21 @@ bool fetchBilateralHistory(
         #ifndef ACCUM_DISOCC_DEPTH
             #define ACCUM_DISOCC_DEPTH 0.1
         #endif
-        vec4 histLinD = vec4(getDepth(c9_00.r), getDepth(c9_10.r), getDepth(c9_01.r), getDepth(c9_11.r));
-        validW = step(abs(histLinD - expectedLinDepth) / max(expectedLinDepth, 1e-3), vec4(ACCUM_DISOCC_DEPTH));
+        // Evaluate the relative-linear gate in WINDOW-DEPTH space. c9.r is fp16
+        // *window* depth; running it through getDepth() amplified a single fp16 step
+        // (~5e-4 near the far plane) into hundreds of blocks of linear error, so the
+        // test failed in concentric depth bands -> strips of un-blended GI. Instead,
+        // map the +/-tol LINEAR band to window bounds (inverse getDepth) and range-
+        // check the stored window depth, widened by a small floor so fp16 quantisation
+        // (and thus distant, indistinguishable surfaces) doesn't spuriously reject.
+        float kA = (far + near) / (far - near);
+        float kB = 2.0 * near * far / (far - near);
+        float loLin = expectedLinDepth * (1.0 - ACCUM_DISOCC_DEPTH);
+        float hiLin = expectedLinDepth * (1.0 + ACCUM_DISOCC_DEPTH);
+        float wLo = 0.5 + 0.5 * (kA - kB / max(loLin, 1e-3)) - 0.002; // smaller lin -> smaller window
+        float wHi = 0.5 + 0.5 * (kA - kB / max(hiLin, 1e-3)) + 0.002;
+        vec4 histW = vec4(c9_00.r, c9_10.r, c9_01.r, c9_11.r);
+        validW = step(vec4(wLo), histW) * step(histW, vec4(wHi));
     #endif
 
     w *= validW;
