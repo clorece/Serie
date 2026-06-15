@@ -250,11 +250,10 @@ void main() {
 
     vec3 indirect;
     #if defined(VOXEL_GI)
-        #ifdef GI_DENOISE
-            vec3 gi = texture(colortex3, unjitteredTexCoord * renderScale).rgb; // denoised GI: the a-trous chain lands on colortex3 (jitter-free → sample at surface logical uv)
-        #else
-            vec3 gi = texture(colortex8, unjitteredTexCoord * renderScale).rgb; // denoiser off: raw temporally-accumulated GI (chain passes are disabled; jitter-free)
-        #endif
+        // Resolved world-space irradiance cache (d0_giresolve -> colortex8). The
+        // cache is the GI temporal store; there is no screen-space denoiser. The
+        // buffer is jitter-free, so sample at the surface's logical uv.
+        vec3 gi = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
         #ifdef AO_GTAO
             #ifdef LIGHTING_AO_FULL
                 gi *= aoTerm;
@@ -285,11 +284,7 @@ void main() {
     #elif defined(AO_GTAO)
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
     #elif defined(VOXEL_AO)
-        #ifdef GI_DENOISE
-            float ao = texture(colortex3, unjitteredTexCoord * renderScale).r; // denoised AO (jitter-free → surface logical uv)
-        #else
-            float ao = texture(colortex8, unjitteredTexCoord * renderScale).r; // denoiser off: raw temporally-accumulated AO (jitter-free)
-        #endif
+        float ao = texture(colortex8, unjitteredTexCoord * renderScale).r; // voxel AO resolved into colortex8 (jitter-free)
         float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
         indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoFactor;
     #else
@@ -399,12 +394,9 @@ void main() {
     }
     #endif
 
-    #ifdef GI_DEBUG_VIEW
-        #ifdef GI_DENOISE
-            vec3 debugIllum = texture(colortex3, unjitteredTexCoord * renderScale).rgb; // jitter-free GI buffer
-        #else
-            vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb; // jitter-free GI buffer
-        #endif
+    #if defined(GI_DEBUG_VIEW) || defined(IRC_DEBUG)
+        // raw resolved irradiance cache (no albedo) — validates the cache directly
+        vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
         /* RENDERTARGETS: 0 */
         gl_FragData[0] = vec4(debugIllum, 1.0);
     #else

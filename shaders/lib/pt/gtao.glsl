@@ -51,7 +51,7 @@ float computeGTAO(vec2 uv, float linDepth, vec3 normalWorld, int frame) {
             // +side
             {
                 vec2 uvS = clamp(uv + offUV, vec2(0.0), vec2(1.0));
-                float dS = textureLod(colortex15, uvS * renderScale, 0.0).z; // uvS logical (view-pos), scaled only for the fetch
+                float dS = getDepth(textureLod(depthtex0, uvS * renderScale, 0.0).r); // ct15 (packed depth) removed by IRC migration -> linearize depthtex0
                 vec3 ws  = gtaoViewPos(uvS, dS) - viewPos;
                 float dist = length(ws);
                 float cosH = dot(ws, V) / max(dist, 1e-5);
@@ -62,7 +62,7 @@ float computeGTAO(vec2 uv, float linDepth, vec3 normalWorld, int frame) {
             // -side
             {
                 vec2 uvS = clamp(uv - offUV, vec2(0.0), vec2(1.0));
-                float dS = textureLod(colortex15, uvS * renderScale, 0.0).z; // uvS logical (view-pos), scaled only for the fetch
+                float dS = getDepth(textureLod(depthtex0, uvS * renderScale, 0.0).r); // ct15 (packed depth) removed by IRC migration -> linearize depthtex0
                 vec3 ws  = gtaoViewPos(uvS, dS) - viewPos;
                 float dist = length(ws);
                 float cosH = dot(ws, V) / max(dist, 1e-5);

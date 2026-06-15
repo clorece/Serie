@@ -61,5 +61,6 @@ uniform sampler2D texture;
 uniform usampler3D voxelSampler; // fine voxel grid, dedicated 3D image (see image.voxelImg in shaders.properties)
 uniform usampler3D brickSampler;      // 8³-block occupancy (64×16×64), written by the shadow pass
 uniform usampler3D superBrickSampler; // 64³-block occupancy (8×2×8), written by the shadow pass
+uniform sampler3D irradianceSampler;  // world-space irradiance cache, hardware-trilinear read (see image.irradianceImg)
 
 #endif // UNIFORMS_GLSL_INCLUDED

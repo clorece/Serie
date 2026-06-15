@@ -94,11 +94,7 @@ void main() {
     // Room ambient (this surface's indirect GI) for missed rays / no sky access.
     vec3 giAmbient = vec3(0.0);
     #if defined(VOXEL_GI)
-        #ifdef GI_DENOISE
-            giAmbient = texture(colortex3, unjit * renderScale).rgb;
-        #else
-            giAmbient = texture(colortex8, unjit * renderScale).rgb;
-        #endif
+        giAmbient = texture(colortex8, unjit * renderScale).rgb; // resolved irradiance cache
     #endif
 
     float eyeAltitude = cameraPosition.y - 64.0;

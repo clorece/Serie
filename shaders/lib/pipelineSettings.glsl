@@ -10,24 +10,24 @@ const int RGBA8UI = 11;
 
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
-const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred); final denoised GI lands here for d7_composite
+const int colortex3Format = RGBA16F; // bloom atlas (composite). (Former SVGF a-trous role removed with the IRC migration.)
 const int colortex4Format = RGBA16F; // reflection temporal history (.rgb accumulated reflection, .a history length); d7b_reflections
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
-const int colortex6Format = RGBA16F; // SVGF a-trous ping-pong B (deferred). Bloom no longer uses this.
+const int colortex6Format = RGBA16F; // FREE (was SVGF a-trous ping-pong B; SVGF removed by the IRC migration)
 // colortex7 = PBR material G-buffer (persistent, written by opaque gbuffers, read
 // by the d7b_reflections pass). Metals-first layout:
 //   .rgb = raw metal albedo (= F0 for the metal Fresnel tint)
 //   .a   = perceptual smoothness (0 = non-reflective; metal pixels > 0)
 // RGBA8 is enough; cleared to 0 so any pixel that doesn't write it is non-metal.
 const int colortex7Format = RGBA8;
-const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated irradiance, .a = history length)
-const int colortex9Format = RGBA16F; // SVGF moments (.r = raw depth, .g = luma M1, .b = luma M2, .a = accumulated RTAO)
-const int colortex10Format = RGBA16F; // ReSTIR reservoir radiance.rgb (clamped <=RESTIR_CLAMP) + M (<=RESTIR_M_CAP); both exact in half, saves bandwidth on this per-frame R/W buffer
-const int colortex11Format = RGBA16F; // ReSTIR reservoir samplePos.xyz + W. samplePos is camera-relative (|x| <= 256); half precision worst-case ~0.25 blocks at the grid edge, and it only feeds the reconnection Jacobian (distance ratios), so 16F is plenty — halves the bandwidth of this per-frame R/W buffer vs the old RGBA32F.
+const int colortex8Format = RGBA16F; // resolved per-pixel GI (.rgb = irradiance sampled from the cache this frame, .a = 1); written by d0_giresolve, read by d7_composite
+const int colortex9Format = RGBA16F; // AO temporal: .r = raw depth (reproject key), .a = accumulated GTAO. (.g/.b free; former SVGF luma moments removed.)
+const int colortex10Format = RGBA16F; // FREE (was ReSTIR reservoir radiance + M)
+const int colortex11Format = RGBA16F; // FREE (was ReSTIR reservoir samplePos + W)
 const int colortex12Format = RGBA16F;
 const int colortex13Format = RGBA16F;
-const int colortex14Format = RGBA16F; // .xy = ReSTIR reservoir sample-hit normal, .z = selected sample target, .w unused
-const int colortex15Format = RGBA16F; // packed denoise G-buffer + temporal normal history: .xy = octahedral WORLD normal, .z = linear depth, .w = 1. Written once by d0_restir; every a-trous tap reads normal+depth in ONE fetch instead of depthtex0 + colortex1.
+const int colortex14Format = RGBA16F; // FREE (was ReSTIR reservoir sample-hit normal)
+const int colortex15Format = RGBA16F; // FREE (was packed denoise G-buffer; SVGF removed by the IRC migration)
 
 const bool colortex3Clear = true;
 const bool colortex5Clear = false;

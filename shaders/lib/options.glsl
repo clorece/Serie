@@ -234,7 +234,7 @@ const float renderScale = RENDER_SCALE;
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
 #define GI_MAX_STEPS 192 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
-#define GI_STRENGTH 200 // [25 50 75 100 150 200]
+#define GI_STRENGTH 100 // [25 50 75 100 150 200] NOTE: the irradiance cache does infinite bounce and is a different scale than the old ReSTIR resolve — lowered from 200. Tune to taste.
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_BOUNCE_SHADOWMAP
@@ -260,61 +260,48 @@ const float renderScale = RENDER_SCALE;
 // its post while the post stays an opaque occluder, so nearby surfaces low behind
 // the stick fall into its shadow (fancy directional blocklight detail in GI).
 #define VOXEL_EMISSIVE_SHAPES // gate the gi.glsl emissive sub-box logic; off = whole-voxel emission (legacy)
-#define GI_FIREFLY 2.0
-#define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
-//#define GI_DENOISE
-//#define DENOISE_NO_EDGE_REJECT // EXPERIMENT (denoiser phase): disable a-trous geometric edge-stopping. Kept OFF now; testing the ACCUM phase instead.
-//#define ACCUM_NO_EDGE_REJECT // Accumulation: drop the NORMAL/edge rejection in fetchBilateralHistory (it stopped edge pixels accumulating -> the edge fireflies) but KEEP a loose relative-depth DISOCCLUSION gate (ACCUM_DISOCC_DEPTH) so new geometry still flushes stale history. Fixes the edge fireflies while keeping disocclusion clean.
-#define ACCUM_DISOCC_DEPTH 0.2 // [0.03 0.05 0.07 0.1 0.15 0.2] relative depth jump that counts as disocclusion (history flush). Lower = crisper disocclusion but risks edge fireflies returning on slopes; higher = more tolerant but more disocclusion ghosting.
-#define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
-#define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power, capped at 16); lower = smoother
-#define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
-#define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] history length below which variance is estimated spatially
-#define SVGF_VAR_HISTNORM // QUALITY: normalize the variance estimate by the accumulated history length. The filtered buffer is a temporal MEAN, so its residual noise shrinks ~1/histLen; tracking that tightens the luminance gate as pixels converge -> blur fades out and fine GI detail survives, while fresh/disoccluded pixels still get the full kernel.
-#define SVGF_MIN_LUMA_SIGMA 0.08 // [0.0 0.02 0.035 0.05 0.08 0.12 0.16] minimum relative luminance gate after history normalization. Higher removes more residual/checker noise; lower keeps crisper fine bounce detail.
-#define SVGF_WORLD_RADIUS // bound the kernel's world-space footprint (keeps distant geometry from over-blurring)
-#define SVGF_SIGMA_WORLD 2.0
-//#define SVGF_ADAPTIVE_SKIP
-#define SVGF_SKIP_REL 0.05 // [0.02 0.03 0.05 0.08 0.12] relative std (vs luma) below which wide passes skip
-//TODO merge GI_ACCUM_FRAMES and AO_ACCUM_FRAMES into one general "temporal accumulation length" macro and use it for both GI and AO denoising, call it SVGF_ACCUMULATION_LENGTH or something
-#define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] temporal frames to blend in denoiser
-#define AO_ACCUM_FRAMES 128   // [8 16 32 48 64 128 192 256]
+// --- World-space irradiance cache (IRC) --------------------------------------
+// Indirect light is gathered into a persistent, camera-relative 3D grid (the
+// irradiance cache) by compute passes in the shadowcomp stage, then sampled
+// per-pixel during shading. Because the cache lives in WORLD space, lighting is
+// stable under camera motion (no screen-space temporal crawl) and newly revealed
+// surfaces read an already-converged cell (no disocclusion flush). This replaces
+// the old per-pixel ReSTIR reservoirs + screen-space SVGF denoiser entirely.
+//
+// Grid: 1 cell = 1 world block (IRC_CELL 1) for sharp, per-block GI resolution.
+// The cache is a NEAR-FIELD grid DECOUPLED from the big voxel grid (the voxel grid
+// reaches VOXEL_DISTANCE chunks for ray tracing, but storing 1-block irradiance over
+// all of it would be tens of millions of cells). IRC_QUALITY sets the cache extent;
+// beyond it, surfaces fall back to sky ambient. Origin is snapped to 1 block so the
+// camera reprojects the cache by integer cells. The image dims in shaders.properties
+// (IRC_XZ / IRC_Y) MUST match the IRC_QUALITY chain below.
+#define IRC_CELL 1             // world blocks per cache cell (keep 1 — sharp GI)
+#define IRC_QUALITY 1          // [0 1 2] cache extent/res: 0 = 128x96x128 near-field (fast), 1 = 192x128x192 (balanced), 2 = 256x128x256 (wide, costly). MUST match IRC_XZ/IRC_Y in shaders.properties.
+#if IRC_QUALITY == 0
+    #define IRC_DIM_XZ 128
+    #define IRC_DIM_Y  96
+    #define IRC_WG ivec3(16, 12, 16)
+#elif IRC_QUALITY == 1
+    #define IRC_DIM_XZ 192
+    #define IRC_DIM_Y  128
+    #define IRC_WG ivec3(24, 16, 24)
+#else
+    #define IRC_DIM_XZ 256
+    #define IRC_DIM_Y  128
+    #define IRC_WG ivec3(32, 16, 32)
+#endif
+#define IRC_RAYS 1             // [1 2 3 4] GI rays traced per cell per update
+#define IRC_DECAY 0.99         // [0.90 0.94 0.96 0.97 0.98 0.99 0.992 0.995] per-frame temporal retention of the cache. Higher = more effective samples = far less per-frame flicker ("disco"), at the cost of slower response to lighting changes. The reference packs run ~0.99.
+#define IRC_MULTIBOUNCE 0.30   // [0.0 0.15 0.30 0.5 0.7 1.0] strength of the cache self-feedback (infinite bounce). 0 = single bounce (darker, closer to the old ReSTIR look); 1 = full multi-bounce (brighter, more color bleed, can wash out dark interiors).
+#define IRC_AMORTIZE 1         // [1 2 4 8 16 32] far cells update 1-in-N frames (1 = every cell every frame). >1 saves perf but the per-cell phased updates produce a flickering "disco" patchwork — keep at 1 unless you need the perf.
+#define IRC_AMORTIZE_DIST 0.5  // [0.25 0.35 0.5 0.65 0.8] fraction of the grid half-extent beyond which amortization applies
+#define IRC_SPATIAL_FILTER     // 7-tap neighbour blur at read (suppresses residual 1-spp flicker). Turn OFF for the sharpest (but noisier) cache read.
+#define IRC_NORMAL_OFFSET 0.85 // [0.5 0.65 0.75 0.85 1.0 1.25 1.5] blocks the read point is pushed along the surface normal into the air. Lower = reads closer to the surface (better local occlusion / darker corners) but more leak risk; higher = smoother but flatter. The occlusion guard catches the leak case. (Now in BLOCKS since IRC_CELL=1.)
+#define IRC_OCCLUSION_GUARD    // reject the trilinear read when the offset sample point lands inside solid geometry (anti-leak); falls back to the surface cell
+//#define IRC_DEBUG            // visualize the resolved cache irradiance directly (no albedo) in d7_composite
 
-// --- History reconstruction (edge / disocclusion prefilter) -------------------
-// Dedicated pass (d0b_historyfix) between temporal accumulation and the a-trous
-// chain. Pixels that never build history (silhouette edges, convex corners,
-// disocclusions) sit at giHist~1 and would display raw 1-spp GI -> edge fireflies.
-// This pools accumulated GI from geometrically-similar, higher-history neighbours
-// (Karis-weighted to damp outliers) and blends it in by (1 - history), writing it
-// back to the history so the temporal filter and a-trous both inherit it. Converged
-// pixels pass through untouched. See lib/pt/historyfix.glsl.
-#define HISTORY_FIX
-#define HISTORYFIX_MIN_FRAMES 1   // [1 2 4] history length at/below which the fix is full strength
-#define HISTORYFIX_MAX_FRAMES 8   // [4 6 8 12 16 24] history length at/above which no fix is applied (detail preserved)
-#define HISTORYFIX_SAMPLES 16     // [8 12 16] pooled taps (Vogel disk)
-#define HISTORYFIX_RADIUS 24.0    // [8.0 16.0 24.0 32.0 48.0] max pooling radius in pixels (scaled by 1-history)
-#define HISTORYFIX_SIGMA_N 8.0    // [2.0 4.0 8.0 16.0 32.0] normal edge-stopping for taps (higher = tighter to surface)
-#define HISTORYFIX_DEPTH_TOL 0.1  // [0.03 0.05 0.1 0.2 0.5] relative depth tolerance for taps
-
-#define RESTIR_GI
-#define RESTIR_INITIAL_SAMPLES 1 // [1 2 4 6] candidate rays generated per frame
-#define RESTIR_M_CAP 8          // [8 12 16 24 32 48] max reservoir confidence (history clamp)
-#define RESTIR_SCREEN_BOUNCE 0 // [0 1] Reproject previous HDR scene as secondary-bounce radiance. OFF avoids feeding denoised/TAA history back into ReSTIR reservoirs.
-//#define RESTIR_JACOBIAN  // Optional spatial-reuse Jacobian. Keep off unless testing; when enabled it is tightly clamped in d0_accum to avoid grazing samples hijacking flat walls.
-#define RESTIR_SPATIAL          // enable spatial reservoir reuse from neighbours
-#define RESTIR_SPATIAL_SAMPLES 1 // [1 2 3 4 5] neighbour reservoirs merged per pixel
-#define RESTIR_SPATIAL_RADIUS 8.0 // [4.0 8.0 16.0 24.0 32.0] neighbour search radius (pixels)
-#define RESTIR_COHERENT_TILE 1 // [1 2 4 8] pixels per tile sharing candidate ray directions (voxel cache coherence). NOTE: >1 creates a correlated NxN checkerboard that the denoiser must blur away; with the responsive A-SVGF alpha it becomes visible (jittering checker under changing light). Keep at 1 unless you re-add strong spatial decorrelation.
-
-//#define RESTIR_CONVERGED_SKIP
-#define RESTIR_CONVERGED_SKIP_PROB 0.5 // [0.25 0.5 0.75] fraction of converged-static frames to skip the trace on
-
-// TODO these might be dead macros to fix spatial reservoir reuse
-#define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] clamp on the unbiased reservoir weight W 
-#define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] absolute firefly clamp on the resolved GI
-
-//#define AO_GTAO
-#define AO_GI_STRENGTH 50    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
+#define AO_GTAO              // ON: the irradiance cache is isotropic (no per-pixel directional occlusion), so screen-space GTAO restores the contact shadows / small-scale darkening the old per-pixel ReSTIR provided.
+#define AO_GI_STRENGTH 70    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
 #define GTAO_SLICES 2        // [1 2 3 4] horizon slices per pixel per frame (rotates over the TAA cycle)
 #define GTAO_STEPS 4         // [2 3 4 6 8] horizon-march taps per slice side
