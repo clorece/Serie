@@ -172,7 +172,14 @@ void main() {
 
         if (maxWeight > 0.01) {
             
-            float accumFrames = min(history.a * maxWeight + 1.0, TEMPORAL_MAX_FRAMES);
+            // Frametime-adaptive accumulation cap (ported from iterationRP). The cap is
+            // a frame COUNT, but what we actually want is a fixed real-TIME integration
+            // window. At high FPS each frame is a smaller time-slice, so allow more frames
+            // (up to 3x) to reach the same wall-clock smoothing; at low FPS stay at the
+            // baseline so GI doesn't over-ghost. Net: cleaner GI when fast, no extra lag
+            // when slow — and the response rate to lighting changes is FPS-independent.
+            float maxFrames = min(TEMPORAL_MAX_FRAMES * clamp(0.01666667 / max(frameTime, 1e-4), 1.0, 3.0), 256.0);
+            float accumFrames = min(history.a * maxWeight + 1.0, maxFrames);
             float blendWeight = 1.0 / accumFrames;
             
             temporalOut.rgb = mix(history.rgb, currentRad, blendWeight);

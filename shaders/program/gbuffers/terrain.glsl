@@ -50,6 +50,22 @@ void main() {
         // grass_block keeps its 10003 biome-tint voxel role but also reads as a
         // matte ground PBR block (class 14) — special-cased so it isn't dual-listed.
         else if (mc_Entity.x == 10003.0) pbrClass = 14.0;
+        // Foliage (10000 leaves, 10005 grass/flowers/crops) keeps its voxel/wind
+        // role but also reads as PBR with the SAME matte class as grass_block (14),
+        // so leaves/grass get a faint sheen instead of being fully flat. Special-
+        // cased here (not dual-listed) exactly like grass_block.
+        else if (mc_Entity.x == 10000.0 || mc_Entity.x == 10005.0) pbrClass = 14.0;
+        // Shaped sub-blocks (stairs/slabs/walls/fences/trapdoors/etc.) spend their
+        // mc_Entity on the voxel SHAPE id (20000+shapeId, shared across ALL materials
+        // of that shape — block.20043 is oak/stone/copper stairs alike), so the shader
+        // can't tell wood from stone from copper. Photon/Allium give every stair its
+        // MATERIAL id by name because they don't voxelize sub-block shapes; SerieVX
+        // can't, so the whole range gets ONE generic rough-dielectric class (12). They
+        // reflect at all now, differentiated per-texel by texture brightness + the
+        // auto-normals. KNOWN GAP: metal shapes (anvil/hopper/cauldron/chain) read as
+        // matte and glossy quartz/polished shapes are under-glossy — true per-material
+        // accuracy here needs labPBR (texture-driven specular), the roadmap NEXT step.
+        else if (mc_Entity.x >= 20001.0 && mc_Entity.x <= 20066.0) pbrClass = 12.0;
     #endif
 
     // Per-material self-emission scale for the special blocklight path. Known
