@@ -78,7 +78,18 @@ void main() {
         for (int xi = 0; xi < N; xi++) {
             for (int yi = 0; yi < N; yi++) {
                 vec2 uv = (vec2(xi, yi) + 0.5) / float(N); // 0..1 across the frame
-                vec3 rawColor = texture(colortex0, uv * renderScale).rgb;
+                // Meter the FULL-RES, TAA-RESOLVED scene (colortex5 = last frame's
+                // upscaled output) at LOGICAL uv -- NOT the render-scale colortex0.
+                // colortex0's rendered region is ALIASED: bright sub-pixel features
+                // (sun glints, specular, emissive edges) are point-sampled, so at
+                // low RENDER_SCALE each one covers a LARGER screen fraction (a
+                // "fatter" bright pixel). That inflated the metered average and
+                // dropped exposure -> the whole scene dimmed as render scale fell.
+                // colortex5 is upscaled + temporally anti-aliased to full res, so
+                // bright features sit at their true area and the metered luminance
+                // (hence exposure) is resolution-invariant. (This is the image you
+                // compared with auto-exposure OFF and found matched across scales.)
+                vec3 rawColor = texture(colortex5, uv).rgb;
                 float luma = dot(rawColor, vec3(0.2126, 0.7152, 0.0722));
                 if (isnan(luma) || isinf(luma)) continue;     // skip bad pixels
                 luma = clamp(luma, 0.0, 60.0);                // one emissive texel can't dominate

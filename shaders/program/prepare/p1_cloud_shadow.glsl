@@ -3,7 +3,7 @@
 // Target: colortex13, 512×512 RGBA16F. Only .r is consumed (cloud
 // transmittance from the cloud-layer mid-plane along the sun ray).
 //
-// Projection (distortion-warped, see Photon's cloud_shadows.glsl):
+// Projection (distortion-warped):
 //   ndc      = uv * 2 - 1
 //   worldXZ  = cameraXZ + (ndc / (1 - |ndc|)) * CLOUDS_SHADOW_EXTENT
 // gives infinite world coverage with high precision near camera and

@@ -2,4 +2,4 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/d7b_reflections.glsl"
+#include "/program/deferred/d8_fog_sky.glsl"

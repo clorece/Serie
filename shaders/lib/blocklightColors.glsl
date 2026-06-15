@@ -227,7 +227,7 @@ float emissiveMask(vec3 albedo) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-MATERIAL emissive mask (the approach Complementary/Allium and Photon use):
+// Per-MATERIAL emissive mask:
 // brightness alone can't tell a torch's flame from its pale stick or a campfire's
 // flame from its logs, because the wood is bright too. The discriminator is HUE +
 // SATURATION: an emissive flame is a saturated warm/cyan hue, while wood, stone

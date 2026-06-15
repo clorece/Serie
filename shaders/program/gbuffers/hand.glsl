@@ -49,10 +49,11 @@ void main() {
 
     if (albedo.a < 0.1) discard;
 
-    /* DRAWBUFFERS:012 */
+    /* DRAWBUFFERS:0127 */
     gl_FragData[0] = albedo;
     gl_FragData[1] = vec4(normal * 0.5 + 0.5, 0.0); // .a = 0 (default material; see terrain.glsl colortex1.a packing)
     gl_FragData[2] = vec4(lightmapCoord, 0.0, 1.0);
+    gl_FragData[3] = vec4(0.0); // colortex7: non-metal; clears terrain PBR value behind it
 }
 
 #endif

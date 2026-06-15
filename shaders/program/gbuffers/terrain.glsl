@@ -19,6 +19,7 @@ flat out float emissiveIntensity; // per-material self-emission scale (0 = not a
 flat out int   emissiveMat;       // special-light material id (mc_Entity-10100), or -1
 out vec3 viewTangent;
 out float tangentW;
+flat out float pbrClass; // integrated PBR (v2): 0 none, 1 metal, 2 polished, 3 gem
 
 attribute vec4 mc_Entity;
 attribute vec4 at_tangent;
@@ -40,6 +41,12 @@ void main() {
     if (mc_Entity.x == 10001 || (mc_Entity.x >= 10100 && mc_Entity.x <= 10199)) material = 2.0; // emissive
     if (mc_Entity.x == 10002) material = 0.0; // structural excluded (slabs, fences) - normal shading
     if (mc_Entity.x == 10005) material = 1.1; // grass, flowers (soft constant NdotL)
+
+    pbrClass = 0.0;
+    #ifdef INTEGRATED_PBR
+        // 21001-21008 -> class 1-8 (see block.properties ID map / terrain fragment)
+        if (mc_Entity.x >= 21001.0 && mc_Entity.x <= 21008.0) pbrClass = mc_Entity.x - 21000.0;
+    #endif
 
     // Per-material self-emission scale for the special blocklight path. Known
     // light blocks (10100-10199) carry an id; map it to an HDR intensity so lava
@@ -96,9 +103,13 @@ flat in float emissiveIntensity;
 flat in int   emissiveMat;
 in vec3 viewTangent;
 in float tangentW;
+flat in float pbrClass;
 
 #ifdef SPECIAL_BLOCKLIGHT
 #include "/lib/blocklightColors.glsl"
+#endif
+#ifdef INTEGRATED_PBR
+#include "/lib/fragment/pbrCommon.glsl"
 #endif
 
 void main() {
@@ -145,10 +156,60 @@ void main() {
     #endif
     float c2a = (iceFlag > 0.0) ? 1.0 : emissionStrength;
 
-    /* DRAWBUFFERS:012 */
+    // Integrated PBR material -> colortex7. Metals only (v2): store raw albedo
+    // (= F0 for the metal Fresnel tint) and a per-texel smoothness derived from
+    // the albedo's HSL lightness (bright facets smoother than dark
+    // wear). Non-metals write 0 -> non-reflective.
+    vec4 pbrOut = vec4(0.0);
+    #ifdef INTEGRATED_PBR
+    if (pbrClass > 0.5) {
+        // Auto-generated bump normal from the albedo (same finite-difference as
+        // ice): the texture's luminance gradient perturbs the surface normal, so
+        // the reflection picks up the texture's relief. Stored in colortex1.
+        #ifdef PBR_GEN_NORMALS
+        {
+            const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+            vec2  px = 1.0 / vec2(textureSize(texture, 0));
+            // Central difference on the BASE mip (textureLod 0) -> crisp, centred
+            // bump (texture() would use the blurred mipmap = soft normals).
+            float lr = dot(textureLod(texture, texCoord + vec2(px.x, 0.0), 0.0).rgb, LUMA);
+            float ll = dot(textureLod(texture, texCoord - vec2(px.x, 0.0), 0.0).rgb, LUMA);
+            float lu = dot(textureLod(texture, texCoord + vec2(0.0, px.y), 0.0).rgb, LUMA);
+            float ld = dot(textureLod(texture, texCoord - vec2(0.0, px.y), 0.0).rgb, LUMA);
+            vec3 T = normalize(viewTangent);
+            vec3 B = normalize(cross(normal, T) * tangentW);
+            outNormal = normalize(outNormal - PBR_NORMAL_STRENGTH * 0.5 * ((lr - ll) * T + (lu - ld) * B));
+        }
+        #endif
+
+        float L = pbrLightness(albedo.rgb);
+        float t = clamp((L - 0.1) / 0.8, 0.0, 1.0); // per-texel brightness 0..1
+
+        // Class -> (base smoothness, isMetal, dielectric F0). Distinct bases give
+        // each material family its own gloss level; the per-texel DARKEN-ONLY
+        // variation roughens the darker texels (floor 0.30 keeps it reflective,
+        // ceiling = base so bright flecks don't pop into harsh mirrors).
+        float base; bool metal; float f0 = 0.04;
+        if      (pbrClass < 1.5) { base = METAL_SMOOTHNESS; metal = true;  } // 1 metal
+        else if (pbrClass < 2.5) { base = 0.50;             metal = true;  } // 2 raw/rough metal
+        else if (pbrClass < 3.5) { base = 0.55;             metal = false; f0 = 0.04; } // 3 polished stone
+        else if (pbrClass < 4.5) { base = 0.70;             metal = false; f0 = 0.05; } // 4 quartz/ceramic
+        else if (pbrClass < 5.5) { base = 0.85;             metal = false; f0 = 0.17; } // 5 gem
+        else if (pbrClass < 6.5) { base = 0.50;             metal = false; f0 = 0.05; } // 6 dark glossy
+        else if (pbrClass < 7.5) { base = 0.60;             metal = false; f0 = 0.05; } // 7 prismarine
+        else                     { base = 0.80;             metal = false; f0 = 0.06; } // 8 glazed terracotta
+
+        float smoothness = clamp(base - METAL_ROUGHNESS_VARIATION * (1.0 - t), 0.30, 0.95);
+        pbrOut = metal ? vec4(albedo.rgb, pbrPackA(smoothness, true))
+                       : vec4(vec3(f0),   pbrPackA(smoothness, false));
+    }
+    #endif
+
+    /* DRAWBUFFERS:0127 */
     gl_FragData[0] = albedo;
     gl_FragData[1] = vec4(outNormal * 0.5 + 0.5, matAlpha);
     gl_FragData[2] = vec4(lightmapCoord, iceFlag, c2a);
+    gl_FragData[3] = pbrOut; // colortex7: .rgb metal albedo(F0), .a smoothness
 }
 
 #endif

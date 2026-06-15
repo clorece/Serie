@@ -11,10 +11,15 @@ const int RGBA8UI = 11;
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
 const int colortex3Format = RGBA16F; // bloom atlas (composite) + SVGF a-trous ping-pong A (deferred); final denoised GI lands here for d7_composite
-// colortex4 placeholder
+const int colortex4Format = RGBA16F; // reflection temporal history (.rgb accumulated reflection, .a history length); d7b_reflections
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
 const int colortex6Format = RGBA16F; // SVGF a-trous ping-pong B (deferred). Bloom no longer uses this.
-// colortex7 placeholder
+// colortex7 = PBR material G-buffer (persistent, written by opaque gbuffers, read
+// by the d7b_reflections pass). Metals-first layout:
+//   .rgb = raw metal albedo (= F0 for the metal Fresnel tint)
+//   .a   = perceptual smoothness (0 = non-reflective; metal pixels > 0)
+// RGBA8 is enough; cleared to 0 so any pixel that doesn't write it is non-metal.
+const int colortex7Format = RGBA8;
 const int colortex8Format = RGBA16F; // temporal GI history (.rgb = accumulated irradiance, .a = history length)
 const int colortex9Format = RGBA16F; // SVGF moments (.r = raw depth, .g = luma M1, .b = luma M2, .a = accumulated RTAO)
 const int colortex10Format = RGBA16F; // ReSTIR reservoir radiance.rgb (clamped <=RESTIR_CLAMP) + M (<=RESTIR_M_CAP); both exact in half, saves bandwidth on this per-frame R/W buffer
@@ -26,7 +31,9 @@ const int colortex15Format = RGBA16F; // packed denoise G-buffer + temporal norm
 
 const bool colortex3Clear = true;
 const bool colortex5Clear = false;
+const bool colortex4Clear = false; // reflection history must persist across frames
 const bool colortex6Clear = true;
+const bool colortex7Clear = true; // clear -> 0 = non-metal (no reflection)
 const bool colortex8Clear = false;
 const bool colortex9Clear = false;
 const bool colortex10Clear = false;

@@ -51,7 +51,7 @@ float remap01(float x, float oldLo, float oldHi) {
     return clamp((x - oldLo) / max(oldHi - oldLo, 1e-6), 0.0, 1.0);
 }
 
-// Photon-style edge sharpener. k=0 → identity, k>0 → pushes mids up, edges
+// Edge sharpener. k=0 → identity, k>0 → pushes mids up, edges
 // down; gives the "wispy below, hard above" silhouette real cumulus have.
 float lift(float x, float k) {
     return clamp(x * (1.0 + k) - k, 0.0, 1.0);
@@ -423,8 +423,7 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     // (rotates per frame). This decorrelates adjacent pixels' sample
     // positions, so TAA averages cleanly instead of seeing all pixels jump
     // together (which causes the cloud-edge flicker the previous purely-
-    // temporal jitter produced). Same idea as Photon's `texelFetch(noisetex,
-    // pos & 511, 0).b + r1(frameCounter, ...)` but doesn't need a noise tex.
+    // temporal jitter produced). It achieves this without needing a noise tex.
     float ignSpatial = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x
                                               + 0.00583715 * gl_FragCoord.y));
     float jitter     = fract(ignSpatial + 0.61803398875 * float(frameCounter));
@@ -517,8 +516,7 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
         // wrong during twilight: the moon is ~140× dimmer than the sun, and
         // its near-horizontal lightOD cone hits a lot of cloud → fake-shadow
         // bands across cores even though the moon contributes ~0 lighting.
-        // Photon avoids this by computing a separate upward sky_optical_depth;
-        // we get the same effect more cheaply by scaling lightOD by the
+        // We avoid this more cheaply by scaling lightOD by the
         // light-source brightness so a dim moon can't false-occlude the sky.
         // Using sunHere (which includes planet shadow) ensures that when the
         // planet blocks the light, we scale down the directional occlusion.

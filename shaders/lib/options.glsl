@@ -107,7 +107,7 @@ const float renderScale = RENDER_SCALE;
 #define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
-#define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
+#define EXPOSURE 0.5 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
 #define AUTO_EXPOSURE_TARGET 0.22 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
@@ -171,6 +171,41 @@ const float renderScale = RENDER_SCALE;
 #define WATER_SCATTER_R 0.015 // [0.0 0.005 0.010 0.015 0.025 0.04 0.06]
 #define WATER_SCATTER_G 0.045 // [0.0 0.02 0.03 0.045 0.06 0.09 0.12]
 #define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
+
+// ---------------------------------------------------------------------------
+// PBR / specular reflections (opaque) — v2 rebuild, metals first.
+// Material (metal albedo + smoothness) is written per-texel to colortex7 by the
+// gbuffers (block IDs 21001). The d7b_reflections deferred pass does VNDF
+// importance-sampled SSR that reflects the PREVIOUS frame (colortex5) reprojected,
+// with a sky-view fallback.
+// ---------------------------------------------------------------------------
+#define INTEGRATED_PBR        // write per-block-ID material to colortex7
+#define SPECULAR_REFLECTIONS  // opaque reflection pass (gates d7b_reflections)
+
+// Per-texel roughness: metal smoothness is derived from each pixel's albedo
+// lightness (using a `sqrt(linear_step)` response), so bright facets read
+// near-mirror and dark / worn texels read rough — varying roughness WITHIN one
+// block's texture. METAL_SMOOTHNESS is the center, _VARIATION the per-texel spread.
+#define METAL_SMOOTHNESS 0.9          // [0.40 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90] center smoothness of metals
+#define METAL_ROUGHNESS_VARIATION 1.0 // [0.0 0.1 0.2 0.3 0.4 0.45 0.5 0.6 0.7 0.8] how much per-texel roughness varies with the texture's brightness (0 = uniform, high = bright spots mirror / dark spots rough)
+
+// Auto-generated normals: perturb the surface normal by the albedo's luminance
+// gradient (same finite-difference bump used for ice), so reflections pick up the
+// texture's relief — adds detail to the reflection without a normal map.
+#define PBR_GEN_NORMALS                // generate bump normals for PBR blocks from the texture
+#define PBR_NORMAL_STRENGTH 0.6        // [0.1 0.2 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0] bump strength (higher = more relief / wavier reflections)
+
+#define REFLECTION_RAYS 3          // [1 2 3 4 6 8] VNDF rays per pixel (rough reflections scatter these; more = cleaner, costs more)
+#define REFLECTION_STEPS 32        // [12 16 20 24 32 48 64] SSR march steps per ray
+#define REFLECTION_REFINE_STEPS 4  // [0 2 4 6 8] binary-search refinement steps after a hit
+#define REFLECTION_SMOOTHNESS_MIN 0.04 // [0.0 0.02 0.04 0.08 0.12 0.20] skip pixels rougher than this (saves the pass on matte blocks)
+#define REFLECTION_SKY_FADE 12.0   // [4.0 6.0 8.0 10.0 12.0 16.0 20.0] skylight power for the sky-reflection gate (higher = indoor blocks stop reflecting sky)
+#define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
+#define REFLECTION_ACCUM_FRAMES 48 // [4 8 12 16 24 32 48] frames blended by the reflection temporal filter (higher = cleaner but more ghosting on motion)
+#define REFLECTION_SPATIAL_RADIUS 14.0 // [0.0 6.0 8.0 10.0 14.0 18.0 24.0] max blur radius (px) of the spatial reflection denoise; scales UP when temporal history is low (in motion), so motion noise is blurred but converged pixels stay sharp
+
+//   0 = off   1 = smoothness   2 = metal albedo(F0)   3 = skyVis gate   4 = raw reflection
+#define PBR_DEBUG 0 // [0 1 2 3 4]
 
 #define VOXEL_GI
 #define VOXEL_DISTANCE 12 // [8 12 16 24 32] horizontal voxelization radius (chunks)
@@ -280,7 +315,7 @@ const float renderScale = RENDER_SCALE;
 #define AO_STRENGTH 100 // [25 50 75 100] 
 
 //#define PT_DEBUG_VOXELS  // voxel debug view
-//#define GI_DEBUG_VIEW    // irradiance debug
+//#define GI_DEBUG_VIEW 1   // irradiance debug
 #define PT_LIGHT_DEBUG 0 // [0 1 2 3 4] Diagnostic isolation: 0=off, 1=RTAO/AO term, 2=indirect(GI), 3=direct-shadow visibility, 4=raw albedo. Shows the chosen lighting component alone so we can see which one makes the dark halo around torches.
 #define WATER_DEBUG 0 // [0 1 2]
 
