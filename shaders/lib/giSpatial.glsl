@@ -1,14 +1,16 @@
 #ifndef GI_SPATIAL_GLSL
 #define GI_SPATIAL_GLSL
 
-// Shared variance-guided a-trous wavelet pass for the per-pixel GI denoiser.
+// Shared history-guided a-trous wavelet pass for the per-pixel GI denoiser.
 // Each deferred pass (d2..d5) sets INPUT_TEX + STEP_SIZE then calls giSpatialFilter().
 // Keeping the body in one place guarantees all four passes stay in sync: the
-// render-scale-correct view reconstruction, the per-pixel variance estimate, and
-// the history-adaptive edge weights are identical at every wavelet level.
+// render-scale-correct view reconstruction, the history-derived edge-stop, and
+// the history-adaptive geometry weights are identical at every wavelet level.
+// The edge-stop tolerance is derived from history length (no per-pass variance loop)
+// and the kernel half-width is GID_ATROUS_RADIUS (1 = 3x3 fast, 2 = 5x5).
 //
 // Requires (from the including program): texCoord (frag in), getTaaJitter(),
-// getDepth(), and the INPUT_TEX / STEP_SIZE macros.
+// and the INPUT_TEX / STEP_SIZE macros.
 
 #ifndef TEMPORAL_MAX_FRAMES
 #define TEMPORAL_MAX_FRAMES float(GID_TEMPORAL_MAX_FRAMES)
@@ -44,37 +46,17 @@ vec4 giSpatialFilter() {
     float histLen = min(centerData.a, TEMPORAL_MAX_FRAMES);
     float conv    = clamp(histLen / TEMPORAL_MAX_FRAMES, 0.0, 1.0);
 
-    // --- Per-pixel luminance variance (3x3 at this wavelet's stride) -------------
-    // Estimated spatially each pass, then inflated for low-history pixels so freshly
-    // disoccluded regions blur wide (GID_DISOCC_BOOST) and converged regions stay
-    // tight. sqrt(variance) -> a luminance scale that drives the edge-stop below.
-    float m1 = 0.0, m2 = 0.0, mW = 0.0;
-    float centerDepthLin = getDepth(depth0);
-    for (int vy = -1; vy <= 1; vy++) {
-        for (int vx = -1; vx <= 1; vx++) {
-            vec2 vOff = vec2(vx, vy) * STEP_SIZE * texelSize * renderScale;
-            float vDepth = texture(depthtex0, sampleCenter + vOff).r;
-            if (abs(centerDepthLin - getDepth(vDepth)) < 0.1 * max(centerDepthLin, 1.0)) {
-                float vL = giLuma(texture(INPUT_TEX, unjitteredCoord + vOff).rgb);
-                m1 += vL; m2 += vL * vL; mW += 1.0;
-            }
-        }
-    }
-    float variance = 0.0;
-    if (mW > 0.5) { m1 /= mW; m2 /= mW; variance = max(m2 - m1 * m1, 0.0); }
-    variance += (m1 * m1 + 1e-4) * (float(GID_DISOCC_BOOST) / max(histLen, 1.0));
-
-    // Scale-invariant (perceptual) luma edge-stop. Normalising BOTH the variance
-    // and the per-neighbour difference by a stable local brightness keeps the blur
-    // strength consistent from bright surfaces down to dark interiors. Using the
-    // neighbourhood MEAN (steadier than per-frame variance) with an absolute floor
-    // (GID_LUMA_FLOOR) is what stops the dark-area "boiling": the old absolute
-    // metric let sigmaL collapse in shadow so the wavelet rejected every neighbour
-    // and 1-spp noise survived. relTol below is a hard minimum tolerance (in
-    // fraction-of-brightness) so faintly-noisy flat regions still blur.
-    float lumaScale  = max(max(m1, centerLuma), float(GID_LUMA_FLOOR));
-    float relStdDev  = sqrt(variance) / lumaScale;
-    float sigmaRel   = relStdDev * float(GID_SIGMA_L) + 0.1;
+    // --- History-driven luminance edge-stop --------------------------------------
+    // The old code estimated a per-pass spatial 3x3 variance (9 extra taps/pass) just
+    // to set this tolerance. iterationRP derives the same thing straight from history
+    // length, which is ~9 taps/pass cheaper: a low-history (noisy / freshly-disoccluded)
+    // pixel filters LOOSE so the wavelet blurs its 1-spp noise wide (this is what
+    // GID_DISOCC_BOOST now scales), and a converged pixel filters TIGHT to keep detail.
+    // The per-neighbour difference is still normalised by a stable local brightness with
+    // an absolute floor (GID_LUMA_FLOOR) — that scale-invariant relative metric is what
+    // keeps dark interiors from "boiling".
+    float sigmaRel  = float(GID_SIGMA_L) * sqrt(float(GID_DISOCC_BOOST) / max(histLen, 1.0)) * 0.1 + 0.08;
+    float lumaScale = max(centerLuma, float(GID_LUMA_FLOOR));
 
     // --- History-adaptive geometry tightness ------------------------------------
     // Loose for fresh pixels (gather aggressively to hide 1-spp), sharp once converged.
@@ -87,12 +69,13 @@ vec4 giSpatialFilter() {
     float stretch = clamp(1.0 - VdotN, 0.0, 1.0);
 
     const float kernel[3] = float[3](1.0, 2.0 / 3.0, 1.0 / 6.0);
+    const int R = GID_ATROUS_RADIUS; // 1 = 3x3 (8 taps), 2 = 5x5 (24 taps)
 
     vec3 sumCol = centerData.rgb;
     float sumW = 1.0;
 
-    for (int y = -2; y <= 2; y++) {
-        for (int x = -2; x <= 2; x++) {
+    for (int y = -R; y <= R; y++) {
+        for (int x = -R; x <= R; x++) {
             if (x == 0 && y == 0) continue;
 
             vec2 baseOffset = vec2(x, y) * STEP_SIZE;
