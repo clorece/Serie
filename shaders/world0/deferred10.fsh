@@ -1,6 +1,6 @@
 #version 430 compatibility
-#define VERTEX
+#define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/d0_trace.glsl"
+#include "/program/deferred/d9_vl.glsl"
 

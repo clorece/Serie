@@ -2,4 +2,5 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/d0_giresolve.glsl"
+#include "/program/deferred/d0_trace.glsl"
+

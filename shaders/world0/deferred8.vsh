@@ -2,5 +2,5 @@
 #define VERTEX
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/d0_trace.glsl"
+#include "/program/deferred/d7c_reflection_spatial.glsl"
 

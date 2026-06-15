@@ -2,5 +2,5 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/d3_spatial_2.glsl"
+#include "/program/deferred/d7_composite.glsl"
 
