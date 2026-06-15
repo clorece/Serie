@@ -31,12 +31,17 @@ void main() {
     float depth0 = texture(depthtex0, sampleCenter).r;
     vec4 spatialOut = vec4(0.0);
 
+    vec2 unjitteredCoord = texCoord * renderScale;
+
     if (depth0 < 1.0) {
         vec3 centerNormal = normalize(texture(colortex1, sampleCenter).rgb * 2.0 - 1.0);
-        clipSpace = vec3(texCoord, depth0) * 2.0 - 1.0;
-        float centerDepth = getDepth(depth0);
         
-        vec4 centerData = texture(INPUT_TEX, sampleCenter);
+        vec2 clipXY = sampleCenter / renderScale * 2.0 - 1.0;
+        vec4 fragPos = gbufferProjectionInverse * vec4(clipXY, depth0 * 2.0 - 1.0, 1.0);
+        vec3 viewPos = fragPos.xyz / fragPos.w;
+        vec3 viewDir = normalize(viewPos);
+        
+        vec4 centerData = texture(INPUT_TEX, unjitteredCoord);
         vec3 sumCol = centerData.rgb;
         float sumW = 1.0;
         
@@ -45,12 +50,46 @@ void main() {
         const float kernel[3] = float[3](1.0, 2.0/3.0, 1.0/6.0);
 
         if (length(centerNormal) > 0.001) {
+            float VdotN = max(dot(centerNormal, -viewDir), 0.0);
+            vec2 normalTransDir = normalize(centerNormal.xy + 1e-10);
+            float stretch = clamp(1.0 - VdotN, 0.0, 1.0);
+            float m1 = 0.0;
+            float m2 = 0.0;
+            float vW = 0.0;
+            float centerDepthLin = getDepth(depth0);
+            for (int vy = -1; vy <= 1; vy++) {
+                for (int vx = -1; vx <= 1; vx++) {
+                    vec2 vOffset = vec2(vx, vy) * texelSize * renderScale;
+                    float vDepth = texture(depthtex0, sampleCenter + vOffset).r;
+                    
+                    if (abs(centerDepthLin - getDepth(vDepth)) < 0.1) {
+                        float vLum = luma(texture(INPUT_TEX, unjitteredCoord + vOffset).rgb);
+                        m1 += vLum;
+                        m2 += vLum * vLum;
+                        vW += 1.0;
+                    }
+                }
+            }
+            float stdDev = 1.0;
+            if (vW > 0.1) {
+                m1 /= vW;
+                m2 /= vW;
+                stdDev = sqrt(max(m2 - m1 * m1, 0.0));
+            }
+            
+            float frameFactor = 1.0 + min(centerData.a, 32.0) * 0.2; // 1.0 to 7.4
+            float lumaStrictness = frameFactor / max(max(centerLuma, 0.05) * stdDev * 10.0, 0.01);
             for (int y = -2; y <= 2; y++) {
                 for (int x = -2; x <= 2; x++) {
                     if (x == 0 && y == 0) continue;
                     
-                    vec2 offset = vec2(x, y) * STEP_SIZE * texelSize;
+                    vec2 baseOffset = vec2(x, y) * STEP_SIZE;
+                    float normalTransWeight = -dot(baseOffset, normalTransDir) * stretch;
+                    baseOffset += normalTransDir * normalTransWeight;
+                    
+                    vec2 offset = baseOffset * texelSize;
                     vec2 sampleCoord = sampleCenter + offset;
+                    vec2 sampleUnjittered = unjitteredCoord + offset;
                     
                     if (any(lessThan(sampleCoord, vec2(0.0))) || any(greaterThanEqual(sampleCoord, vec2(1.0)))) continue;
                     
@@ -59,13 +98,17 @@ void main() {
                     
                     float wNormal = pow(max(dot(centerNormal, sampleNormal), 0.0), 32.0);
                     
-                    // Depth weight
-                    float dDepth = abs(centerDepth - getDepth(sampleDepth0));
-                    float wDepth = exp(-dDepth * 1000.0); // Simple depth rejection
+                    vec2 sClipXY = sampleCoord / renderScale * 2.0 - 1.0;
+                    vec4 sampleFragPos = gbufferProjectionInverse * vec4(sClipXY, sampleDepth0 * 2.0 - 1.0, 1.0);
+                    vec3 sampleViewPos = sampleFragPos.xyz / sampleFragPos.w;
                     
-                    vec4 sampleData = texture(INPUT_TEX, sampleCoord);
+                    vec3 posDiff = sampleViewPos - viewPos;
+                    float depthGradient = dot(posDiff, centerNormal);
+                    float wDepth = exp(-abs(depthGradient) * max(30.0 / -viewPos.z, 5.0));
+                    
+                    vec4 sampleData = texture(INPUT_TEX, sampleUnjittered);
                     float sampleLuma = luma(sampleData.rgb);
-                    float wLuma = exp(-abs(centerLuma - sampleLuma) * 4.0); // Simple luma rejection
+                    float wLuma = exp(-abs(centerLuma - sampleLuma) * lumaStrictness);
                     
                     float w = kernel[abs(x)] * kernel[abs(y)] * wNormal * wDepth * wLuma;
                     
@@ -76,7 +119,7 @@ void main() {
         }
         
         spatialOut.rgb = sumCol / max(sumW, 1e-5);
-        spatialOut.a = centerData.a; // Pass through accum frames or whatever
+        spatialOut.a = centerData.a; 
         
         if (any(isnan(spatialOut)) || any(isinf(spatialOut))) {
             spatialOut = vec4(0.0, 0.0, 0.0, 1.0);
