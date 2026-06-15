@@ -20,6 +20,7 @@ void main() {
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 #include "/lib/fragment/sky.glsl"
+#include "/lib/fragment/pbrCommon.glsl"
 #include "/lib/fragment/vlFog.glsl"
 #ifdef WATER_CAUSTICS
 #include "/lib/fragment/caustics.glsl"
@@ -368,6 +369,22 @@ void main() {
 
         vec3 tResult = mix(base, reflectColor, fres);
 
+        // Sun/moon glint on glass/ice (shared GGX, matching water + PBR blocks).
+        #if SPECULAR_SUN == 1
+        {
+            vec3  sunV = normalize(sunPosition);
+            vec3  wS   = mat3(gbufferModelViewInverse) * sunV;
+            bool  dayT = wS.y > -0.04;
+            vec3  Lt   = dayT ? sunV : -sunV;
+            float upT  = dayT ? wS.y : -wS.y;
+            vec3  lcT  = (dayT ? mix(vec3(1.0, 0.55, 0.28), vec3(1.0, 0.96, 0.90), clamp(upT, 0.0, 1.0))
+                               : vec3(0.55, 0.66, 0.95) * 0.05)
+                       * smoothstep(-0.04, 0.08, upT) * SPECULAR_SUN_STRENGTH;
+            float roughT = isSolidIce ? 0.28 : 0.05;
+            tResult += ggxSpecular(tN, tV, Lt, roughT, vec3(F0t), lcT) * skyVis * (1.0 - rainStrength * 0.75);
+        }
+        #endif
+
         // Atmospheric fog for the translucent surface. The deferred fog/VL pass
         // (d8/d9) ran BEFORE translucents were drawn, so it only fogged the
         // opaque scene behind this surface — the glass/ice/portal surface itself
@@ -519,28 +536,11 @@ void main() {
     float moonVis   = pow(clamp(dot(worldMoonDir, vec3(0.0, 1.0, 0.0)) + 0.1, 0.0, 0.1) / 0.1, 2.0);
     vec3  lightCol  = mix(sunCol, moonCol, moonVis);
 
-    vec3  H     = normalize(V + L);
-    float NdotH = max(dot(viewNormal, H), 0.0);
-    float NdotL = max(dot(viewNormal, L), 0.0);
-    float NdotV = max(dot(viewNormal, V), 1e-5);
-    float VdotH = max(dot(V, H), 0.0);
-
-    float a  = WATER_ROUGHNESS * WATER_ROUGHNESS;   // alpha = roughness²
-    float a2 = a * a;
-    float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
-    float D = a2 / (PI * denom * denom);
-
-    float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
-    float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
-    float Vis = 0.5 / max(GGXV + GGXL, 1e-5);
-
-    float F0 = 0.02;
-    float Fspec = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
-
-    float specBRDF = D * Vis * Fspec;
-    vec3  specular = specBRDF * NdotL * lightCol * (1.0 - rainStrength * 0.75);
-
-    specular *= skyVis;
+    // Sun/moon glint via the shared GGX (same Cook-Torrance as the integrated-PBR
+    // blocks — water/glass/PBR now share one specular model).
+    const float F0 = 0.02;
+    vec3 specular = ggxSpecular(viewNormal, V, L, WATER_ROUGHNESS, vec3(F0), lightCol)
+                  * (1.0 - rainStrength * 0.75) * skyVis;
 
     float cosT = clamp(max(dot(V, viewNormal), dot(V, geoViewN)), 0.0, 1.0);
     float Fmax = max(1.0 - WATER_ROUGHNESS, F0);

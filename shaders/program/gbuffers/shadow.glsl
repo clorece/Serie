@@ -72,7 +72,8 @@ void main() {
     else if (blockEntityId >= 20001 && blockEntityId <= 20066) voxelBlockCategory = 0u;
     #endif
     else if (eid == 10002.0 || eid == 10004.0 || eid == 10005.0 || eid == 10006.0 || eid == 10007.0 || entityId == 10002 || blockEntityId == 10002) voxelBlockCategory = 0u; // excluded (entities, grass, flowers, transparents, water, etc.) -> VOXEL_AIR
-    else                     voxelBlockCategory = 1u; // opaque (default)
+    else if (eid >= 22001.0 && eid <= 22008.0) voxelBlockCategory = 0u; // integrated-PBR but voxel-EXCLUDED (rails/bars): reflective yet must not occlude GI
+    else                     voxelBlockCategory = 1u; // opaque (default); 21001-21016 land here (PBR + normal voxel)
 
     // Flag blocks that need special voxel coloring or face skipping.
     // 1 = grass_block (10003), 2 = leaves (10000)

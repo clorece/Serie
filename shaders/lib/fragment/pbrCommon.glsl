@@ -27,4 +27,27 @@ vec3 pbrFresnel(float cosTheta, vec3 f0) {
     return f0 + (1.0 - f0) * (m * m * m * m * m);
 }
 
+// Cook-Torrance GGX specular highlight for a direct light (sun/moon). All vectors
+// same space (view), normalized. Returns the highlight radiance (multiply by
+// shadow outside). Shared by the integrated-PBR passes and water/glass.
+vec3 ggxSpecular(vec3 N, vec3 V, vec3 L, float roughness, vec3 f0, vec3 lightColor) {
+    float NoL = dot(N, L);
+    if (NoL <= 0.0) return vec3(0.0);
+    vec3  H   = normalize(V + L);
+    float NoH = clamp(dot(N, H), 0.0, 1.0);
+    float NoV = clamp(dot(N, V), 1e-4, 1.0);
+    float VoH = clamp(dot(V, H), 0.0, 1.0);
+    NoL = clamp(NoL, 0.0, 1.0);
+
+    float a   = max(roughness * roughness, 2e-3); // floor widens the disc so the glint isn't a single aliased dot
+    float a2  = a * a;
+    float den = NoH * NoH * (a2 - 1.0) + 1.0;
+    float D   = a2 / (PI * den * den);                                  // GGX NDF
+    float gv  = NoL * sqrt(NoV * NoV * (1.0 - a2) + a2);
+    float gl  = NoV * sqrt(NoL * NoL * (1.0 - a2) + a2);
+    float Vis = 0.5 / max(gv + gl, 1e-5);                               // height-correlated Smith
+    vec3  F   = pbrFresnel(VoH, f0);
+    return D * Vis * F * NoL * lightColor;
+}
+
 #endif

@@ -29,6 +29,7 @@ void main() {
 vec3 clipSpace; // for positions.glsl (unused); must precede the include
 #include "/lib/util/positions.glsl"
 #include "/lib/fragment/pbrCommon.glsl"
+#include "/lib/fragment/directSpecular.glsl"
 
 in vec2 texCoord;
 
@@ -45,8 +46,8 @@ void main() {
 #if PBR_DEBUG != 0
     gl_FragData[0] = vec4(scene, 1.0); return;
 #endif
-    if (depth >= 1.0 || !pbrIsPBR(mat.a)) {
-        gl_FragData[0] = vec4(scene, 1.0); return;
+    if (depth >= 1.0 || !pbrIsPBR(mat.a) || pbrSmoothness(mat.a) < REFLECTION_SMOOTHNESS_MIN) {
+        gl_FragData[0] = vec4(scene, 1.0); return; // matches d7b's cutoff
     }
 
 #ifndef REFLECTION_DENOISE
@@ -68,8 +69,16 @@ void main() {
     // Metal: F0 = albedo (tints + replaces). Dielectric: F0 = grey scalar (adds).
     vec3 F = isMetal ? pbrFresnel(NoV, mat.rgb) : pbrFresnel(NoV, vec3(mat.r));
 
-    // Compose the blurred reflection onto the surface (metal replaces, dielectric adds).
-    #define REFL_COMPOSE(env) (isMetal ? (env) * F : scene + (env) * F)
+    // Direct sun/moon glint, added on top of the reflection composite (sharp,
+    // deterministic — not denoised).
+    vec3 specSun = vec3(0.0);
+    #if SPECULAR_SUN == 1
+        specSun = sunMoonSpecular(N, normalize(-viewPos), viewPos, roughness, isMetal ? mat.rgb : vec3(mat.r))
+                * (isMetal ? 1.0 : PBR_DIELECTRIC_SUN); // non-metals: stronger sun glint
+    #endif
+
+    // Metals: full env reflection. Non-metals: weak env (less sky wash) + boosted glint.
+    #define REFL_COMPOSE(env) ((isMetal ? (env) * F : scene + (env) * F) + specSun)
 
     // Radius: full when fresh (few frames of history), ~0 when converged.
     float conv   = clamp(histLen / 8.0, 0.0, 1.0);

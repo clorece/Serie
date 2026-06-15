@@ -44,8 +44,12 @@ void main() {
 
     pbrClass = 0.0;
     #ifdef INTEGRATED_PBR
-        // 21001-21008 -> class 1-8 (see block.properties ID map / terrain fragment)
-        if (mc_Entity.x >= 21001.0 && mc_Entity.x <= 21008.0) pbrClass = mc_Entity.x - 21000.0;
+        // 21001-21016 (opaque) and 22001-22008 (voxel-excluded) -> class = id mod 1000
+        if      (mc_Entity.x >= 21001.0 && mc_Entity.x <= 21016.0) pbrClass = mc_Entity.x - 21000.0;
+        else if (mc_Entity.x >= 22001.0 && mc_Entity.x <= 22008.0) pbrClass = mc_Entity.x - 22000.0;
+        // grass_block keeps its 10003 biome-tint voxel role but also reads as a
+        // matte ground PBR block (class 14) — special-cased so it isn't dual-listed.
+        else if (mc_Entity.x == 10003.0) pbrClass = 14.0;
     #endif
 
     // Per-material self-emission scale for the special blocklight path. Known
@@ -178,7 +182,9 @@ void main() {
             float ld = dot(textureLod(texture, texCoord - vec2(0.0, px.y), 0.0).rgb, LUMA);
             vec3 T = normalize(viewTangent);
             vec3 B = normalize(cross(normal, T) * tangentW);
-            outNormal = normalize(outNormal - PBR_NORMAL_STRENGTH * 0.5 * ((lr - ll) * T + (lu - ld) * B));
+            // Non-metals (class >= 3) get a stronger bump than metals.
+            float nMul = (pbrClass < 2.5) ? 1.0 : PBR_DIELECTRIC_NORMAL;
+            outNormal = normalize(outNormal - PBR_NORMAL_STRENGTH * 0.5 * nMul * ((lr - ll) * T + (lu - ld) * B));
         }
         #endif
 
@@ -190,16 +196,32 @@ void main() {
         // variation roughens the darker texels (floor 0.30 keeps it reflective,
         // ceiling = base so bright flecks don't pop into harsh mirrors).
         float base; bool metal; float f0 = 0.04;
-        if      (pbrClass < 1.5) { base = METAL_SMOOTHNESS; metal = true;  } // 1 metal
-        else if (pbrClass < 2.5) { base = 0.50;             metal = true;  } // 2 raw/rough metal
-        else if (pbrClass < 3.5) { base = 0.55;             metal = false; f0 = 0.04; } // 3 polished stone
-        else if (pbrClass < 4.5) { base = 0.70;             metal = false; f0 = 0.05; } // 4 quartz/ceramic
-        else if (pbrClass < 5.5) { base = 0.85;             metal = false; f0 = 0.17; } // 5 gem
-        else if (pbrClass < 6.5) { base = 0.50;             metal = false; f0 = 0.05; } // 6 dark glossy
-        else if (pbrClass < 7.5) { base = 0.60;             metal = false; f0 = 0.05; } // 7 prismarine
-        else                     { base = 0.80;             metal = false; f0 = 0.06; } // 8 glazed terracotta
+        if      (pbrClass < 1.5)  { base = METAL_SMOOTHNESS; metal = true;  }            // 1 metal
+        else if (pbrClass < 2.5)  { base = 0.50; metal = true;  }                        // 2 raw/rough metal
+        else if (pbrClass < 3.5)  { base = 0.85; metal = false; f0 = 0.25; }             // 3 polished stone (smooth, glossy)
+        else if (pbrClass < 4.5)  { base = 0.78; metal = false; f0 = 0.22; }             // 4 quartz/ceramic
+        else if (pbrClass < 5.5)  { base = 0.85; metal = false; f0 = 0.28; }             // 5 gem
+        else if (pbrClass < 6.5)  { base = 0.62; metal = false; f0 = 0.14; }             // 6 dark glossy (polished blackstone/deepslate)
+        else if (pbrClass < 7.5)  { base = 0.72; metal = false; f0 = 0.20; }             // 7 prismarine (polished-like)
+        else if (pbrClass < 8.5)  { base = 0.80; metal = false; f0 = 0.22; }             // 8 glazed terracotta
+        else if (pbrClass < 9.5)  { base = 0.42; metal = false; f0 = 0.04; }             // 9 concrete
+        else if (pbrClass < 10.5) { base = 0.34; metal = false; f0 = 0.04; }             // 10 terracotta
+        else if (pbrClass < 11.5) { base = 0.38; metal = false; f0 = 0.04; }             // 11 bricks
+        else if (pbrClass < 12.5) { base = 0.28; metal = false; f0 = 0.04; }             // 12 rough stone
+        else if (pbrClass < 13.5) { base = 0.30; metal = false; f0 = 0.04; }             // 13 wood
+        else if (pbrClass < 14.5) { base = 0.18; metal = false; f0 = 0.04; }             // 14 dirt/ground
+        else if (pbrClass < 15.5) { base = 0.24; metal = false; f0 = 0.04; }             // 15 sand/gravel
+        else                      { base = 0.15; metal = false; f0 = 0.03; }             // 16 wool
 
-        float smoothness = clamp(base - METAL_ROUGHNESS_VARIATION * (1.0 - t), 0.30, 0.95);
+        // Per-texel darken-only variation, scaled by the class's own [floor, base]
+        // range so VARIATION=1 just REACHES the floor at the darkest texels. (The
+        // old absolute subtraction crushed every dielectric texel to the floor at
+        // VARIATION 1, killing their reflection/glint/normals.)
+        // Floor is PROPORTIONAL to the base so smooth classes (polished/gem) keep a
+        // high minimum and don't average out matte; matte classes stay low.
+        float floorS = metal ? 0.35 : max(0.10, base * 0.65);
+        float smoothness = base - METAL_ROUGHNESS_VARIATION * (base - floorS) * (1.0 - t);
+        smoothness = clamp(smoothness, floorS, 0.95);
         pbrOut = metal ? vec4(albedo.rgb, pbrPackA(smoothness, true))
                        : vec4(vec3(f0),   pbrPackA(smoothness, false));
     }

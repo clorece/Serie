@@ -35,6 +35,7 @@ vec3 clipSpace; // referenced by positions.glsl (unused here); must precede the 
 #include "/lib/fragment/sky.glsl"
 #include "/lib/fragment/reflections.glsl"
 #include "/lib/fragment/pbrCommon.glsl"
+#include "/lib/fragment/directSpecular.glsl"
 #include "/lib/pt/rand.glsl"
 
 in vec2 texCoord;
@@ -62,8 +63,10 @@ void main() {
 
     float depth = texture(depthtex0, uv * renderScale).r;
 
-    // Only PBR pixels (metal or dielectric) do work.
-    if (depth >= 1.0 || !pbrIsPBR(mat.a)) {
+    // Only PBR pixels that are smooth enough to show a reflection do work
+    // (REFLECTION_SMOOTHNESS_MIN doubles as the perf cutoff: raise it to skip the
+    // matte families — dirt/wood/wool/rough-stone — when full parity is too heavy).
+    if (depth >= 1.0 || !pbrIsPBR(mat.a) || smoothness < REFLECTION_SMOOTHNESS_MIN) {
         gl_FragData[0] = vec4(color, 1.0);
         gl_FragData[1] = vec4(0.0); // reset reflection history
         return;
@@ -116,7 +119,10 @@ void main() {
 
         // Environment for this ray: GI ambient indoors -> sky outdoors.
         vec3 worldRdir = mat3(gbufferModelViewInverse) * rdir;
-        vec3 radiance  = mix(giAmbient, getSkyReflection(worldRdir, eyeAltitude), skyGate);
+        // Sky reflection: globally scaled, and reduced further for non-metals so
+        // dielectrics keep their (F0-driven) scene reflection without the sky wash.
+        float skyMul   = REFLECTION_SKY_STRENGTH * (isMetal ? 1.0 : PBR_DIELECTRIC_REFLECT);
+        vec3 radiance  = mix(giAmbient, getSkyReflection(worldRdir, eyeAltitude) * skyMul, skyGate);
 
         #ifdef SPECULAR_REFLECTIONS
         {
@@ -135,6 +141,10 @@ void main() {
             }
         }
         #endif
+
+        // Firefly clamp: a single ray hitting a very bright HDR pixel (sun glint,
+        // emissive) otherwise leaves a sparkle the denoiser can't average out.
+        radiance = min(radiance, vec3(REFLECTION_FIREFLY_CLAMP));
 
         // DEMODULATED: accumulate the environment reflection WITHOUT the metal
         // albedo tint (just the VNDF geometry weight). The per-texel albedo tint
@@ -206,9 +216,15 @@ void main() {
         // Denoise off: composite immediately, sharp tint over the demodulated env.
         // Metal -> no diffuse, surface IS the albedo-tinted reflection.
         // Dielectric -> keep diffuse, ADD a weak untinted Fresnel reflection.
+        // Metals: full env reflection. Non-metals: weak env (less sky wash).
         vec3 outColor = isMetal
             ? reflection * pbrFresnel(NoV, tintCol)
             : color + reflection * pbrFresnel(NoV, vec3(tintCol.r));
+        #if SPECULAR_SUN == 1
+            // Non-metals: boosted sun glint (strong highlight, little sky).
+            outColor += sunMoonSpecular(N, V, viewPos, roughness, isMetal ? tintCol : vec3(tintCol.r))
+                      * (isMetal ? 1.0 : PBR_DIELECTRIC_SUN);
+        #endif
         gl_FragData[0] = vec4(outColor, 1.0);
     #endif
     gl_FragData[1] = vec4(reflection, histLenOut); // colortex4: untinted env reflection + history

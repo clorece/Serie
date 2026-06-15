@@ -107,7 +107,7 @@ const float renderScale = RENDER_SCALE;
 #define BLOOM_STRENGTH 0.15 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
-#define EXPOSURE 0.5 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
+#define EXPOSURE 0.80 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
 #define AUTO_EXPOSURE_TARGET 0.22 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
@@ -194,14 +194,25 @@ const float renderScale = RENDER_SCALE;
 // texture's relief — adds detail to the reflection without a normal map.
 #define PBR_GEN_NORMALS                // generate bump normals for PBR blocks from the texture
 #define PBR_NORMAL_STRENGTH 0.6        // [0.1 0.2 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0] bump strength (higher = more relief / wavier reflections)
+#define PBR_DIELECTRIC_NORMAL 2.0      // [1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0] extra bump-normal strength for NON-metals (stone/wood/etc.), on top of PBR_NORMAL_STRENGTH
 
 #define REFLECTION_RAYS 3          // [1 2 3 4 6 8] VNDF rays per pixel (rough reflections scatter these; more = cleaner, costs more)
 #define REFLECTION_STEPS 32        // [12 16 20 24 32 48 64] SSR march steps per ray
 #define REFLECTION_REFINE_STEPS 4  // [0 2 4 6 8] binary-search refinement steps after a hit
-#define REFLECTION_SMOOTHNESS_MIN 0.04 // [0.0 0.02 0.04 0.08 0.12 0.20] skip pixels rougher than this (saves the pass on matte blocks)
+#define REFLECTION_SMOOTHNESS_MIN 0.04 // [0.0 0.02 0.04 0.08 0.12 0.18 0.25 0.35] reflection cutoff / PERF knob: pixels below this smoothness skip the pass. 0.04 = full parity (even dirt/wool reflect faintly); ~0.25 skips the matte families (dirt/wood/wool/rough-stone) for performance
 #define REFLECTION_SKY_FADE 12.0   // [4.0 6.0 8.0 10.0 12.0 16.0 20.0] skylight power for the sky-reflection gate (higher = indoor blocks stop reflecting sky)
+#define REFLECTION_SKY_STRENGTH 0.5 // [0.0 0.2 0.3 0.4 0.5 0.6 0.7 0.8 1.0] brightness of the environment SKY reflection on PBR blocks (lower = less flat sky wash; SSR scene hits + sun glint unaffected)
+#define SPECULAR_SUN 1              // [0 1] direct GGX sun/moon specular highlight (glint) on PBR blocks
+#define SPECULAR_SUN_STRENGTH 1.0   // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] brightness of the sun/moon glint
+// Non-metals (stone, wood, concrete, glass-like) -> strong SUN glint, weak SKY wash.
+// The SCENE (surroundings) reflection strength is set per-class by F0 in
+// terrain.glsl (polished/gem high = glossy; dirt/wood low = matte). This knob only
+// scales the SKY portion, so you can keep glossy surroundings while killing sky.
+#define PBR_DIELECTRIC_REFLECT 0.1 // [0.0 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] non-metal SKY reflection strength only (scene reflection is F0-driven per class)
+#define PBR_DIELECTRIC_SUN 5.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
 #define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
 #define REFLECTION_ACCUM_FRAMES 48 // [4 8 12 16 24 32 48] frames blended by the reflection temporal filter (higher = cleaner but more ghosting on motion)
+#define REFLECTION_FIREFLY_CLAMP 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] max brightness a single reflected sample may contribute — kills sparkly fireflies from bright HDR hits (1000 = off)
 #define REFLECTION_SPATIAL_RADIUS 14.0 // [0.0 6.0 8.0 10.0 14.0 18.0 24.0] max blur radius (px) of the spatial reflection denoise; scales UP when temporal history is low (in motion), so motion noise is blurred but converged pixels stay sharp
 
 //   0 = off   1 = smoothness   2 = metal albedo(F0)   3 = skyVis gate   4 = raw reflection
@@ -251,9 +262,9 @@ const float renderScale = RENDER_SCALE;
 #define VOXEL_EMISSIVE_SHAPES // gate the gi.glsl emissive sub-box logic; off = whole-voxel emission (legacy)
 #define GI_FIREFLY 2.0
 #define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
-#define GI_DENOISE
+//#define GI_DENOISE
 //#define DENOISE_NO_EDGE_REJECT // EXPERIMENT (denoiser phase): disable a-trous geometric edge-stopping. Kept OFF now; testing the ACCUM phase instead.
-#define ACCUM_NO_EDGE_REJECT // Accumulation: drop the NORMAL/edge rejection in fetchBilateralHistory (it stopped edge pixels accumulating -> the edge fireflies) but KEEP a loose relative-depth DISOCCLUSION gate (ACCUM_DISOCC_DEPTH) so new geometry still flushes stale history. Fixes the edge fireflies while keeping disocclusion clean.
+//#define ACCUM_NO_EDGE_REJECT // Accumulation: drop the NORMAL/edge rejection in fetchBilateralHistory (it stopped edge pixels accumulating -> the edge fireflies) but KEEP a loose relative-depth DISOCCLUSION gate (ACCUM_DISOCC_DEPTH) so new geometry still flushes stale history. Fixes the edge fireflies while keeping disocclusion clean.
 #define ACCUM_DISOCC_DEPTH 0.2 // [0.03 0.05 0.07 0.1 0.15 0.2] relative depth jump that counts as disocclusion (history flush). Lower = crisper disocclusion but risks edge fireflies returning on slopes; higher = more tolerant but more disocclusion ghosting.
 #define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
 #define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power, capped at 16); lower = smoother
@@ -302,7 +313,7 @@ const float renderScale = RENDER_SCALE;
 #define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] clamp on the unbiased reservoir weight W 
 #define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] absolute firefly clamp on the resolved GI
 
-#define AO_GTAO
+//#define AO_GTAO
 #define AO_GI_STRENGTH 50    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
 #define GTAO_SLICES 2        // [1 2 3 4] horizon slices per pixel per frame (rotates over the TAA cycle)
