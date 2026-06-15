@@ -204,6 +204,7 @@ const float renderScale = RENDER_SCALE;
 #define REFLECTION_SKY_STRENGTH 0.5 // [0.0 0.2 0.3 0.4 0.5 0.6 0.7 0.8 1.0] brightness of the environment SKY reflection on PBR blocks (lower = less flat sky wash; SSR scene hits + sun glint unaffected)
 #define SPECULAR_SUN 1              // [0 1] direct GGX sun/moon specular highlight (glint) on PBR blocks
 #define SPECULAR_SUN_STRENGTH 1.0   // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] brightness of the sun/moon glint
+#define PBR_REFLECT_SHADE 0.75       // [0.0 0.25 0.35 0.5 0.65 0.8 1.0] dim PBR reflections + sun glint in shadow / low sky-access (caves), using the real filtered+contact sun visibility from d7_composite. 0 = reflections ignore shading (physically pure, but shines in dark areas); 1 = reflections fully gated by sun visibility
 // Non-metals (stone, wood, concrete, glass-like) -> strong SUN glint, weak SKY wash.
 // The SCENE (surroundings) reflection strength is set per-class by F0 in
 // terrain.glsl (polished/gem high = glossy; dirt/wood low = matte). This knob only
@@ -233,7 +234,7 @@ const float renderScale = RENDER_SCALE;
 #endif
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
-#define GI_MAX_STEPS 192 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
+#define GI_MAX_STEPS 96 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
 #define GI_STRENGTH 100 // [25 50 75 100 150 200] NOTE: the irradiance cache does infinite bounce and is a different scale than the old ReSTIR resolve — lowered from 200. Tune to taste.
 #define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
@@ -293,7 +294,7 @@ const float renderScale = RENDER_SCALE;
 #define IRC_RAYS 1             // [1 2 3 4] GI rays traced per cell per update
 #define IRC_DECAY 0.99         // [0.90 0.94 0.96 0.97 0.98 0.99 0.992 0.995] per-frame temporal retention of the cache. Higher = more effective samples = far less per-frame flicker ("disco"), at the cost of slower response to lighting changes. The reference packs run ~0.99.
 #define IRC_MULTIBOUNCE 0.30   // [0.0 0.15 0.30 0.5 0.7 1.0] strength of the cache self-feedback (infinite bounce). 0 = single bounce (darker, closer to the old ReSTIR look); 1 = full multi-bounce (brighter, more color bleed, can wash out dark interiors).
-#define IRC_AMORTIZE 1         // [1 2 4 8 16 32] far cells update 1-in-N frames (1 = every cell every frame). >1 saves perf but the per-cell phased updates produce a flickering "disco" patchwork — keep at 1 unless you need the perf.
+#define IRC_AMORTIZE 16        // [1 2 4 8 16 32] far cells (beyond IRC_AMORTIZE_DIST of the half-extent) update 1-in-N frames; near cells always update every frame. 1 = every cell every frame (full cost / most responsive distant GI). The IRC is now only a 0.5-weighted, denoised MULTIBOUNCE term (not primary GI), and IRC_DECAY 0.99 smooths ~100 frames, so the far ring can be updated very rarely with no visible "disco". HIGHER = more perf (far ring barely refreshes). Drop IRC_QUALITY to 0 for the biggest IRC speedup (3x fewer cells).
 #define IRC_AMORTIZE_DIST 0.5  // [0.25 0.35 0.5 0.65 0.8] fraction of the grid half-extent beyond which amortization applies
 #define IRC_SPATIAL_FILTER     // 7-tap neighbour blur at read (suppresses residual 1-spp flicker). Turn OFF for the sharpest (but noisier) cache read.
 #define IRC_NORMAL_OFFSET 0.85 // [0.5 0.65 0.75 0.85 1.0 1.25 1.5] blocks the read point is pushed along the surface normal into the air. Lower = reads closer to the surface (better local occlusion / darker corners) but more leak risk; higher = smoother but flatter. The occlusion guard catches the leak case. (Now in BLOCKS since IRC_CELL=1.)
@@ -301,7 +302,7 @@ const float renderScale = RENDER_SCALE;
 //#define IRC_DEBUG            // visualize the resolved cache irradiance directly (no albedo) in d7_composite
 
 #define AO_GTAO              // ON: the irradiance cache is isotropic (no per-pixel directional occlusion), so screen-space GTAO restores the contact shadows / small-scale darkening the old per-pixel ReSTIR provided.
-#define AO_GI_STRENGTH 70    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
+#define AO_GI_STRENGTH 50    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
 #define GTAO_SLICES 2        // [1 2 3 4] horizon slices per pixel per frame (rotates over the TAA cycle)
 #define GTAO_STEPS 4         // [2 3 4 6 8] horizon-march taps per slice side

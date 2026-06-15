@@ -118,12 +118,11 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 
             if (shapeId == 0u && first) {
                 if (isEmis) {
+                    // e is a literal constant (GetSpecialBlocklightColor) or uint8/255,
+                    // so it can never be NaN/Inf — no per-crossing guard needed (this is
+                    // the emissive hot path; blocklight-dense areas cross many of these).
                     vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
                                            : vec3(v.gba) / 255.0;
-                    if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
-                        e = vec3(0.0);
-                    }
-                    e = max(e, vec3(0.0));
                     r.emission += e * float(GI_EMISSION) * 0.35;
                 }
             } else {
@@ -142,11 +141,7 @@ VoxelHit traceVoxelGI(usampler3D atlas, vec3 gridOrigin, vec3 worldPos, vec3 ray
 
                 if (isEmis) {
                     vec3 e = (v.r >= 100u) ? GetSpecialBlocklightColor(int(v.r - 100u)).rgb
-                                           : vec3(v.gba) / 255.0;
-                    if (isnan(e.r) || isnan(e.g) || isnan(e.b) || isinf(e.r) || isinf(e.g) || isinf(e.b)) {
-                        e = vec3(0.0);
-                    }
-                    e = max(e, vec3(0.0));
+                                           : vec3(v.gba) / 255.0; // constant/uint8 -> never NaN/Inf
                     float emisF = (v.r >= 100u) ? specialEmisFactor(v.r - 100u, shapeRo, rayDir, realHit, occT, shapeId != 0u)
                                                 : (realHit ? 1.0 : 0.35); // simple emissive cube
                     r.emission += e * float(GI_EMISSION) * emisF;

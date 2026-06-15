@@ -38,10 +38,17 @@ void main() {
     if (any(greaterThanEqual(coord, IRC_DIMS))) return;
 
     // --- amortization: near cells update every frame, far cells 1-in-N ----------
-    vec2  relXZ   = (vec2(coord.xz) + 0.5 - IRC_DIMSF.xz * 0.5) / (IRC_DIMSF.xz * 0.5);
-    bool  doUpdate = dot(relXZ, relXZ) < (IRC_AMORTIZE_DIST * IRC_AMORTIZE_DIST);
+    // IRC_AMORTIZE == 1 must mean "every cell every frame" (the documented behaviour).
+    // The old gate set doUpdate = (near cell) UNCONDITIONALLY and only re-enabled far
+    // cells inside #if IRC_AMORTIZE > 1, so at the DEFAULT amortize of 1 every far cell
+    // hit the `return` below and was never sampled -> the outer ~3/4 of the cache (past
+    // ~IRC_AMORTIZE_DIST of the half-extent) decayed to black and multibounce GI died
+    // there. Now: default = full coverage; >1 only THINS the far ring.
+    bool doUpdate = true;
 #if IRC_AMORTIZE > 1
-    if (!doUpdate) {
+    vec2 relXZ = (vec2(coord.xz) + 0.5 - IRC_DIMSF.xz * 0.5) / (IRC_DIMSF.xz * 0.5);
+    if (dot(relXZ, relXZ) >= (IRC_AMORTIZE_DIST * IRC_AMORTIZE_DIST)) {
+        // far cell: refresh on its own 1-in-N phase; decay carries it between updates
         uint phase = pcgHash(uint(coord.x) ^ (uint(coord.y) << 10) ^ (uint(coord.z) << 20)) % uint(IRC_AMORTIZE);
         doUpdate = (uint(frameCounter) % uint(IRC_AMORTIZE)) == phase;
     }
@@ -51,6 +58,29 @@ void main() {
     vec3 camPos     = cameraPosition;
     vec3 gridOrigin = floor(camPos) - VOXEL_RADIUS_VEC;
     vec3 cellCenter = ircCellCenter(coord, camPos); // world-absolute
+
+    // Surface-shell cull (iterationRP's key IRC optimization). A cell's irradiance is
+    // only ever READ by a surface within ~1 block of it (reads push IRC_NORMAL_OFFSET
+    // along the normal into the air). So only the thin 1-cell shell straddling each
+    // surface is ever sampled; cells floating in open air far from geometry AND cells
+    // buried deep in solid are never read. SerieVX previously traced a full ray DDA
+    // from EVERY air cell (incl. open sky) — by far the dominant IRC cost. Trace only
+    // BOUNDARY cells: of {self + 6 face neighbours}, not-all-air and not-all-solid.
+    // (Deep-air -> all air -> skip; deep-solid -> all solid -> skip.) Skipped cells
+    // decay to zero and drop out of the a-weighted trilinear read. Emissive blocks are
+    // unaffected: an emissive voxel makes its air-side shell cells "boundary", and they
+    // gather the glow by tracing THROUGH it.
+    ivec3 selfVox = ivec3(floor(cellCenter - gridOrigin));
+    if (all(greaterThanEqual(selfVox, ivec3(1))) && all(lessThan(selfVox, VOXEL_DIMS - 1))) {
+        int solidN = int(sampleVoxel(voxelSampler, selfVox)                 != VOXEL_AIR)
+                   + int(sampleVoxel(voxelSampler, selfVox + ivec3( 1,0,0)) != VOXEL_AIR)
+                   + int(sampleVoxel(voxelSampler, selfVox + ivec3(-1,0,0)) != VOXEL_AIR)
+                   + int(sampleVoxel(voxelSampler, selfVox + ivec3(0, 1,0)) != VOXEL_AIR)
+                   + int(sampleVoxel(voxelSampler, selfVox + ivec3(0,-1,0)) != VOXEL_AIR)
+                   + int(sampleVoxel(voxelSampler, selfVox + ivec3(0,0, 1)) != VOXEL_AIR)
+                   + int(sampleVoxel(voxelSampler, selfVox + ivec3(0,0,-1)) != VOXEL_AIR);
+        if (solidN == 0 || solidN == 7) return; // deep air or deep solid -> never read
+    }
 
     // Sun/sky colors — no vertex stage in compute, so derive them from uniforms
     // exactly like the gbuffer vertex shaders do.

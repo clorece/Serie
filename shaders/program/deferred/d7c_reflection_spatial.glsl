@@ -65,15 +65,23 @@ void main() {
     vec3  viewPos = convertScreenSpaceToWorldSpace(uv, depth);
     float NoV  = clamp(dot(N, normalize(-viewPos)), 1e-3, 1.0);
 
+    // Sun visibility from d7_composite (colortex14): real filtered PCSS +
+    // screen-space contact + cloud + sky-access shadow. Dims reflections in shadow
+    // / caves (reflShade, with a floor) and shadows the glint.
+    float sunVis    = clamp(texture(colortex14, uv * renderScale).r, 0.0, 1.0);
+    float reflShade = 1.0 - PBR_REFLECT_SHADE * (1.0 - sunVis);
+
     // Sharp per-texel Fresnel, computed at full res and applied AFTER the blur.
     // Metal: F0 = albedo (tints + replaces). Dielectric: F0 = grey scalar (adds).
-    vec3 F = isMetal ? pbrFresnel(NoV, mat.rgb) : pbrFresnel(NoV, vec3(mat.r));
+    // reflShade dims the env reflection in shadow / low sky-access.
+    vec3 F = (isMetal ? pbrFresnel(NoV, mat.rgb) : pbrFresnel(NoV, vec3(mat.r))) * reflShade;
 
     // Direct sun/moon glint, added on top of the reflection composite (sharp,
-    // deterministic — not denoised).
+    // deterministic — not denoised). Shadowed by the real sun visibility so it
+    // never overpowers the screen-space shadows or reveals the raw shadow map.
     vec3 specSun = vec3(0.0);
     #if SPECULAR_SUN == 1
-        specSun = sunMoonSpecular(N, normalize(-viewPos), viewPos, roughness, isMetal ? mat.rgb : vec3(mat.r))
+        specSun = sunMoonSpecular(N, normalize(-viewPos), viewPos, roughness, isMetal ? mat.rgb : vec3(mat.r), sunVis)
                 * (isMetal ? 1.0 : PBR_DIELECTRIC_SUN); // non-metals: stronger sun glint
     #endif
 

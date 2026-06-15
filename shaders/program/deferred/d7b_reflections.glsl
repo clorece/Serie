@@ -91,6 +91,14 @@ void main() {
     float skylight = clamp(texture(colortex2, uv * renderScale).g, 0.0, 1.0);
     float skyGate  = pow(clamp(skylight / 0.75, 0.0, 1.0), REFLECTION_SKY_FADE);
 
+    // Sun visibility from d7_composite (colortex14): the real filtered PCSS +
+    // screen-space contact + cloud + sky-access shadow. Used to shadow the sun
+    // glint and to dim reflections in shadow / dim areas (caves) — combats the
+    // unnatural shine without a raw shadow-map tap. reflShade keeps a floor so
+    // shadowed surfaces still reflect, just dimmer.
+    float sunVis    = clamp(texture(colortex14, uv * renderScale).r, 0.0, 1.0);
+    float reflShade = 1.0 - PBR_REFLECT_SHADE * (1.0 - sunVis);
+
     // Room ambient (this surface's indirect GI) for missed rays / no sky access.
     vec3 giAmbient = vec3(0.0);
     #if defined(VOXEL_GI)
@@ -213,12 +221,15 @@ void main() {
         // Metal -> no diffuse, surface IS the albedo-tinted reflection.
         // Dielectric -> keep diffuse, ADD a weak untinted Fresnel reflection.
         // Metals: full env reflection. Non-metals: weak env (less sky wash).
+        // reflShade dims the env reflection in shadow / low sky-access.
+        vec3 env = reflection * reflShade;
         vec3 outColor = isMetal
-            ? reflection * pbrFresnel(NoV, tintCol)
-            : color + reflection * pbrFresnel(NoV, vec3(tintCol.r));
+            ? env * pbrFresnel(NoV, tintCol)
+            : color + env * pbrFresnel(NoV, vec3(tintCol.r));
         #if SPECULAR_SUN == 1
-            // Non-metals: boosted sun glint (strong highlight, little sky).
-            outColor += sunMoonSpecular(N, V, viewPos, roughness, isMetal ? tintCol : vec3(tintCol.r))
+            // Non-metals: boosted sun glint (strong highlight, little sky). Shadowed
+            // by the real sun visibility so it never overpowers the screen-space shadows.
+            outColor += sunMoonSpecular(N, V, viewPos, roughness, isMetal ? tintCol : vec3(tintCol.r), sunVis)
                       * (isMetal ? 1.0 : PBR_DIELECTRIC_SUN);
         #endif
         gl_FragData[0] = vec4(outColor, 1.0);

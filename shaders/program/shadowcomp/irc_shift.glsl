@@ -41,6 +41,13 @@ void main() {
     // rgba16f maxes ~65504) so the leaky integrator can never get stuck.
     if (frameCounter == 0 || any(isnan(v)) || any(isinf(v))) v = vec4(0.0);
     v = clamp(v, vec4(0.0), vec4(60000.0));
+    // Flush a fully-decayed cell to EXACT zero. A stale cell (one that stopped being
+    // updated — e.g. you walked away, or it got culled as buried) keeps multiplying
+    // by IRC_DECAY and spends hundreds of frames creeping through the fp16 denormal
+    // range (~6e-5..6e-8) before it would reach 0. Denormals can be slow on some GPUs,
+    // and as you explore more area MORE cells sit there at once -> a gradual, "longer
+    // you play" slowdown. Once a cell reads as no-data anyway, snap it to zero.
+    if (all(lessThan(v.rgb, vec3(2e-4))) && v.a < 2e-4) v = vec4(0.0);
 
     barrier();
     memoryBarrierImage();

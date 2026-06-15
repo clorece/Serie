@@ -394,13 +394,22 @@ void main() {
     }
     #endif
 
+    // Sun visibility for the PBR reflection passes (d7b/d7c): the SAME filtered
+    // PCSS + screen-space contact + cloud shadow that gates the diffuse sun, times
+    // sky access (skyOcc). The reflection passes multiply the sun glint and dim the
+    // reflections by this, so PBR is shadowed/darkened exactly like the rest of the
+    // surface instead of revealing the raw shadow map or shining in caves.
+    float pbrSunVis = clamp(dot(directShadow, vec3(0.2126, 0.7152, 0.0722))
+                          * cloudShadow * skyOcc * (1.0 - rainStrength * 0.75), 0.0, 1.0);
+    gl_FragData[1] = vec4(pbrSunVis, 0.0, 0.0, 1.0);
+
     #if defined(GI_DEBUG_VIEW) || defined(IRC_DEBUG)
         // raw resolved irradiance cache (no albedo) — validates the cache directly
         vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
-        /* RENDERTARGETS: 0 */
+        /* RENDERTARGETS: 0,14 */
         gl_FragData[0] = vec4(debugIllum, 1.0);
     #else
-        /* RENDERTARGETS: 0 */
+        /* RENDERTARGETS: 0,14 */
         gl_FragData[0] = vec4(color, 1.0);
     #endif
 }

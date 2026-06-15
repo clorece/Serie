@@ -3,20 +3,20 @@
 
 // Direct sun / moon specular highlight (GGX glint) for the integrated-PBR passes.
 // Added ON TOP of the environment reflection, so it works for both metal-replace
-// and dielectric-add without touching d7_composite. Cheap single-tap shadow.
-// Requires: /lib/util/positions.glsl (toShadowSpace) + /lib/fragment/pbrCommon.glsl (ggxSpecular).
-
-// Single nearest shadow tap toward the active light — enough for a sharp glint.
-float refl_sunShadow(vec3 worldRel) {
-    vec4 sp = toShadowSpace(vec4(worldRel, 1.0));
-    if (clamp(sp.xyz, 0.0, 1.0) != sp.xyz) return 1.0;
-    float bias = 0.0006 + 0.0010 * (4096.0 / float(SHADOW_RESOLUTION));
-    return step(sp.z - bias, texture(shadowtex0, sp.xy).r);
-}
+// and dielectric-add without touching d7_composite.
+//
+// The shadow is passed IN (sunShadow) — it is the SAME filtered PCSS + screen-space
+// contact + cloud + sky-access term the diffuse sun uses, forwarded from
+// d7_composite through colortex14. This replaces the old cheap single shadow-map
+// tap, which revealed the raw shadow map (no PCF), ignored the screen-space
+// contact shadows, and returned 1.0 outside the shadow frustum — so it lit up
+// caves. Requires: /lib/fragment/pbrCommon.glsl (ggxSpecular).
 
 // N, V, viewPos: view space. roughness: perceptual (1 - smoothness). f0: metal
-// albedo or dielectric F0. Returns the shadowed sun/moon highlight.
-vec3 sunMoonSpecular(vec3 N, vec3 V, vec3 viewPos, float roughness, vec3 f0) {
+// albedo or dielectric F0. sunShadow: precomputed sun visibility [0,1]. Returns
+// the shadowed sun/moon highlight.
+vec3 sunMoonSpecular(vec3 N, vec3 V, vec3 viewPos, float roughness, vec3 f0, float sunShadow) {
+    if (sunShadow <= 0.0) return vec3(0.0);
     vec3  sunView = normalize(sunPosition);
     vec3  wSun    = mat3(gbufferModelViewInverse) * sunView;
     bool  day     = wSun.y > -0.04;
@@ -38,13 +38,7 @@ vec3 sunMoonSpecular(vec3 N, vec3 V, vec3 viewPos, float roughness, vec3 f0) {
     vec3 spec = ggxSpecular(N, V, Lview, gRough, f0, lightCol);
     if (spec == vec3(0.0)) return spec;
     spec = min(spec, vec3(8.0)); // cap so the glint blooms but doesn't nuke
-
-    // Offset along the world normal before the shadow tap so flat sunlit surfaces
-    // don't self-shadow the glint (the single tap has no PCF normal bias).
-    vec3 worldRel = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
-    vec3 worldN   = mat3(gbufferModelViewInverse) * N;
-    worldRel += worldN * (0.06 + 0.02 * length(viewPos));
-    return spec * refl_sunShadow(worldRel);
+    return spec * sunShadow;
 }
 
 #endif
