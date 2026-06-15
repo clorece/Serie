@@ -22,7 +22,9 @@ in vec2 texCoord;
 vec3 clipSpace;
 #include "/lib/util/positions.glsl"
 
-#define TEMPORAL_MAX_FRAMES 32.0
+#define TEMPORAL_MAX_FRAMES float(GID_TEMPORAL_MAX_FRAMES)
+
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
@@ -38,42 +40,59 @@ void main() {
         vec3 normal = normalize(texture(colortex1, sampleCenter).rgb * 2.0 - 1.0);
         clipSpace = vec3(texCoord + currentJitter, depth0) * 2.0 - 1.0;
         
-        // Aggressive Planar Firefly Clamp
-        vec3 m1 = vec3(0.0);
+        // Energy-preserving planar firefly clamp.
+        // Gather the luminance mean/stddev of geometrically-similar neighbours,
+        // then rescale (not min-clip) this pixel's radiance only if it spikes
+        // above mean + K*stddev. Working in LUMA preserves chroma; rescaling
+        // instead of a flat min keeps sparse-light energy that the old
+        // "min(rad, 1.5*avg)" used to crush.
+        float lm1 = 0.0, lm2 = 0.0;
         float validNeighbors = 0.0;
-        
+
         vec2 clipXY = sampleCenter / renderScale * 2.0 - 1.0;
         vec4 fragPos = gbufferProjectionInverse * vec4(clipXY, depth0 * 2.0 - 1.0, 1.0);
         vec3 viewPos = fragPos.xyz / fragPos.w;
-        
+
         for(int y = -1; y <= 1; y++) {
             for(int x = -1; x <= 1; x++) {
                 if (x == 0 && y == 0) continue;
                 vec2 offset = vec2(x, y) * texelSize * renderScale;
-                
+
                 float sDepth = texture(depthtex0, sampleCenter + offset).r;
                 vec3 sNormal = normalize(texture(colortex1, sampleCenter + offset).rgb * 2.0 - 1.0);
-                
+
                 vec2 sClipXY = (sampleCenter + offset) / renderScale * 2.0 - 1.0;
                 vec4 sFragPos = gbufferProjectionInverse * vec4(sClipXY, sDepth * 2.0 - 1.0, 1.0);
                 vec3 sViewPos = sFragPos.xyz / sFragPos.w;
-                
+
                 vec3 posDiff = sViewPos - viewPos;
                 float depthGradient = dot(posDiff, normal);
-                
+
                 if (abs(depthGradient) < 0.3 && dot(normal, sNormal) > 0.5) {
-                    vec3 sRad = texture(colortex10, texCoord * renderScale + offset).rgb;
-                    m1 += sRad;
+                    float sL = luma(texture(colortex10, texCoord * renderScale + offset).rgb);
+                    lm1 += sL;
+                    lm2 += sL * sL;
                     validNeighbors += 1.0;
                 }
             }
         }
-        
-        if (validNeighbors > 0.0) {
-            m1 /= validNeighbors;
-            currentRad = min(currentRad, m1 * 1.5); // Brutal 1.5x average clamp
+
+        if (GID_CLAMP_K < 1000.0 && validNeighbors > 0.0) {
+            lm1 /= validNeighbors;
+            lm2 /= validNeighbors;
+            float sigma = sqrt(max(lm2 - lm1 * lm1, 0.0));
+            // Relative headroom: in dark/low-variance regions sigma -> 0, which would
+            // crush every sample above the dark mean each frame (sparse light never
+            // settles -> dark boiling). Floor the allowed deviation at a fraction of
+            // the local mean so genuine faint light survives and only true fireflies
+            // (>> local brightness) get rescaled.
+            float maxLuma = lm1 + GID_CLAMP_K * max(sigma, lm1 * 0.5);
+            float curLuma = luma(currentRad);
+            if (curLuma > maxLuma && curLuma > 1e-4) {
+                currentRad *= maxLuma / curLuma; // rescale, keep chroma + as much energy as the clamp allows
+            }
         }
-        
+
         vec3 worldAbs = getWorldPosition().xyz + cameraPosition;
         vec3 worldPrevRel = worldAbs - previousCameraPosition;
         
@@ -108,9 +127,26 @@ void main() {
                 
                 vec3 posDiff = viewPrev.xyz - tapViewPrev.xyz;
                 float depthGradient = dot(posDiff, viewNormalPrev);
-                float depthWeight = step(abs(depthGradient), max(-tapViewPrev.z * 4e-3, 0.0) + 0.2); // Tighter motion rejection
+                // Motion/disocclusion rejection. depthGradient is the tap's distance
+                // from this surface's plane (along the normal). Two competing needs:
+                //   - keep SAME-surface history through camera motion (loose band,
+                //     scaled by GID_MOTION_TOLERANCE) -> low motion noise;
+                //   - never accept a DIFFERENT surface behind a silhouette (a bg wall
+                //     a few blocks back) -> else its lighting leaks into the edge and
+                //     flickers. So the band is hard-capped to a small fraction of view
+                //     distance, independent of GID_MOTION_TOLERANCE.
+                float depthTol = (max(-tapViewPrev.z * 1.5e-2, 0.0) + 0.35) * GID_MOTION_TOLERANCE;
+                depthTol = min(depthTol, -tapViewPrev.z * 0.06 + 0.35); // bg-leak cap
+                float depthWeight = step(abs(depthGradient), depthTol);
                 
-                float normalWeight = pow(max(dot(normal, viewNormalPrev), 0.0), 128.0); // Extreme edge rejection
+                // History-adaptive normal rejection: a freshly-seeded tap (low
+                // tapHistory.a) is accepted loosely so disoccluded/edge pixels can
+                // bootstrap a history, while a long-converged tap is rejected sharply
+                // to keep edges crisp. This replaces the old fixed pow-128 that
+                // rejected history at every curved edge -> permanent 1-spp fireflies.
+                float tapConv = clamp(tapHistory.a / TEMPORAL_MAX_FRAMES, 0.0, 1.0);
+                float normalExp = mix(GID_NORMAL_EXP_MIN, GID_NORMAL_EXP_MAX, tapConv);
+                float normalWeight = pow(max(dot(normal, viewNormalPrev), 0.0), normalExp);
                 
                 float skyWeight = tapDepth < 1.0 ? 1.0 : 0.0;
                 float geomWeight = depthWeight * skyWeight * normalWeight;

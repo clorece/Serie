@@ -104,7 +104,14 @@ void main() {
 
             if (any(isnan(rad)) || any(isinf(rad))) rad = vec3(0.0);
             rad = max(rad, vec3(0.0));
-            
+
+            // Source firefly clamp: cap the per-ray luminance (chroma preserved) so a
+            // single ray that catches the bright sky/sun through a gap can't inject a
+            // spike the denoiser would smear (and bloom would balloon) into a glowing
+            // blob. Genuine bright GI still builds up from many sub-cap samples.
+            float radLuma = dot(rad, vec3(0.2126, 0.7152, 0.0722));
+            if (GID_FIREFLY_MAX < 1000.0 && radLuma > GID_FIREFLY_MAX) rad *= GID_FIREFLY_MAX / radLuma;
+
             float hitDist = wasHit ? distance(origin, hitPos) : -1.0;
             if (isnan(hitDist) || isinf(hitDist)) hitDist = -1.0;
             
