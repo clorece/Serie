@@ -155,7 +155,20 @@ void main() {
         float eyeAlt = cameraPosition.y - 64.0;
         float dayFactor = clamp(wSun.y * 1.5 + 0.2, 0.04, 1.0); // dim at night / dusk
         vec3 absorption = vec3(WATER_ABSORPTION_R, WATER_ABSORPTION_G, WATER_ABSORPTION_B);
-        vec3 scatter = vec3(WATER_SCATTER_R, WATER_SCATTER_G, WATER_SCATTER_B) * skyVis * dayFactor;
+
+        // Ambient in-scatter ("fog") colour. The OLD code keyed this off the
+        // OPAQUE fragment's skylight (skyVis from c2.g), so the haze tint changed
+        // blotchily with whatever terrain happened to sit behind each pixel —
+        // that's the "weird/patchy" fog. Underwater haze should be ~uniform
+        // across the view, set by how much sky reaches the WATER COLUMN THE EYE
+        // IS IN. Key it off the camera's own smoothed sky exposure (stable,
+        // screen-wide), and mix only a little per-pixel skyVis back so genuinely
+        // enclosed nooks still darken.
+        vec3  scatterCoeff = vec3(WATER_SCATTER_R, WATER_SCATTER_G, WATER_SCATTER_B);
+        float eyeSky = clamp(float(eyeBrightnessSmooth.y) / 240.0, 0.0, 1.0);
+        eyeSky = max(eyeSky - WATER_SKYLIGHT_THRESHOLD, 0.0) / max(1.0 - WATER_SKYLIGHT_THRESHOLD, 0.001);
+        float ambientVis = mix(eyeSky, skyVis, 0.3);
+        vec3  scatter = scatterCoeff * ambientVis * dayFactor;
 
         vec2 unjitU = uv;
         #ifdef TAA
@@ -223,12 +236,22 @@ void main() {
         vec3 foggedScene = sceneCaustic * trans + scatter * (1.0 - trans);
 
         #ifdef WATER_GODRAYS
-        // Additive sun-shaft raymarch through the underwater volume. The
-        // analytic Beer-Lambert above gives uniform scatter; this layer
-        // adds the *directional* contribution — light that pierces the
-        // surface, is focused by waves into caustic bands, and scatters
-        // into the camera ray. Caustic banding sampled per step propagates
-        // visibly along each shaft.
+        // Directional sun-shaft raymarch through the underwater volume.
+        //
+        // The Beer-Lambert term above is uniform AMBIENT haze. This layer adds
+        // the DIRECTIONAL sun contribution: light that pierces the surface and
+        // scatters toward the eye, forming visible shafts. Two things shape the
+        // shafts so they read as real light columns *and* line up with the
+        // caustics painted on the floor:
+        //   1. shadow map -> the column is cut wherever terrain ABOVE the water
+        //                    blocks the sun (true crepuscular shafts). The old
+        //                    version had no occlusion at all, so it was just a
+        //                    uniform glow modulated by noise — the main reason
+        //                    the shafts "didn't work".
+        //   2. caustics   -> the SAME wave-focusing pattern (same eval, same
+        //                    surfaceY reference) that paints the seabed also
+        //                    modulates the in-scatter, so a bright shaft lands on
+        //                    a bright floor band. This is the "match caustics".
         if (wSun.y > 0.02) {
             const float pi_local = 3.14159265359;
             vec3  viewDirW   = normalize(mat3(gbufferModelViewInverse) * screenToView(unjitU, d0));
@@ -248,17 +271,40 @@ void main() {
                               * sampleTransmittanceLUT_fast(wSun.y, PLANET_RADIUS)
                               * dayFactor;
 
+            float resScale = 4096.0 / float(SHADOW_RESOLUTION);
+
             vec3 godray = vec3(0.0);
             for (int gi = 0; gi < WATER_GODRAY_STEPS; ++gi) {
                 float t          = gStepLen * (float(gi) + gDither);
-                vec3  samplePos  = cameraPosition + viewDirW * t;
+                vec3  samplePosR = viewDirW * t;              // camera-relative world
+                vec3  samplePos  = cameraPosition + samplePosR;
                 float depthBelow = max(surfaceY - samplePos.y, 0.0);
 
-                // Caustic banding focused by the water surface waves above.
-                // Reuses the same analytic-Jacobian eval used on terrain — the
-                // function returns 0 below the wave troughs, peaks where wave
-                // crests focus light into bands. Sampling per step propagates
-                // the bands visibly along the shaft.
+                // Shadow test: is this volume sample in direct sun, or behind
+                // terrain above the water? Inlined shadow-space transform, same
+                // as lib/util/common.glsl::isInShadow.
+                //
+                // MUST sample shadowtex1 (OPAQUE-only), NOT shadowtex0. The water
+                // SURFACE is a translucent caster, so it lives in shadowtex0 — and
+                // every underwater volume sample is below it, so against shadowtex0
+                // every sample reads as self-occluded by the surface => shadow==0
+                // everywhere => no shafts at all (this is why they didn't show up).
+                // shadowtex1 excludes the water surface, leaving only real terrain
+                // to cut the shafts.
+                vec4 sp = shadowProjection * shadowModelView * vec4(samplePosR, 1.0);
+                sp /= sp.w;
+                float distb   = length(sp.xy);
+                float distort = (1.0 - SHADOW_MAP_BIAS) + distb * SHADOW_MAP_BIAS;
+                sp.xy /= distort;
+                sp = sp * 0.5 + 0.5;
+                float shadow = 1.0;
+                if (sp.x >= 0.0 && sp.x <= 1.0 && sp.y >= 0.0 && sp.y <= 1.0) {
+                    shadow = step(sp.z - 0.0004 * resScale, texture(shadowtex1, sp.xy).r);
+                }
+
+                // Caustic banding focused by the surface waves above. Same eval +
+                // same surfaceY reference as the seabed caustics, so the shaft
+                // banding registers with the floor caustics.
                 float caustic = 1.0;
                 #ifdef WATER_CAUSTICS
                 vec3 sampleScaled = samplePos
@@ -268,10 +314,14 @@ void main() {
                               * WATER_CAUSTICS_STRENGTH;
                 #endif
 
-                vec3 lightAtSample = sunAtSurface * caustic * exp(-absorption * depthBelow);
+                // Multiply by the RAW scatter coefficient (not the skyVis-modulated
+                // ambient `scatter`): dayFactor is already in sunAtSurface and the
+                // shaft must not be re-killed by the terrain's per-pixel lightmap.
+                vec3 lightAtSample = sunAtSurface * shadow * max(caustic, 0.0)
+                                   * exp(-absorption * depthBelow);
                 vec3 transCam      = exp(-absorption * t);
 
-                godray += lightAtSample * phase * scatter * gStepLen * transCam;
+                godray += lightAtSample * phase * scatterCoeff * gStepLen * transCam;
             }
 
             foggedScene += godray * WATER_GODRAY_STRENGTH;

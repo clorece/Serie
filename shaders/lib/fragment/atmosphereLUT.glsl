@@ -425,6 +425,20 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
     float sunFade  = smoothstep(-0.2, 0.05, sunDir.y);
     float moonFade = smoothstep(-0.2, 0.05, moonDir.y);
 
+    // View-space Earth-shadow anchor (see BELT_VIEW_SHADOW in options.glsl). The
+    // forward Mie phase peaks toward the just-set sun (below the horizon), so the
+    // DIRECT warm glow would otherwise pool below worldDir.y = 0 as a misaligned
+    // band. Fade the direct term out just below the view horizon so the warm glow
+    // hugs the horizon line; multi-scatter is left untouched (soft sub-horizon
+    // limb glow stays). Constant per view direction -> computed once, not per step.
+    float sunViewBelt  = 1.0;
+    float moonViewBelt = 1.0;
+#ifdef BELT_OF_VENUS
+    float viewHorizon = smoothstep(-0.03, 0.02, worldDir.y);   // 0 below horizon -> 1 above
+    sunViewBelt  = mix(1.0, viewHorizon, (1.0 - smoothstep(0.0, 0.12, sunDir.y))  * BELT_VIEW_SHADOW);
+    moonViewBelt = mix(1.0, viewHorizon, (1.0 - smoothstep(0.0, 0.12, moonDir.y)) * BELT_VIEW_SHADOW);
+#endif
+
     for (int i = 0; i < N; ++i) {
         float t = tStart + (float(i) + 0.5) * ds;
 
@@ -492,19 +506,19 @@ vec3 computeSkyViewLUT(ivec2 px_local, float eyeAltitude, vec3 sunDir, vec3 moon
         // on the global sun elevation, so it is identical for every march step
         // and view direction — it cannot reintroduce the per-step shadow shells
         // the inline terminator caused (that is why this gate is safe here).
-        vec3 inscatter = sunFade  * (sunT  * phaseScatterSun * eShadow + psi_ms_sun  * sigma_s * phaseIsotropic) * SUN_COLOR_BASE
-                       + moonFade * (moonT * phaseScatterMoon          + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE;
+        vec3 inscatter = sunFade  * (sunT  * phaseScatterSun * eShadow * sunViewBelt  + psi_ms_sun  * sigma_s * phaseIsotropic) * SUN_COLOR_BASE
+                       + moonFade * (moonT * phaseScatterMoon          * moonViewBelt + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE;
 
         // Energy-conserving step
         vec3 stepW = trans * (1.0 - stepT) / max(sigma_e, vec3(1e-7));
         scatter += inscatter * stepW;
 
 #if SKY_DEBUG >= 10
-        dbgSunRay += sunFade  * (sunT * sigma_s_r * phaseSun.x * eShadow)    * SUN_COLOR_BASE  * stepW;
-        dbgSunMie += sunFade  * (sunT * sigma_s_m * phaseSun.y * eShadow)    * SUN_COLOR_BASE  * stepW;
+        dbgSunRay += sunFade  * (sunT * sigma_s_r * phaseSun.x * eShadow * sunViewBelt)  * SUN_COLOR_BASE  * stepW;
+        dbgSunMie += sunFade  * (sunT * sigma_s_m * phaseSun.y * eShadow * sunViewBelt)  * SUN_COLOR_BASE  * stepW;
         dbgMS     += sunFade  * (psi_ms_sun * sigma_s * phaseIsotropic)      * SUN_COLOR_BASE  * stepW;
         dbgSunT   += sunT * stepW;   // raw transmittance (un-faded), diagnostic only
-        dbgMoon   += moonFade * (moonT * phaseScatterMoon + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE * stepW;
+        dbgMoon   += moonFade * (moonT * phaseScatterMoon * moonViewBelt + psi_ms_moon * sigma_s * phaseIsotropic) * MOON_COLOR_BASE * stepW;
 #endif
 
         trans   *= stepT;

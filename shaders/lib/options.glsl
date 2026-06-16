@@ -36,7 +36,7 @@ const float renderScale = RENDER_SCALE;
 //#define FAKE_SSS  // WIP
 #define SCATTER_AMOUNT 2.0; // [1.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5 5.0]
 
-//#define VOLUMETRIC_LIGHT
+#define VOLUMETRIC_LIGHT
 #define VL_STEPS 3 // [2 3 4 6 8 12 16 20 24 32 48] dithered raymarch steps for atmospheric god rays (3 looks fine with TAA)
 #define VL_INTENSITY 5.0 // [0.1 0.25 0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0] brightness of the in-scattered sun term
 #define VL_NOON_STRENGTH 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.2 1.4 1.6 1.8 2.0] Volumetric light multiplier at noon.
@@ -59,6 +59,14 @@ const float renderScale = RENDER_SCALE;
 
 #define BELT_OF_VENUS
 #define BELT_SHADOW_SOFTNESS 0.06 // [0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.14 0.20] angular half-width of Earth's shadow penumbra (sun cosine units). Smaller = crisper belt (more banding risk); larger = softer/washed out.
+// Earth's shadow in VIEW space: once the sun is low, the forward Mie phase peaks
+// toward the (below-horizon) sun, so the warm DIRECT sun/moon glow pools BELOW the
+// horizon line and renders as a misaligned warm band under the horizon. This
+// anchors the direct (warm) glow to the horizon so it hugs the horizon line.
+// Multi-scatter is left alone, so the sub-horizon limb still glows softly. Only
+// active near/below the horizon while the sun is low; the above-horizon belt
+// detail (the per-sample eShadow gradient) is untouched. 0 = old behavior.
+#define BELT_VIEW_SHADOW 1.0 // [0.0 0.25 0.5 0.75 1.0] strength of the view-space horizon anchor on the direct warm glow.
 
 #define SUN_ILLUMINANCE 10.0  // [1.0 2.5 5.0 7.5 10.0 12.5 15.0 20.0] Sun light intensity multiplier for atmospheric scattering
 #define MOON_ILLUMINANCE 0.02 // [0.005 0.01 0.02 0.04 0.06 0.08 0.10] Moon light intensity multiplier for atmospheric scattering
@@ -89,7 +97,7 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_WIND_SPEED 0.6          // [0.0 0.1 0.2 0.3 0.4 0.6 0.8 1.0 1.5 2.0 3.0] blocks the clouds travel per WORLD TICK (world-time driven; ~0.6 matches the old 12 m/s)
 #define CLOUDS_WIND_DIR_X 1.0         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction X
 #define CLOUDS_WIND_DIR_Z 0.3         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction Z
-//#define CLOUDS_SHADOW                
+#define CLOUDS_SHADOW                
 #define CLOUDS_SHADOW_STEPS 6         // [2 3 4 6 8 12]
 #define CLOUDS_SHADOW_EXTENT 2048.0   // [512.0 1024.0 1536.0 2048.0 3072.0 4096.0]
 #define CLOUDS_PRIMARY_STEPS 16       // [8 16 24 32 48 64 96]
@@ -181,8 +189,8 @@ const float renderScale = RENDER_SCALE;
 
 #define WATER_FOG
 //#define WATER_GODRAYS
-#define WATER_GODRAY_STEPS 2     // [4 6 8 10 12 16 20 24] dithered raymarch steps from camera to fragment
-#define WATER_GODRAY_STRENGTH 20.0 // [0.0 0.1 0.2 0.4 0.6 0.8 1.0 1.5 2.0] overall scatter intensity
+#define WATER_GODRAY_STEPS 3     // [4 6 8 10 12 16 20 24] dithered shadow-marched steps from camera to fragment
+#define WATER_GODRAY_STRENGTH 1.5 // [0.0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 3.0 4.0] overall sun-shaft intensity
 #define WATER_GODRAY_PHASE_G 0.7  // [0.0 0.3 0.5 0.7 0.8 0.9] Henyey-Greenstein asymmetry (forward-peak strength)
 
 #define WATER_CAUSTICS
@@ -236,7 +244,7 @@ const float renderScale = RENDER_SCALE;
 // terrain.glsl (polished/gem high = glossy; dirt/wood low = matte). This knob only
 // scales the SKY portion, so you can keep glossy surroundings while killing sky.
 #define PBR_DIELECTRIC_REFLECT 0.1 // [0.0 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] non-metal SKY reflection strength only (scene reflection is F0-driven per class)
-#define PBR_DIELECTRIC_SUN 5.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
+#define PBR_DIELECTRIC_SUN 1.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
 #define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
 #define REFLECTION_ACCUM_FRAMES 48 // [4 8 12 16 24 32 48] frames blended by the reflection temporal filter (higher = cleaner but more ghosting on motion)
 #define REFLECTION_FIREFLY_CLAMP 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] hard ceiling on a single reflected sample — backstop for pathological HDR spikes (1000 = off)
