@@ -119,10 +119,15 @@ void main() {
     vec4  c2 = texture(colortex2, uv * renderScale);      // .rg = lightmap, .b = flag, .a = packed glass colour
 
     float flag       = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
-    bool  isWater    = flag > 0.875;
-    bool  isGlass    = flag > 0.625 && flag <= 0.875;
-    bool  isClearIce = flag > 0.375 && flag <= 0.625;
-    bool  isSolidIce = flag > 0.125 && flag <= 0.375;
+    // Distant Horizons LOD pixels are vanilla-sky depth (d0 == 1.0). DH water also
+    // sets colortex2.b = 1.0, but it's already forward-shaded into colortex0 and
+    // handled by d7 — exclude it here so this near-field screen-space water path
+    // doesn't reprocess it with garbage (vanilla) depth.
+    bool  isNear     = d0 < 1.0;
+    bool  isWater    = isNear && flag > 0.875;
+    bool  isGlass    = isNear && flag > 0.625 && flag <= 0.875;
+    bool  isClearIce = isNear && flag > 0.375 && flag <= 0.625;
+    bool  isSolidIce = isNear && flag > 0.125 && flag <= 0.375;
     bool  isTranslucent = isGlass || isClearIce || isSolidIce;
     float skylight = clamp(c2.g, 0.0, 1.0); 
     float skyVis = max(skylight - WATER_SKYLIGHT_THRESHOLD, 0.0) / max(1.0 - WATER_SKYLIGHT_THRESHOLD, 0.001);

@@ -44,6 +44,8 @@ in vec3 ambientColor;
 in vec3 lightVector;
 
 
+#include "/lib/dh/dh.glsl"
+
 float depth0 = texture(depthtex0, texCoord * renderScale).r;
 float material = texelFetch(colortex1, ivec2(gl_FragCoord.xy), 0).a;
 vec3 normal = normalize(texture(colortex1, texCoord * renderScale).rgb * 2.0 - 1.0);
@@ -165,6 +167,68 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 #include "/lib/util/positions.glsl"
 #include "/lib/pt/ddaTrace.glsl"
 
+#ifdef DISTANT_HORIZONS
+// dhLighting.glsl provides dhSunShadow (the shadow-map term used below).
+#include "/lib/fragment/dhLighting.glsl"
+
+// Deferred shading for a Distant Horizons LOD terrain pixel. Reads the same
+// globals d7 already populated from colortex1/2 (normal, lightmap, material) —
+// those hold the DH g-buffer at DH pixels — and reconstructs view position from
+// the DH depth. Mirrors the near-scene lighting (direct sun + foliage SSS +
+// lightmap/sky ambient + emissive) but without voxel GI (DH is out of range) and
+// with a far screen-space shadow that marches the DH depth buffer.
+vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
+    vec3  worldNormal = normalize(mat3(gbufferModelViewInverse) * normal);
+    vec3  playerPos   = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
+    bool  foliage     = (material > 0.16 && material < 0.83);
+
+    float NdotL    = dot(normal, lightVector);
+    float diffuse  = foliage ? max(NdotL * 0.5 + 0.5, 0.0) : max(NdotL, 0.0);
+    // DH LODs are outdoors; if the LOD lightmap is missing/low, don't let the
+    // whole tile go black — floor the sky exposure so it still receives sun+sky.
+    float skyLight = max(lightmap.y, 0.35);
+    float skyOcc   = sqrt(skyLight);
+
+    vec3 shadow = dhSunShadow(playerPos, worldNormal, lightmap.y); // shadow map (near range)
+    #ifdef SCREENSPACE_SHADOWS
+        float dith = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
+        shadow *= dhScreenShadow(viewPos, lightVector, dith);       // far LOD self-shadowing
+    #endif
+
+    float cloudShadow = mix(1.0, sampleCloudShadow(playerPos + cameraPosition), 1.0 - rainStrength);
+    vec3  direct = diffuse * lightColor * shadow * cloudShadow * (1.0 - rainStrength * 0.75) * skyOcc;
+
+    if (foliage) {
+        float VdotL    = max(dot(normalize(-viewPos), lightVector), 0.0);
+        float sssPhase = pow(VdotL, 10.0) * 0.6;
+        float backface = clamp(1.0 - NdotL, 0.0, 1.0);
+        direct += lightColor * shadow * cloudShadow * sssPhase * backface
+                * (1.0 - rainStrength * 0.75) * lightmap.y * 2.5;
+    }
+
+    vec3 indirect = getLightmap(vec3(lightmap.x, skyLight, lightmap.z));
+
+    direct   *= float(LIGHTING_DIRECT)   / 100.0;
+    indirect *= float(LIGHTING_INDIRECT) / 100.0;
+
+    vec3 outColor = albedo * (direct + indirect);
+
+    #ifdef SPECIAL_BLOCKLIGHT
+    if (material > 0.83) {
+        float emission = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).a;
+        vec3  sunVec = normalize(sunPosition);
+        vec3  upVec  = normalize(upPosition);
+        float sunUp  = clamp(dot(sunVec, upVec), 0.0, 1.0);
+        float skyExposure = smoothstep(0.75, 0.9, lightmap.y);
+        float suppression = mix(1.0, 0.2, sunUp * skyExposure);
+        outColor += albedo * emission * float(EMISSIVE_BRIGHTNESS) * suppression;
+    }
+    #endif
+
+    return outColor;
+}
+#endif
+
 void main() {
     vec2 unjitteredTexCoord = texCoord;
     #ifdef TAA
@@ -173,6 +237,27 @@ void main() {
     clipSpace = vec3(unjitteredTexCoord, depth0) * 2.0 - 1.0;
 
     vec3 color = texture(colortex0, texCoord * renderScale).rgb;
+
+    #ifdef DISTANT_HORIZONS
+    // Distant Horizons LOD pixel (vanilla sky, DH geometry behind it). Route by
+    // the water flag dh_water writes into colortex2.b (robust — a depth compare
+    // between the two DH buffers flickered with precision and broke lighting).
+    if (isDhPixel(depth0, texCoord * renderScale)) {
+        gl_FragData[1] = vec4(0.0, 0.0, 0.0, 1.0); // pbrSunVis = 0 (no PBR on LODs)
+        float dhWaterFlag = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
+        if (dhWaterFlag > 0.5) {
+            // DH water is forward-shaded into colortex0 by dh_water — pass through
+            // (d8/d9 still apply atmosphere / volumetric light on top).
+            gl_FragData[0] = vec4(color, 1.0);
+        } else {
+            // DH opaque terrain: deferred-shade from the g-buffer (colortex0 here
+            // is the raw albedo dh_terrain wrote; it doubles as the albedo).
+            vec3 dhViewP = dhViewPos(unjitteredTexCoord, dhSampleDepth(texCoord * renderScale));
+            gl_FragData[0] = vec4(shadeDhTerrain(dhViewP, color), 1.0);
+        }
+        return;
+    }
+    #endif
 
     #ifdef SSPT_DEBUG
         if (depth0 < 1.0) {

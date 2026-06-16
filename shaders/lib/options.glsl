@@ -4,6 +4,15 @@
 #define RENDER_SCALE 0.67 // [0.33 0.5 0.59 0.67 0.77 1.0] ultra performance, performance, balanced, quality, ultra quality, native
 const float renderScale = RENDER_SCALE;
 
+// --- Distant Horizons --------------------------------------------------------
+// LOD terrain/water rendered by the Distant Horizons mod, beyond the vanilla
+// render distance. The dh_terrain/dh_water programs forward-light the LODs into
+// colortex0; the deferred chain (d7/d8) detects DH pixels via dhDepthTex0 and
+// applies atmosphere instead of overwriting them with sky. Enable only with the
+// DH mod installed (inert otherwise — DH depth reads 1.0 everywhere).
+#define DISTANT_HORIZONS
+#define DH_FOG // apply the atmospheric aerial perspective to DH LOD terrain/water
+
 // Upscaler / TAA reconstruction filter (lib/post/taa.glsl, runs in c0_taa).
 //   0 = TAA     : variance clamp, bilinear current. Softest & most temporally
 //                 stable, but the least sharp / least detail.

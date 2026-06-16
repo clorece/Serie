@@ -51,6 +51,7 @@ vec3 clipSpace;
 
 #include "/lib/util/positions.glsl"
 #include "/lib/fragment/atmosphereLUT.glsl"
+#include "/lib/dh/dh.glsl"
 
 
 void main() {
@@ -66,14 +67,34 @@ void main() {
     #endif
 
     float depth = texture(depthtex0, unjit * renderScale).r;
-    if (depth >= 1.0) {
+
+    // Distant Horizons: a vanilla-sky pixel with DH LOD behind it gets the SAME
+    // volumetric march as near terrain (d8 deliberately skips its flat fog for DH
+    // when VL is on). True sky still passes through — d8 already drew it.
+    vec3 fragPosition;
+    #ifdef DISTANT_HORIZONS
+    float dhd = (depth >= 1.0) ? dhSampleDepth(unjit * renderScale) : 1.0;
+    bool  dhGeom = (depth >= 1.0 && dhd < 1.0);
+    #else
+    bool  dhGeom = false;
+    #endif
+
+    if (depth >= 1.0 && !dhGeom) {
         // Sky pixel — d8's sampleSky() already handled it.
         gl_FragData[0] = vec4(sceneColor, 1.0);
         return;
     }
 
-    clipSpace = vec3(unjit, depth) * 2.0 - 1.0;
-    vec3  fragPosition = getFragPosition().xyz;
+    #ifdef DISTANT_HORIZONS
+    if (dhGeom) {
+        fragPosition = dhViewPos(unjit, dhd);
+    } else
+    #endif
+    {
+        clipSpace = vec3(unjit, depth) * 2.0 - 1.0;
+        fragPosition = getFragPosition().xyz;
+    }
+
     vec3  viewDir      = normalize(fragPosition);
     vec3  worldDir     = mat3(gbufferModelViewInverse) * viewDir;
     vec3  worldSunDir  = mat3(gbufferModelViewInverse) * sunVector;

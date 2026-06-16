@@ -4,6 +4,7 @@
 #include "/lib/options.glsl"
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
+#include "/lib/dh/dh.glsl"
 
 vec3 RGBtoYCoCg(vec3 c) {
     return vec3(
@@ -163,6 +164,23 @@ vec2 getPreviousUV(vec2 uv, vec2 screenSize, out vec3 velocityPixels) {
     float depth0 = getClosestDepth(sampleCoord, screenSize);
 
     if (depth0 >= 1.0) {
+        #ifdef DISTANT_HORIZONS
+        // Distant Horizons LOD geometry sits at vanilla depth 1.0 but is real,
+        // finite-distance geometry — reproject it WITH camera translation (using
+        // the DH projection), not the rotation-only sky path, or it smears badly
+        // when the camera moves.
+        float dhd = texture(dhDepthTex0, sampleCoord).r;
+        if (dhd < 1.0) {
+            vec3 viewPos  = dhViewPos(uv, dhd);
+            vec3 worldPos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
+            vec3 prevWorld = worldPos + (cameraPosition - previousCameraPosition);
+            vec4 prevClip  = dhPreviousProjection * (gbufferPreviousModelView * vec4(prevWorld, 1.0));
+            vec2 prevUV    = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
+            velocityPixels = vec3((uv - prevUV) * screenSize, 0.0);
+            return prevUV;
+        }
+        #endif
+
         vec4 viewH    = gbufferProjectionInverse * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
         vec3 viewDir  = viewH.xyz / viewH.w;
         vec3 worldDir = mat3(gbufferModelViewInverse) * viewDir;
@@ -231,6 +249,11 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
 
     bool isWater = textureLod(colortex2, cuv, 0.0).b > 0.5;
     bool isSky   = textureLod(depthtex0, cuv, 0.0).r >= 1.0;
+    #ifdef DISTANT_HORIZONS
+        // DH LODs are vanilla-sky depth but real geometry — don't give them the
+        // sky's sticky 0.97 blend / loose clamp, or moving the camera smears them.
+        if (isSky && textureLod(dhDepthTex0, cuv, 0.0).r < 1.0) isSky = false;
+    #endif
 
     float aggression = (isWater || isSky) ? 3.0 : 1.0;
 

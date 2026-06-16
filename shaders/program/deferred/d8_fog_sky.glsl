@@ -49,6 +49,8 @@ in vec3 moonVector;
 
 float depth0 = texture(depthtex0, texCoord * renderScale).x;
 
+#include "/lib/dh/dh.glsl"
+
 vec3 clipSpace;
 
 #include "/lib/util/positions.glsl"
@@ -77,7 +79,16 @@ void main() {
 
     float dist = length(fragPosition);
 
-    if (depth0 == 1.0) {
+    // Distant Horizons: a vanilla-sky pixel that has DH LOD geometry behind it is
+    // NOT sky — dh_terrain/dh_water already shaded it into colortex0. Treat it as
+    // distant geometry (aerial perspective) instead of overwriting it with sky.
+    bool isDH = false;
+    #ifdef DISTANT_HORIZONS
+    float dhDepth = dhSampleDepth(texCoord * renderScale);
+    isDH = isDhPixel(depth0, texCoord * renderScale);
+    #endif
+
+    if (depth0 == 1.0 && !isDH) {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
 
         #if defined CLOUDS || defined CLOUDS_ALTO
@@ -120,6 +131,23 @@ void main() {
         #endif
         #endif
     }
+    #ifdef DISTANT_HORIZONS
+    else if (isDH) {
+        // Flat aerial perspective for DH LODs — but ONLY when volumetric light is
+        // off. When VL is on, d9_vl marches these pixels too (using the DH depth)
+        // so they get the same shadowed god-ray fog as the near scene; applying
+        // both here and there would double the scattering.
+        #if defined(DH_FOG) && !defined(VOLUMETRIC_LIGHT)
+        vec3  dhViewP    = dhViewPos(unjitteredTexCoord, dhDepth);
+        float dhDist     = length(dhViewP);
+        vec3  dhWorldDir = mat3(gbufferModelViewInverse) * normalize(dhViewP);
+
+        AerialPerspective ap = computeAerialPerspective(
+            dhWorldDir, worldSunDir, worldMoonDir, eyeAltitude, dhDist);
+        color = color * ap.transmittance + ap.scatter;
+        #endif
+    }
+    #endif
     #ifndef VOLUMETRIC_LIGHT
     else {
 
