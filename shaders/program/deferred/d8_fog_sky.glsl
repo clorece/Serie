@@ -80,24 +80,44 @@ void main() {
     if (depth0 == 1.0) {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
 
-        #ifdef CLOUDS
+        #if defined CLOUDS || defined CLOUDS_ALTO
 
         float cloudMidAlt = (CLOUDS_LAYER_BOTTOM + CLOUDS_LAYER_TOP) * 0.5;
         vec3  ambient     = getSkyAmbient(cloudMidAlt);
 
         TimeState t = getTimeState();
         vec3  lightDir = t.activeLightDir;
-        
+
         vec3 exoSun  = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
         vec3 exoMoon = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE * 10.0;
-        
-        // We must NOT use t.shadowFade here, because shadowFade returns to 1.0 at night 
+
+        // We must NOT use t.shadowFade here, because shadowFade returns to 1.0 at night
         // to render moon shadows. We need a simple day/night mix factor.
         float isDay = smoothstep(-0.1, 0.1, t.sunUp);
         vec3 lightCol = mix(exoMoon, exoSun, isDay) * 1.5;
 
-        vec4 cloud = raymarchClouds(cameraPosition, worldDir, lightDir, lightCol, ambient);
-        color = color * cloud.a + cloud.rgb;
+        // Cumulus is the dominant FRONT layer; altocumulus is the high backdrop.
+        // Compose sky → altocumulus → cumulus, but GATE the altocumulus by the
+        // cumulus's raw (un-AP-inflated) opacity so opaque cumulus bodies fully
+        // hide it — otherwise the AP-softened cumulus alpha let the bright alto
+        // bleed through even solid cores.
+        float cloudOcc = 1.0;   // 1 = no cumulus here, 0 = opaque cumulus here
+        #ifdef CLOUDS
+        vec4 cloud = raymarchClouds(cameraPosition, worldDir, lightDir, lightCol, ambient, cloudOcc);
+        #endif
+
+        #ifdef CLOUDS_ALTO
+        // `color` here is still the clear sky (cumulus composites after this), so
+        // it doubles as the aerial-perspective haze target for the high layer.
+        vec4 alto = altocumulus(cameraPosition, worldDir, lightDir, lightCol, ambient, color);
+        alto.rgb *= cloudOcc;                       // cumulus erases alto scattering
+        alto.a    = mix(1.0, alto.a, cloudOcc);     // …and stops it occluding the sky there
+        color = color * alto.a + alto.rgb;
+        #endif
+
+        #ifdef CLOUDS
+        color = color * cloud.a + cloud.rgb;        // cumulus over everything (AP alpha for sky blend)
+        #endif
         #endif
     }
     #ifndef VOLUMETRIC_LIGHT

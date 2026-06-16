@@ -110,6 +110,7 @@ void main() {
     vec3  Vt   = V * tbn; // view dir in tangent space
 
     vec3  reflection = vec3(0.0);
+    float reflWsum   = 0.0;
     uint  seed = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
 
     for (int s = 0; s < REFLECTION_RAYS; s++) {
@@ -146,19 +147,29 @@ void main() {
         }
         #endif
 
-        // Firefly clamp: a single ray hitting a very bright HDR pixel (sun glint,
-        // emissive) otherwise leaves a sparkle the denoiser can't average out.
+        // Hard ceiling: catches pathological HDR spikes (the sun disc in colortex5).
         radiance = min(radiance, vec3(REFLECTION_FIREFLY_CLAMP));
 
         // DEMODULATED: accumulate the environment reflection WITHOUT the metal
         // albedo tint (just the VNDF geometry weight). The per-texel albedo tint
         // (= the block texture) is re-applied sharp at composite, AFTER the temporal
         // + spatial denoise — so blurring the reflection never smears the texture.
+        // The weight = G2/G1 (height-correlated Smith), bounded <=1; F is the tint.
         float v1 = smithGGX_v1(NoV, alphaSq);
         float v2 = smithGGX_v2(NoL, NoV, alphaSq);
-        reflection += radiance * (2.0 * NoL * v2 / max(v1, 1e-6));
+        vec3  sampleRefl = radiance * (2.0 * NoL * v2 / max(v1, 1e-6));
+
+        // Karis firefly-free averaging: weight each ray by inverse luma so a single
+        // ray that catches a bright emissive texel (lava/torch/glowstone — these are
+        // pre-exposure amplified, so they spike hard) can't dominate the mean as a
+        // sparkle. Self-correcting: on smooth/coherent surfaces every ray hits the
+        // same thing → equal weights → no dimming of a legit bright reflection; only
+        // on rough surfaces, where rays diverge, is the lone outlier suppressed.
+        float w = 1.0 / (1.0 + dot(sampleRefl, vec3(0.2126, 0.7152, 0.0722)) * REFLECTION_FIREFLY_WEIGHT);
+        reflection += sampleRefl * w;
+        reflWsum   += w;
     }
-    reflection /= float(REFLECTION_RAYS);
+    reflection /= max(reflWsum, 1e-6);
     if (any(isnan(reflection))) reflection = vec3(0.0);
 
     // --- Temporal accumulation (reflection denoise) ---------------------------

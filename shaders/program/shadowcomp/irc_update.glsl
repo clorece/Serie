@@ -59,7 +59,7 @@ void main() {
     vec3 gridOrigin = floor(camPos) - VOXEL_RADIUS_VEC;
     vec3 cellCenter = ircCellCenter(coord, camPos); // world-absolute
 
-    // Surface-shell cull (iterationRP's key IRC optimization). A cell's irradiance is
+    // Surface-shell cull (a key IRC optimization). A cell's irradiance is
     // only ever READ by a surface within ~1 block of it (reads push IRC_NORMAL_OFFSET
     // along the normal into the air). So only the thin 1-cell shell straddling each
     // surface is ever sampled; cells floating in open air far from geometry AND cells

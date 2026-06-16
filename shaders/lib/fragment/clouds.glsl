@@ -143,7 +143,13 @@ float cloudDensity(vec3 worldPos, bool cheapMode) {
     float coverage = clamp(CLOUDS_COVERAGE * 2.0 * weather, 0.0, 1.0);
     if (coverage <= 1e-3) return 0.0;
 
-    float density = base.r * cloudHeightProfile(h01);
+    // Puffiness: blend the perlin-worley shape (.r, cauliflower) toward an
+    // inverted-worley cell profile (1 - .g) — the same rounded-blob basis the
+    // altocumulus layer uses. Reuses base.g (already fetched, no extra tap), and
+    // since base.g doubles as the erosion channel below it reinforces the cells
+    // (low g = round core kept, high g = edge eroded) → puffier, rounder lumps.
+    float shape = mix(base.r, 1.0 - base.g, CLOUDS_PUFFINESS);
+    float density = shape * cloudHeightProfile(h01);
     // NUBIS carve, normalized so density stays in [0,1] without coverage→0
     // collapsing the shape.
     density = clamp((density - (1.0 - coverage)) / max(coverage, 1e-3), 0.0, 1.0);
@@ -173,7 +179,8 @@ float cloudDensity(vec3 worldPos, bool cheapMode) {
         float boilS = detailC.a * 2.0 - 1.0;
         // Distortion grows with altitude — bases stay calm, tops swirl.
         // Reduced curl magnitude from 40.0 to 12.0 so tops stay bubbly rather than shredded.
-        float curlMag = 12.0 * (0.1 + 0.9 * h01 * h01);
+        // Puffiness eases it further so the rounded blobs aren't swirled apart.
+        float curlMag = 12.0 * (0.1 + 0.9 * h01 * h01) * (1.0 - 0.5 * CLOUDS_PUFFINESS);
         vec3 distortedPos = detailPos
                           + vec3(windPerp.x, 0.0, windPerp.y) * (curlS * curlMag)
                           + vec3(0.0, boilS * 12.0, 0.0);
@@ -184,7 +191,7 @@ float cloudDensity(vec3 worldPos, bool cheapMode) {
         // Wisp erosion: blend mid-freq (.g) at the base to sharp (.b) at the
         // top so the silhouette gets sharper as you climb the tower.
         float wisp        = mix(detail.g, detail.b, smoothstep(0.2, 0.9, h01));
-        float wispErode   = wisp * wisp * mix(0.45, 0.90, h01);
+        float wispErode   = wisp * wisp * mix(0.45, 0.90, h01) * (1.0 - 0.4 * CLOUDS_PUFFINESS);
         density = remap01(density, wispErode, 1.0);
     }
 
@@ -336,7 +343,12 @@ float _cloudLightOD(vec3 pos, vec3 sunDir) {
 //   `ambient`        = sky-ambient color from getSkyAmbient(cloudMidAlt).
 // Returns: (scatter.rgb, transmittance.alpha). Compose into the sky pixel as
 //   `finalSky = skyColor * cloud.a + cloud.rgb`.
-vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 ambient) {
+vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 ambient, out float occlusionTrans) {
+    // Raw cloud transmittance (post early-out remap, BEFORE the aerial-perspective
+    // wrap). The returned alpha is AP-inflated for sky blending, so it never quite
+    // reaches 0 even in opaque cores; this un-inflated value DOES, and is what the
+    // compositor uses to fully occlude the altocumulus behind the cumulus.
+    occlusionTrans = 1.0;
 #if CLOUDS_DEBUG == 3
     // Sanity-check: sample the base noise at the cloud-layer midpoint above the
     // camera. If the texture isn't loaded, this returns 0 everywhere (black sky).
@@ -563,6 +575,9 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     trans = (trans - CLOUDS_MIN_TRANSMITTANCE) / max(1.0 - CLOUDS_MIN_TRANSMITTANCE, 1e-6);
     trans = clamp(trans, 0.0, 1.0);
 
+    // Un-inflated opacity for inter-layer occlusion (reaches 0 in opaque cores).
+    occlusionTrans = trans;
+
     // Aerial-perspective wrap. Atmospheric transmittance dims the scattering
     // and expands the silhouette so distant cumulus dissolves into the sky.
     // (originPC / rOrig already computed for the shell intersection above.)
@@ -591,5 +606,254 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
 
     return vec4(scatter, trans);
 }
+
+
+// =============================================================================
+// ALTOCUMULUS — 2nd layer: thin VOLUMETRIC "mackerel sky"
+// =============================================================================
+//
+// A thin volumetric shell above the cumulus deck. Modelled with a
+// altocumulus: 3D-noise base shape + `remap01` coverage merging + an egg-shape
+// altitude profile so the small cellular elements have real body (the flat 2D
+// version read as isolated speckles). Lighting reuses the cumulus path (T-LUT
+// sun tint, cloudPhase silver lining, sky ambient, physical AP) so both layers
+// read as one coherent sky.
+
+#ifdef CLOUDS_ALTO
+
+const float CLOUDS_ALTO_R_BOTTOM = PLANET_RADIUS + CLOUDS_ALTO_ALTITUDE;
+const float CLOUDS_ALTO_R_TOP    = CLOUDS_ALTO_R_BOTTOM + CLOUDS_ALTO_THICKNESS;
+// ~1.7 km shape tile. The baked worley packs several cells per tile, so the
+// visible elements land around a few hundred metres — small mackerel puffs.
+const float CLOUDS_ALTO_SHAPE_SCALE = 0.00060 * CLOUDS_ALTO_SCALE;
+
+// Egg-shape altitude profile: carve the top, flatten the base,
+// so the layer reads as rounded lumps rather than a uniform slab.
+float altoAltitudeShaping(float density, float h01) {
+    density -= smoothstep(0.2, 1.0, h01) * 0.6;   // carve the dome top
+    density *= smoothstep(0.0, 0.2, h01);         // crisp flat base
+    return density;
+}
+
+// Volumetric altocumulus density at a world position. `cheapMode` skips the 3D
+// detail erosion (used by the self-shadow cone-march).
+float altoDensity(vec3 worldPos, bool cheapMode) {
+    float r = length(vec3(worldPos.x, worldPos.y + PLANET_RADIUS, worldPos.z));
+    if (r < CLOUDS_ALTO_R_BOTTOM || r > CLOUDS_ALTO_R_TOP) return 0.0;
+    float h01 = clamp((r - CLOUDS_ALTO_R_BOTTOM) / CLOUDS_ALTO_THICKNESS, 0.0, 1.0);
+
+    vec3 p = worldPos + cloudWindOffset(CLOUDS_ALTO_WIND_SPEED);
+    vec2 q = p.xz * CLOUDS_ALTO_SHAPE_SCALE;   // horizontal coord for the large-scale maps
+
+    // (a) Large-scale CLOUD MAP — broad dense patches and clear holes so the
+    // layer reads as weather, not a uniform tiled fill. Two low-freq octaves of
+    // the perlin coverage channel.
+    float weather = textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.05, 0.70)), 0.0).a
+                  + 0.5 * textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.13 + 0.37, 0.20)), 0.0).a;
+    weather /= 1.5;
+    // CLOUDS_ALTO_MAP_COVERAGE drives how much sky the map fills: it slides the
+    // patch/hole threshold (high coverage → low threshold → more weather passes →
+    // near-overcast; low coverage → isolated patches in lots of clear sky). The
+    // 0.20 transition width keeps the boundary discrete rather than a mushy
+    // gradient — this map alone, NOT the wave, governs the large-scale placement.
+    float mapThr = mix(0.80, 0.10, clamp(CLOUDS_ALTO_MAP_COVERAGE, 0.0, 1.0));
+    float covMap = smoothstep(mapThr, mapThr + 0.20, weather);   // carve the clear holes
+    if (covMap <= 1e-3) return 0.0;
+
+    // (b) UNDULATUS billows — only RIB/align the puffs into wavy parallel rows
+    // within the covered regions; it must not carve big empty bands (that made
+    // the macro structure itself look wave-shaped). High floor = a gentle
+    // density ripple, not a clear/cloud switch. Roll axis ⟂ wind; a low-freq
+    // noise warps the phase so the rows undulate instead of running straight.
+    vec2  wdir  = normalize(vec2(CLOUDS_WIND_DIR_X, CLOUDS_WIND_DIR_Z) + 1e-4);
+    vec2  perp  = vec2(-wdir.y, wdir.x);
+    float warp  = textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.18, 0.55)), 0.0).a * 2.0 - 1.0;
+    float phase = dot(p.xz, perp) * (CLOUDS_ALTO_SHAPE_SCALE * CLOUDS_ALTO_WAVE_SCALE) + warp * 2.4;
+    float wave  = 0.5 + 0.5 * sin(phase);
+    float waveMul = mix(1.0, mix(0.62, 1.0, wave), CLOUDS_ALTO_WAVE);
+
+    // (c) Local fine coverage variation, then fold the three together.
+    float covNoise  = textureLod(cloudNoiseBase, wrapUV(vec3(q, 0.31)), 0.0).a;
+    float coverage  = clamp(CLOUDS_ALTO_COVERAGE * covMap * waveMul * mix(0.75, 1.25, covNoise),
+                            0.0, 1.0);
+    if (coverage <= 1e-3) return 0.0;
+
+    // (d) DOMAIN WARP — the ~1.7 km worley tile would otherwise repeat visibly
+    // across the sky. A spatially-varying 2-channel offset (sampled from the
+    // perlin .a channel at a different scale than the worley, so it's
+    // decorrelated) displaces the lookup, distorting the cell grid differently
+    // everywhere → the repetition is no longer perceptible. Two octaves: a broad
+    // swirl + a finer jitter so neighbouring cells are also individually shoved.
+    vec2 warpLo = vec2(
+        textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.45 + 0.21, 0.33)), 0.0).a,
+        textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.45 + 0.71, 0.66)), 0.0).a) * 2.0 - 1.0;
+    vec2 warpHi = vec2(
+        textureLod(cloudNoiseBase, wrapUV(vec3(q * 1.30 + 0.05, 0.12)), 0.0).a,
+        textureLod(cloudNoiseBase, wrapUV(vec3(q * 1.30 + 0.93, 0.88)), 0.0).a) * 2.0 - 1.0;
+    vec2 warpUV = (warpLo + 0.5 * warpHi) * CLOUDS_ALTO_WARP;
+
+    // Cellular shape (worley erode .g, inverted) → rounded cell cores. remap01
+    // against (1-coverage) merges neighbours into blobs instead of dots.
+    vec3 shapeCoord = p * CLOUDS_ALTO_SHAPE_SCALE;  shapeCoord.xz += warpUV;
+    float shape   = 1.0 - textureLod(cloudNoiseBase, wrapUV(shapeCoord), 0.0).g;
+    float density = remap01(shape, (1.0 - coverage) * (1.0 - coverage), 1.0);
+    if (density <= 0.0) return 0.0;
+
+    if (!cheapMode) {
+        // 3D worley detail (sharp-wisp .b) granulates the puffs into the
+        // characteristic mackerel speckle — but subtractively, so it nibbles
+        // edges rather than punching holes through cores. Warp it too (×4, to
+        // match the ×4 frequency) so the grain follows the same distortion.
+        vec3 detCoord = p * (CLOUDS_ALTO_SHAPE_SCALE * 4.0);  detCoord.xz += warpUV * 4.0;
+        float det = textureLod(cloudNoiseBase, wrapUV(detCoord), 0.0).b;
+        density -= det * det * (0.30 * CLOUDS_ALTO_DETAIL) * (1.0 - density);
+    }
+
+    density = altoAltitudeShaping(density, h01);
+    density = max(density, 0.0);
+    if (density <= 0.0) return 0.0;
+
+    // Edge sharpening: wispy bottoms, harder tops.
+    density  = lift(density, mix(0.05, 0.30, h01));
+    density *= 0.2 + 0.8 * smoothstep(0.15, 0.7, h01);
+
+    return density * CLOUDS_ALTO_DENSITY;
+}
+
+// Sun cone-march self-shadow optical depth for the alto shell.
+float _altoLightOD(vec3 pos, vec3 sunDir) {
+    vec3 marchDir = normalize(vec3(sunDir.x, max(sunDir.y, 0.05), sunDir.z));
+    float stepLen = CLOUDS_ALTO_THICKNESS / float(CLOUDS_ALTO_LIGHT_STEPS) * 0.5;
+    const float growth = 1.6;
+    float od = 0.0;
+    for (int i = 0; i < CLOUDS_ALTO_LIGHT_STEPS; ++i) {
+        pos += marchDir * stepLen;
+        od  += altoDensity(pos, true) * stepLen;
+        stepLen *= growth;
+    }
+    return od;
+}
+
+// Thin-shell volumetric raymarch. Same (scatter.rgb, transmittance.a)
+// compositing contract as raymarchClouds: `sky = sky * alto.a + alto.rgb`.
+vec4 altocumulus(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 ambient, vec3 clearSky) {
+    vec3  originPC = vec3(origin.x, origin.y + PLANET_RADIUS, origin.z);
+    float rOrig    = length(originPC);
+
+    vec2 sBot = GetRaySphereIntersection(originPC, dir, CLOUDS_ALTO_R_BOTTOM);
+    vec2 sTop = GetRaySphereIntersection(originPC, dir, CLOUDS_ALTO_R_TOP);
+
+    // Camera below the shell (the normal case): enter at bottom far-exit, leave
+    // at top far-exit. (Above-shell viewing is rare; treat it as a backdrop.)
+    if (rOrig > CLOUDS_ALTO_R_TOP || sTop.y <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+    float tStart = max(sBot.y, 0.0);
+    float tEnd   = sTop.y;
+
+    // Planet occlusion (looking down through the limb shouldn't show the shell).
+    vec2 sPlanet = GetRaySphereIntersection(originPC, dir, PLANET_RADIUS);
+    if (sPlanet.x > 0.0) tEnd = min(tEnd, sPlanet.x);
+    if (tEnd <= tStart) return vec4(0.0, 0.0, 0.0, 1.0);
+
+    // Distance cap so near-horizon rays don't march forever through the limb.
+    const float maxRay = 60000.0;
+    tEnd = min(tEnd, tStart + maxRay);
+
+    // More steps near the horizon (long slanted path) than at zenith.
+    int steps = int(mix(float(CLOUDS_ALTO_PRIMARY_STEPS) * 2.0,
+                        float(CLOUDS_ALTO_PRIMARY_STEPS),
+                        smoothstep(0.0, 0.5, dir.y)));
+    steps = clamp(steps, 6, 64);
+    float dt = (tEnd - tStart) / float(steps);
+
+    float cosTheta = dot(dir, sunDir);
+    float phase    = cloudPhase(cosTheta);
+
+    float ignSpatial = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x
+                                              + 0.00583715 * gl_FragCoord.y));
+    float jitter     = fract(ignSpatial + 0.61803398875 * float(frameCounter));
+
+    vec3  scatter    = vec3(0.0);
+    float trans      = 1.0;
+    float distSum    = 0.0;
+    float distWeight = 0.0;
+
+    for (int i = 0; i < steps; ++i) {
+        float t = tStart + dt * (float(i) + jitter);
+        vec3  p = origin + dir * t;
+
+        float density = altoDensity(p, false);
+        if (density <= 0.0) continue;
+
+        float stepT = exp(-density * dt);
+
+        // Sun color at this sample — identical machinery to the cumulus loop,
+        // so altocumulus tints the same orange at sunrise/sunset.
+        vec3  pPC   = vec3(p.x, p.y + PLANET_RADIUS, p.z);
+        float r_p   = length(pPC);
+        float cosLZ = dot(pPC / max(r_p, 1.0), sunDir);
+        float planetShadow = 1.0;
+        if (cosLZ < 0.0) {
+            float d_min  = r_p * sqrt(max(1.0 - cosLZ * cosLZ, 0.0));
+            planetShadow = smoothstep(PLANET_RADIUS, PLANET_RADIUS + 1500.0, d_min);
+        }
+        vec3 sunHere = sunIlluminance * sampleTransmittanceLUT(cosLZ, r_p) * planetShadow;
+
+        // Self-shadow + Beer-Powder multi-scatter octaves (3 — the shell is thin
+        // so fewer than the cumulus's 6 is plenty).
+        float lightOD = _altoLightOD(p, sunDir);
+        vec3  direct  = vec3(0.0);
+        float a = 1.0, b = 1.0, c = 1.0;
+        for (int o = 0; o < 3; ++o) {
+            float beer_o   = exp(-lightOD * a);
+            float powder_o = 1.0 - exp(-lightOD * a * 2.0);
+            float energy_o = beer_o * mix(2.0 * powder_o, 1.0, beer_o);
+            float phase_o  = mix(0.25 / pi, phase, c);
+            direct += b * energy_o * phase_o * sunHere;
+            a *= 0.5; b *= 0.5; c *= 0.5;
+        }
+
+        // Ambient sky fill, dimmed inside thicker self-shadowed regions.
+        float lightLum    = clamp(dot(sunHere, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+        float effectiveOD = lightOD * max(lightLum, 0.25);
+        float ambientFac  = 0.7 * mix(1.0, 0.3, smoothstep(0.0, 3.0, effectiveOD));
+        vec3  inscatter   = direct + ambient * ambientFac;
+
+        scatter += trans * inscatter * (1.0 - stepT);
+        trans   *= stepT;
+
+        distSum    += t * density;
+        distWeight += density;
+
+        if (trans < 0.02) { trans = 0.0; break; }
+    }
+
+    if (distWeight <= 0.0) return vec4(0.0, 0.0, 0.0, 1.0);
+
+    // Aerial perspective — same midpoint-density Riemann sum the cumulus uses,
+    // so the layer dissolves into horizon haze instead of ending at a hard line.
+    float distToCloud = distSum / distWeight;
+    vec3  midPosPC    = originPC + dir * (distToCloud * 0.1);
+    float midR        = length(midPosPC * 0.9995);
+    vec3  extinction  = COEFF_ATTENUATION * GetAtmosphereDensity(midR);
+    float effAirT     = dot(exp(-extinction * distToCloud), vec3(0.2126, 0.7152, 0.0722));
+
+    scatter *= effAirT;
+    trans    = 1.0 - effAirT * (1.0 - trans);
+
+    // Altitude/distance haze — the air column between viewer and this high layer
+    // scatters a sky-coloured veil over it, so it should recede toward the sky
+    // (lower contrast) more than the crisp, nearer cumulus. Wash the premultiplied
+    // scatter toward sky·coverage; at full haze the layer becomes the sky.
+    // SQUARED falloff: a linear ramp built up too early (fog felt too close), so
+    // square it to keep near clouds crisp and only haze the genuinely distant
+    // ones. CLOUDS_ALTO_SKY_BLEND scales overall strength.
+    float distFade = 1.0 - effAirT;
+    float haze = clamp(distFade * distFade * CLOUDS_ALTO_SKY_BLEND, 0.0, 1.0);
+    scatter = mix(scatter, clearSky * (1.0 - trans), haze);
+
+    return vec4(scatter, trans);
+}
+
+#endif // CLOUDS_ALTO
 
 #endif

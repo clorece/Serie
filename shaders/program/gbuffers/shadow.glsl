@@ -67,9 +67,16 @@ void main() {
     // into the category byte (see lib/pt/voxelData.glsl shape enum)
     else if (eid >= 20001.0 && eid <= 20066.0) voxelBlockCategory = 4u + uint(round(eid - 20000.0));
     else if (blockEntityId >= 20001 && blockEntityId <= 20066) voxelBlockCategory = 4u + uint(blockEntityId - 20000);
+    // packed per-material shaped ids (30000 + materialClass*100 + shapeId): the SHAPE
+    // is the low 2 digits, so it voxelizes identically to the matching 20xxx shape;
+    // the high digits carry the PBR material (read in terrain.glsl, ignored here).
+    else if (eid >= 30101.0 && eid <= 31666.0) voxelBlockCategory = 4u + uint(round(mod(eid - 30000.0, 100.0)));
+    else if (blockEntityId >= 30101 && blockEntityId <= 31666) voxelBlockCategory = 4u + uint((blockEntityId - 30000) % 100);
     #else
     else if (eid >= 20001.0 && eid <= 20066.0) voxelBlockCategory = 0u; // shapes disabled -> excluded, like the old block.10002
     else if (blockEntityId >= 20001 && blockEntityId <= 20066) voxelBlockCategory = 0u;
+    else if (eid >= 30101.0 && eid <= 31666.0) voxelBlockCategory = 0u;
+    else if (blockEntityId >= 30101 && blockEntityId <= 31666) voxelBlockCategory = 0u;
     #endif
     else if (eid == 10002.0 || eid == 10004.0 || eid == 10005.0 || eid == 10006.0 || eid == 10007.0 || entityId == 10002 || blockEntityId == 10002) voxelBlockCategory = 0u; // excluded (entities, grass, flowers, transparents, water, etc.) -> VOXEL_AIR
     else if (eid >= 22001.0 && eid <= 22008.0) voxelBlockCategory = 0u; // integrated-PBR but voxel-EXCLUDED (rails/bars): reflective yet must not occlude GI

@@ -83,6 +83,7 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_HEIGHT_MULTIPLIER 0.35 // [0.1 0.15 0.2 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95 1.0 1.05 1.10 1.15 1.20 1.25 1.30 1.50 1.75 2.00] Multiplier for the cloud layer's vertical thickness
 #define CLOUDS_SIZE_MULTIPLIER 1.00    // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00 2.50 3.00 4.00 5.00] Size multiplier for both cloud base and detail shapes
 #define CLOUDS_DENSITY 0.03           // [0.01 0.02 0.03 0.05 0.08 0.12 0.18 0.25] cloud extinction coefficient (higher = denser/darker interiors)
+#define CLOUDS_PUFFINESS 0.2         // [0.0 0.2 0.3 0.4 0.5 0.6 0.8 1.0] rounds the cumulus toward the puffy worley-cell look of the altocumulus (0 = original cauliflower, 1 = fully rounded blobs)
 #define CLOUDS_LAYER_BOTTOM 1500.0    // [600.0 900.0 1200.0 1500.0 1800.0 2400.0 3000.0] cumulus base altitude (m above planet surface)
 #define CLOUDS_LAYER_TOP    5400.0    // [2400.0 3000.0 3600.0 4500.0 5400.0 6400.0 7500.0] cumulus top altitude (m above planet surface)
 #define CLOUDS_WIND_SPEED 12.0         // [0.0 1.0 2.0 4.0 6.0 9.0 12.0 18.0 25.0] m/s — cloud advection speed
@@ -97,6 +98,28 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_MAX_DISTANCE 16000.0   // [4000.0 8000.0 12000.0 16000.0 24000.0 32000.0]
 #define CLOUDS_MIN_TRANSMITTANCE 0.01 // [0.001 0.005 0.01 0.02 0.05] early-out when accumulated transmittance falls below this
 #define CLOUDS_DEBUG 0
+
+// ── Altocumulus (2nd layer: thin VOLUMETRIC "mackerel sky") ──────────────────
+// A thin volumetric shell ABOVE the cumulus deck, raymarched like the cumulus
+// but with an egg-shape altitude profile so the small cellular
+// elements have real body instead of reading as flat speckles. Cheap: thin
+// shell = few steps. Shares the cumulus lighting/AP path so it tints the same
+// at sunrise/sunset and dissolves into horizon haze.
+#define CLOUDS_ALTO
+#define CLOUDS_ALTO_ALTITUDE 2000.0   // [2000.0 3000.0 4000.0 5000.0 6000.0 6200.0 7000.0 8000.0 9000.0] shell base altitude (m above surface). The cumulus layer always composites over (occludes) the altocumulus regardless of this.
+#define CLOUDS_ALTO_THICKNESS 200.0   // [200.0 300.0 400.0 500.0 700.0 1000.0] shell vertical thickness (m) — altocumulus is a thin layer
+#define CLOUDS_ALTO_MAP_COVERAGE 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.7 0.8 0.9 1.0] CLOUD MAP coverage — how much of the SKY the altocumulus fills (low = isolated patches in lots of clear sky, high = near-overcast). Macro placement.
+#define CLOUDS_ALTO_COVERAGE 0.90     // [0.20 0.30 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.80 0.90] density of cells WITHIN a covered patch (higher = puffs fill in, fewer blue gaps between them). Local fill, NOT sky coverage — see CLOUDS_ALTO_MAP_COVERAGE.
+#define CLOUDS_ALTO_SCALE 1.00        // [0.50 0.65 0.75 0.85 1.00 1.25 1.50 2.00] element size multiplier (smaller value = larger puffs)
+#define CLOUDS_ALTO_DENSITY 0.10      // [0.03 0.05 0.08 0.10 0.14 0.20 0.30] extinction coefficient (higher = denser/whiter)
+#define CLOUDS_ALTO_DETAIL 1.0        // [0.0 0.5 1.0 1.5 2.0] 3D-worley detail erosion that granulates the puffs
+#define CLOUDS_ALTO_WIND_SPEED 1.0    // [0.0 0.2 0.4 0.5 0.8 1.0 1.5 2.0] drift speed multiplier (relative to cumulus wind, same direction)
+#define CLOUDS_ALTO_WAVE 0.6          // [0.0 0.2 0.4 0.6 0.8 1.0] undulatus billow strength — lines the puffs into wavy parallel rows (0 = uniform field)
+#define CLOUDS_ALTO_WAVE_SCALE 5.0    // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0 10.0] billow roll frequency (higher = tighter/closer rows)
+#define CLOUDS_ALTO_WARP 0.05         // [0.0 0.1 0.2 0.3 0.35 0.45 0.6 0.8] domain-warp strength — breaks up the repetitive cell tiling (0 = raw repeating worley)
+#define CLOUDS_ALTO_PRIMARY_STEPS 8  // [8 12 16 24 32] primary raymarch steps through the shell
+#define CLOUDS_ALTO_LIGHT_STEPS 4     // [2 3 4 6] sun cone-march steps for self-shadow
+#define CLOUDS_ALTO_SKY_BLEND 2.5     // [0.0 0.5 1.0 1.5 2.0 2.5 3.5 5.0 7.0] aerial-perspective: how strongly the high layer washes toward sky colour with distance (0 = crisp like the cumulus, higher = hazier/recedes more)
 
 #define TAA
 #define TAA_JITTER_SCALE 0.75 // [0.0 0.1 0.15 0.2 0.25 0.3 0.35 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 0.95 1.0]
@@ -213,7 +236,9 @@ const float renderScale = RENDER_SCALE;
 #define PBR_DIELECTRIC_SUN 5.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
 #define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
 #define REFLECTION_ACCUM_FRAMES 48 // [4 8 12 16 24 32 48] frames blended by the reflection temporal filter (higher = cleaner but more ghosting on motion)
-#define REFLECTION_FIREFLY_CLAMP 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] max brightness a single reflected sample may contribute — kills sparkly fireflies from bright HDR hits (1000 = off)
+#define REFLECTION_FIREFLY_CLAMP 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] hard ceiling on a single reflected sample — backstop for pathological HDR spikes (1000 = off)
+#define REFLECTION_FIREFLY_WEIGHT 1.0 // [0.0 0.25 0.5 1.0 2.0 4.0] Karis inverse-luma weight on the per-ray average — suppresses sparkly fireflies from reflected emissive blocklights (lava/torch). 0 = off (plain average); higher = darker but cleaner. Self-correcting: never dims smooth/coherent reflections
+#define REFLECTION_SPATIAL_FIREFLY 4.0 // [0.0 2.0 3.0 4.0 6.0 8.0] spatial denoise (d7c): reject a neighbour tap whose luma exceeds the center by this factor — stops the bilateral blur from SMEARING a surviving emissive spike into a streak. 0 = off
 #define REFLECTION_SPATIAL_RADIUS 14.0 // [0.0 6.0 8.0 10.0 14.0 18.0 24.0] max blur radius (px) of the spatial reflection denoise; scales UP when temporal history is low (in motion), so motion noise is blurred but converged pixels stay sharp
 
 //   0 = off   1 = smoothness   2 = metal albedo(F0)   3 = skyVis gate   4 = raw reflection
@@ -319,7 +344,7 @@ const float renderScale = RENDER_SCALE;
 #define GID_CLAMP_K 4.0            // [2.0 3.0 4.0 6.0 8.0 1000.0] firefly clamp width (xσ) for the current sample vs its planar neighbourhood, in LUMA space so chroma survives and only bright outliers are rescaled. Lower = stronger firefly kill but dims sparse light; 1000 = off.
 #define GID_SIGMA_L 4.0            // [1.0 2.0 3.0 4.0 6.0 8.0] luminance edge-stop strength of the a-trous filter. Lower = more blur (smoother, softer detail); higher = preserves detail but lets through more noise.
 #define GID_DISOCC_BOOST 8.0       // [0.0 2.0 4.0 8.0 16.0] extra blur for freshly disoccluded (low-history) pixels: loosens the luma edge-stop so newly revealed geometry blurs out fast instead of showing raw 1-spp.
-#define GID_ATROUS_RADIUS 1        // [1 2] half-width of the per-pass à-trous kernel. 1 = 3x3 (8 taps/pass, the fast default — the per-pass spatial variance loop was also removed, edge-stop now derived from history length à la iterationRP, so this is ~4x fewer denoiser taps than the old 5x5+variance). 2 = 5x5 (24 taps/pass, the old wider kernel) if 1 looks too noisy.
+#define GID_ATROUS_RADIUS 1        // [1 2] half-width of the per-pass à-trous kernel. 1 = 3x3 (8 taps/pass, the fast default — the per-pass spatial variance loop was also removed, edge-stop now derived from history length, so this is ~4x fewer denoiser taps than the old 5x5+variance). 2 = 5x5 (24 taps/pass, the old wider kernel) if 1 looks too noisy.
 #define GID_MOTION_TOLERANCE 1.0   // [0.5 1.0 1.5 2.0 3.0 4.0 6.0] how loose the temporal motion/disocclusion rejection is. Higher = history survives camera motion far more (much less motion noise) at the cost of some ghosting; lower = sharper/more responsive but noisier in motion. Was effectively ~0.2 before.
 #define GID_DEPTH_STRICTNESS 0.5   // [0.1 0.25 0.5 0.75 1.0 1.5 2.0] tightness of the SPATIAL à-trous depth edge-stop. Lower = looser: GI blurs more freely across depth so the filter denoises harder (smoother), at the risk of bleeding across depth edges; higher = preserves depth edges but keeps more noise. Lower this if the spatial filter rejects neighbours too aggressively.
 #define GID_LUMA_FLOOR 0.02        // [0.005 0.01 0.02 0.04 0.08 0.15] dark cutoff for the SCALE-INVARIANT luma edge-stop. The luma weight compares neighbours RELATIVE to local brightness (so dark interiors filter as hard as lit surfaces — fixes low-light "boiling"); below this brightness the relative metric is clamped so near-black noise is just blurred away instead of treated as detail. Raise if dark areas still boil; lower if dark GI detail washes out.

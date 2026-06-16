@@ -48,7 +48,7 @@ vec4 giSpatialFilter() {
 
     // --- History-driven luminance edge-stop --------------------------------------
     // The old code estimated a per-pass spatial 3x3 variance (9 extra taps/pass) just
-    // to set this tolerance. iterationRP derives the same thing straight from history
+    // to set this tolerance. We derive the same thing straight from history
     // length, which is ~9 taps/pass cheaper: a low-history (noisy / freshly-disoccluded)
     // pixel filters LOOSE so the wavelet blurs its 1-spp noise wide (this is what
     // GID_DISOCC_BOOST now scales), and a converged pixel filters TIGHT to keep detail.

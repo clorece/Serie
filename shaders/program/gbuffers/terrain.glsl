@@ -55,16 +55,15 @@ void main() {
         // so leaves/grass get a faint sheen instead of being fully flat. Special-
         // cased here (not dual-listed) exactly like grass_block.
         else if (mc_Entity.x == 10000.0 || mc_Entity.x == 10005.0) pbrClass = 14.0;
-        // Shaped sub-blocks (stairs/slabs/walls/fences/trapdoors/etc.) spend their
-        // mc_Entity on the voxel SHAPE id (20000+shapeId, shared across ALL materials
-        // of that shape — block.20043 is oak/stone/copper stairs alike), so the shader
-        // can't tell wood from stone from copper. Photon/Allium give every stair its
-        // MATERIAL id by name because they don't voxelize sub-block shapes; SerieVX
-        // can't, so the whole range gets ONE generic rough-dielectric class (12). They
-        // reflect at all now, differentiated per-texel by texture brightness + the
-        // auto-normals. KNOWN GAP: metal shapes (anvil/hopper/cauldron/chain) read as
-        // matte and glossy quartz/polished shapes are under-glossy — true per-material
-        // accuracy here needs labPBR (texture-driven specular), the roadmap NEXT step.
+        // Packed shaped-block ids (30000 + materialClass*100 + shapeId): the voxel
+        // SHAPE comes from the low 2 digits (shadow.glsl), the MATERIAL from the high
+        // digits. So stairs/slabs/walls/fences/etc. get their REAL per-material class
+        // (copper stairs read metal, quartz glossy, blackstone dark, wood matte) while
+        // still voxelizing as their sub-block shape. block.properties is generated so
+        // each (shape x material) pair owns a distinct id. See the header ID map.
+        else if (mc_Entity.x >= 30101.0 && mc_Entity.x <= 31666.0) pbrClass = floor((mc_Entity.x - 30000.0) / 100.0);
+        // Leftover shaped blocks with no clean material (snow/cake/candles/pots/...)
+        // stay on the 20xxx shape ids -> one generic rough-dielectric class.
         else if (mc_Entity.x >= 20001.0 && mc_Entity.x <= 20066.0) pbrClass = 12.0;
     #endif
 

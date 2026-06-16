@@ -172,7 +172,7 @@ void main() {
 
         if (maxWeight > 0.01) {
             
-            // Frametime-adaptive accumulation cap (ported from iterationRP). The cap is
+            // Frametime-adaptive accumulation cap. The cap is
             // a frame COUNT, but what we actually want is a fixed real-TIME integration
             // window. At high FPS each frame is a smaller time-slice, so allow more frames
             // (up to 3x) to reach the same wall-clock smoothing; at low FPS stay at the

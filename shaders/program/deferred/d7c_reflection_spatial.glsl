@@ -102,6 +102,7 @@ void main() {
 
     vec3  sum  = centerRefl;
     float wsum = 1.0;
+    float centerLuma = dot(centerRefl, vec3(0.2126, 0.7152, 0.0722));
 
     const int TAPS = 12;
     for (int i = 0; i < TAPS; i++) {
@@ -115,6 +116,13 @@ void main() {
         float sd = texture(depthtex0, suv * renderScale).r;
         if (sd >= 1.0) continue;
 
+        vec3  sRefl = texture(colortex4, suv * renderScale).rgb;
+        // Firefly-aware: don't let a much-brighter neighbour (an emissive spike that
+        // slipped into ct4 at that pixel) bleed in and smear into a streak.
+        // (REFLECTION_SPATIAL_FIREFLY is a compile constant; 0.0 folds this away.)
+        if (REFLECTION_SPATIAL_FIREFLY > 0.0 &&
+            dot(sRefl, vec3(0.2126, 0.7152, 0.0722)) > centerLuma * REFLECTION_SPATIAL_FIREFLY + 1e-3) continue;
+
         vec3  sN  = normalize(texture(colortex1, suv * renderScale).rgb * 2.0 - 1.0);
         vec3  sVP = convertScreenSpaceToWorldSpace(suv, sd);
 
@@ -122,7 +130,7 @@ void main() {
         float wD = exp(-abs(sVP.z - viewPos.z) * 4.0);              // depth edge-stop
         float w  = wN * wD;
 
-        sum  += texture(colortex4, suv * renderScale).rgb * w;
+        sum  += sRefl * w;
         wsum += w;
     }
 
