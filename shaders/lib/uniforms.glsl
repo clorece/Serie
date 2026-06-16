@@ -14,6 +14,7 @@ uniform int entityId;
 uniform int frameCounter;
 uniform int isEyeInWater;
 uniform int worldTime;
+uniform int worldDay;
 
 uniform ivec2 eyeBrightnessSmooth;
 

@@ -24,6 +24,8 @@
 // consumer wrappers (d8 deferred + p1 prepare) already pull in
 // `lib/uniforms.glsl` first, which declares colortex12 that the LUT reads.
 #include "/lib/fragment/atmosphereLUT.glsl"
+// getTimeState — cloud reflection light setup
+#include "/lib/util/time.glsl"
 
 // 3D cloud noise samplers. Bound globally via `customTexture.cloudNoiseBase`
 // in shaders.properties. Iris only accepts custom GLSL uniform names under
@@ -70,11 +72,17 @@ float cloudHeightProfile(float h01) {
 }
 
 
-// World-space wind offset. CLOUDS_WIND_DIR_X/Z need not be normalized — the
+// World-space wind offset, driven by Minecraft WORLD TIME rather than
+// frameTimeCounter — so cloud positions track the in-game day/night clock and
+// are stable across reloads / pauses instead of drifting with real render time.
+// CLOUDS_WIND_SPEED is the distance (blocks) the clouds travel PER WORLD TICK;
+// speedMul scales it per layer. worldTicks is a continuous count across days
+// (worldDay·24000 + worldTime). CLOUDS_WIND_DIR_X/Z need not be normalized — the
 // vector magnitude just multiplies into the speed.
 vec3 cloudWindOffset(float speedMul) {
+    float worldTicks = float(worldDay) * 24000.0 + float(worldTime);
     return vec3(CLOUDS_WIND_DIR_X, 0.0, CLOUDS_WIND_DIR_Z)
-         * (CLOUDS_WIND_SPEED * speedMul * frameTimeCounter);
+         * (CLOUDS_WIND_SPEED * speedMul * worldTicks);
 }
 
 
@@ -343,7 +351,7 @@ float _cloudLightOD(vec3 pos, vec3 sunDir) {
 //   `ambient`        = sky-ambient color from getSkyAmbient(cloudMidAlt).
 // Returns: (scatter.rgb, transmittance.alpha). Compose into the sky pixel as
 //   `finalSky = skyColor * cloud.a + cloud.rgb`.
-vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 ambient, out float occlusionTrans) {
+vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 ambient, out float occlusionTrans, int primarySteps) {
     // Raw cloud transmittance (post early-out remap, BEFORE the aerial-perspective
     // wrap). The returned alpha is AP-inflated for sky blending, so it never quite
     // reaches 0 even in opaque cores; this un-inflated value DOES, and is what the
@@ -415,10 +423,10 @@ vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec
     tEnd = min(tEnd, tStart + effectiveMax);
 
     // More steps near horizon (long path through layer) than zenith (short path).
-    int steps = int(mix(float(CLOUDS_PRIMARY_STEPS) * 2.0,
-                        float(CLOUDS_PRIMARY_STEPS),
+    int steps = int(mix(float(primarySteps) * 2.0,
+                        float(primarySteps),
                         smoothstep(0.0, 0.7, dir.y)));
-    steps = clamp(steps, 8, 128);
+    steps = clamp(steps, 4, 128);
 
     // Exponential step growth for primary raymarch.
     // Increases step size as distance from camera increases, improving performance
@@ -648,8 +656,9 @@ float altoDensity(vec3 worldPos, bool cheapMode) {
     // (a) Large-scale CLOUD MAP — broad dense patches and clear holes so the
     // layer reads as weather, not a uniform tiled fill. Two low-freq octaves of
     // the perlin coverage channel.
-    float weather = textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.05, 0.70)), 0.0).a
-                  + 0.5 * textureLod(cloudNoiseBase, wrapUV(vec3(q * 0.13 + 0.37, 0.20)), 0.0).a;
+    float mapFreq = 1.0 / max(CLOUDS_ALTO_MAP_SIZE, 1e-3);   // bigger size = lower freq = larger patches/holes
+    float weather = textureLod(cloudNoiseBase, wrapUV(vec3(q * (0.05 * mapFreq), 0.70)), 0.0).a
+                  + 0.5 * textureLod(cloudNoiseBase, wrapUV(vec3(q * (0.13 * mapFreq) + 0.37, 0.20)), 0.0).a;
     weather /= 1.5;
     // CLOUDS_ALTO_MAP_COVERAGE drives how much sky the map fills: it slides the
     // patch/hole threshold (high coverage → low threshold → more weather passes →
@@ -855,5 +864,64 @@ vec4 altocumulus(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance, vec3 a
 }
 
 #endif // CLOUDS_ALTO
+
+// Backward-compatible full-quality entry point used by the sky pass (d8).
+vec4 raymarchClouds(vec3 origin, vec3 dir, vec3 sunDir, vec3 sunIlluminance,
+                    vec3 ambient, out float occlusionTrans) {
+    return raymarchClouds(origin, dir, sunDir, sunIlluminance, ambient,
+                          occlusionTrans, CLOUDS_PRIMARY_STEPS);
+}
+
+// Low-step cloud reflection for water. Marches the same cumulus (+altocumulus)
+// volume along the reflected ray but with a reduced primary step count
+// (WATER_CLOUD_REFLECTION_STEPS). The reflection is Fresnel-dimmed and water-tinted,
+// and c_water runs BEFORE the c0_taa resolve, so — exactly like the primary sky
+// clouds, which carry no history of their own — the coarse march is cleaned up by
+// global TAA. `clearSky` is the atmosphere reflection the clouds composite over;
+// `rd` is the world-space reflected direction; `origin` is the camera world position
+// (cloud parallax between the surface and the camera is negligible at the deck altitude).
+vec3 cloudReflection(vec3 clearSky, vec3 origin, vec3 rd) {
+#if defined(CLOUDS) || defined(CLOUDS_ALTO)
+    // Only the upward hemisphere sees the deck; grazing/downward reflected rays keep
+    // the plain sky reflection (and avoid a wasted march below the cloud layer).
+    if (rd.y <= 0.02) return clearSky;
+
+    float cloudMidAlt = (CLOUDS_LAYER_BOTTOM + CLOUDS_LAYER_TOP) * 0.5;
+    vec3  ambient     = getSkyAmbient(cloudMidAlt);
+
+    TimeState t   = getTimeState();
+    vec3 lightDir = t.activeLightDir;
+
+    vec3  exoSun   = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
+    vec3  exoMoon  = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE * 10.0;
+    float isDay    = smoothstep(-0.1, 0.1, t.sunUp);
+    vec3  lightCol = mix(exoMoon, exoSun, isDay) * 1.5;
+
+    vec3  color    = clearSky;
+    float cloudOcc = 1.0;
+
+    // Same compose order as d8: cumulus first (sets cloudOcc), altocumulus gated by
+    // that occlusion, then cumulus over everything.
+    #ifdef CLOUDS
+    vec4 cloud = raymarchClouds(origin, rd, lightDir, lightCol, ambient, cloudOcc,
+                                WATER_CLOUD_REFLECTION_STEPS);
+    #endif
+
+    #ifdef CLOUDS_ALTO
+    vec4 alto = altocumulus(origin, rd, lightDir, lightCol, ambient, color);
+    alto.rgb *= cloudOcc;
+    alto.a    = mix(1.0, alto.a, cloudOcc);
+    color = color * alto.a + alto.rgb;
+    #endif
+
+    #ifdef CLOUDS
+    color = color * cloud.a + cloud.rgb;
+    #endif
+
+    return color;
+#else
+    return clearSky;
+#endif
+}
 
 #endif

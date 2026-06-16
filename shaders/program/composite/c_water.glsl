@@ -20,6 +20,7 @@ void main() {
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 #include "/lib/fragment/sky.glsl"
+#include "/lib/fragment/clouds.glsl"
 #include "/lib/fragment/pbrCommon.glsl"
 #include "/lib/fragment/vlFog.glsl"
 #ifdef WATER_CAUSTICS
@@ -513,7 +514,11 @@ void main() {
 
     vec3 worldRefl   = mat3(gbufferModelViewInverse) * viewReflDir;
 
-    vec3 reflectColor = getSkyReflection(worldRefl, eyeAltitude) * skyVis;
+    vec3 reflectColor = getSkyReflection(worldRefl, eyeAltitude);
+    #ifdef WATER_CLOUD_REFLECTIONS
+    reflectColor = cloudReflection(reflectColor, cameraPosition, worldRefl);
+    #endif
+    reflectColor *= skyVis;
     #ifdef WATER_REFLECTIONS
     {
         float nz = waterDither(gl_FragCoord.xy, frameCounter);

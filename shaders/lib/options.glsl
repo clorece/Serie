@@ -86,7 +86,7 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_PUFFINESS 0.2         // [0.0 0.2 0.3 0.4 0.5 0.6 0.8 1.0] rounds the cumulus toward the puffy worley-cell look of the altocumulus (0 = original cauliflower, 1 = fully rounded blobs)
 #define CLOUDS_LAYER_BOTTOM 1500.0    // [600.0 900.0 1200.0 1500.0 1800.0 2400.0 3000.0] cumulus base altitude (m above planet surface)
 #define CLOUDS_LAYER_TOP    5400.0    // [2400.0 3000.0 3600.0 4500.0 5400.0 6400.0 7500.0] cumulus top altitude (m above planet surface)
-#define CLOUDS_WIND_SPEED 12.0         // [0.0 1.0 2.0 4.0 6.0 9.0 12.0 18.0 25.0] m/s — cloud advection speed
+#define CLOUDS_WIND_SPEED 0.6          // [0.0 0.1 0.2 0.3 0.4 0.6 0.8 1.0 1.5 2.0 3.0] blocks the clouds travel per WORLD TICK (world-time driven; ~0.6 matches the old 12 m/s)
 #define CLOUDS_WIND_DIR_X 1.0         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction X
 #define CLOUDS_WIND_DIR_Z 0.3         // [-1.0 -0.7 -0.5 -0.3 0.0 0.3 0.5 0.7 1.0] wind direction Z
 //#define CLOUDS_SHADOW                
@@ -109,6 +109,7 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_ALTO_ALTITUDE 2000.0   // [2000.0 3000.0 4000.0 5000.0 6000.0 6200.0 7000.0 8000.0 9000.0] shell base altitude (m above surface). The cumulus layer always composites over (occludes) the altocumulus regardless of this.
 #define CLOUDS_ALTO_THICKNESS 200.0   // [200.0 300.0 400.0 500.0 700.0 1000.0] shell vertical thickness (m) — altocumulus is a thin layer
 #define CLOUDS_ALTO_MAP_COVERAGE 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.7 0.8 0.9 1.0] CLOUD MAP coverage — how much of the SKY the altocumulus fills (low = isolated patches in lots of clear sky, high = near-overcast). Macro placement.
+#define CLOUDS_ALTO_MAP_SIZE 0.5     // [0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] CLOUD MAP size — scale of the dense-patch/clear-hole regions (higher = larger, broader patches; lower = smaller, more frequent patches)
 #define CLOUDS_ALTO_COVERAGE 0.90     // [0.20 0.30 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.80 0.90] density of cells WITHIN a covered patch (higher = puffs fill in, fewer blue gaps between them). Local fill, NOT sky coverage — see CLOUDS_ALTO_MAP_COVERAGE.
 #define CLOUDS_ALTO_SCALE 1.00        // [0.50 0.65 0.75 0.85 1.00 1.25 1.50 2.00] element size multiplier (smaller value = larger puffs)
 #define CLOUDS_ALTO_DENSITY 0.10      // [0.03 0.05 0.08 0.10 0.14 0.20 0.30] extinction coefficient (higher = denser/whiter)
@@ -173,6 +174,8 @@ const float renderScale = RENDER_SCALE;
 #define WATER_REFLECTIONS
 #define WATER_REFLECTION_STEPS 32 // [16 20 24 32 48 64 96 128] screen-space SSR march steps (higher = sharper / catches more)
 #define WATER_SKYLIGHT_THRESHOLD 0.1 // [0.0 0.3 0.5 0.6 0.7 0.8 0.9] min sky access before water reflects sky / in-scatters (higher = caves & covered water stay dark)
+#define WATER_CLOUD_REFLECTIONS // reflect the volumetric cloud deck in water (low step count, composited over the sky reflection on an SSR miss; rides the global TAA resolve so it reads clean)
+#define WATER_CLOUD_REFLECTION_STEPS 8 // [4 6 8 12 16 24] primary raymarch steps for the water cloud reflection (low = cheap; the reflection is Fresnel-dimmed + TAA-filtered, so few steps suffice)
 
 #define WATER_ROUGHNESS 0.02 // [0.0 0.005 0.01 0.02 0.04 0.08 0.16] surface roughness for reflections (higher = blurrier/more diffuse reflections, lower = sharper/mirror-like reflections)
 
