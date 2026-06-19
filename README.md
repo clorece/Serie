@@ -1,6 +1,6 @@
 # Serie
 
-<img width="2560" height="1440" alt="Serie shaderpack screenshot" src="https://github.com/user-attachments/assets/499510fa-0233-4d3f-b1a8-2efa26ad1026" />
+<img width="2560" height="1080" alt="serie banner" src="https://github.com/user-attachments/assets/60049c40-793d-4a7d-8fea-417b10494cce" />
 
 Serie is the path-traced successor to allium and will serve as the base rewrite for allium's upcoming versions.
 
@@ -71,3 +71,16 @@ Before reporting a visual artifact, test once with default settings and confirm 
 The repository branch is the active development version. Stable builds, when available, are published through [GitHub Releases](https://github.com/clorece/Serie/releases).
 
 Contributions and focused bug reports are welcome. When changing shader code, test at multiple render scales, during camera motion, at day/night transitions, underwater, and with Distant Horizons both enabled and disabled.
+
+## Screenshots
+<img width="2560" height="1440" alt="2026-06-19_13 55 20" src="https://github.com/user-attachments/assets/c5de53a7-d9fe-4a82-b652-b6dc1c2ca5c7" />
+<img width="2560" height="1440" alt="2026-06-19_04 58 09" src="https://github.com/user-attachments/assets/37a48d60-00c4-444c-8c04-c11b16e80760" />
+<img width="2560" height="1440" alt="2026-06-19_04 46 41" src="https://github.com/user-attachments/assets/4a92a336-9fc4-43b3-9897-d81013de431b" />
+<img width="2560" height="1440" alt="2026-06-15_20 24 07" src="https://github.com/user-attachments/assets/11e3fe64-94a2-4df5-ab9c-6779996f429b" />
+<img width="2560" height="1440" alt="2026-06-15_20 24 01" src="https://github.com/user-attachments/assets/7e4b3cda-d5a6-4fac-942b-923027e40ac3" />
+<img width="2560" height="1440" alt="2026-06-15_20 23 25" src="https://github.com/user-attachments/assets/33f6534d-ae84-47de-8b7c-375bc73fbac8" />
+<img width="2560" height="1440" alt="2026-06-15_20 22 57" src="https://github.com/user-attachments/assets/d4547eca-447c-4d3a-8f26-a443ae8ce56d" />
+<img width="2560" height="1440" alt="2026-06-15_20 15 27" src="https://github.com/user-attachments/assets/0f248606-44e1-4a70-937e-2e266029b5c7" />
+<img width="2560" height="1440" alt="2026-06-15_20 06 11" src="https://github.com/user-attachments/assets/f1fcd585-3402-4b2a-b2bb-2dfe5a52cadb" />
+<img width="2560" height="1440" alt="2026-06-15_20 05 13" src="https://github.com/user-attachments/assets/0a594301-648f-49ef-ab48-20a544b7c61e" />
+<img width="2560" height="1440" alt="2026-06-15_20 04 36" src="https://github.com/user-attachments/assets/a2e21c27-988f-443a-9305-c127d82f72ce" />
