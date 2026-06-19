@@ -79,16 +79,17 @@ void main() {
 
     float dist = length(fragPosition);
 
-    // Distant Horizons: a vanilla-sky pixel that has DH LOD geometry behind it is
+    // Distant Horizons: a vanilla-sky pixel that has DH LOD terrain behind it is
     // NOT sky — dh_terrain/dh_water already shaded it into colortex0. Treat it as
     // distant geometry (aerial perspective) instead of overwriting it with sky.
     bool vanillaSky = isVanillaSkyDepth(depth0);
     bool isDH = false;
     #ifdef DISTANT_HORIZONS
     float dhDepth = 1.0;
-    if (vanillaSky && dhRuntimeActive()) {
+    if (vanillaSky) {
         dhDepth = dhSampleDepth(texCoord * renderScale);
-        isDH = isDhDepthValue(dhDepth);
+        float dhFlag = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
+        isDH = isDhDepthValue(dhDepth) && isDhTerrainFlag(dhFlag);
     }
     #endif
 

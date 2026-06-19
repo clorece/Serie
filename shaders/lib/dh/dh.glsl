@@ -6,13 +6,22 @@
 // dhMaterialId, etc. into those LOD programs, so re-declaring them collides.)
 // Iris binds these reserved uniforms in any non-DH program that declares them.
 // When DH rendering is disabled at runtime, the depth textures may be unset or
-// cleared instead of a useful 1.0 sky depth, so callers must pass through the
-// runtime/depth validity helpers below.
+// cleared instead of a useful 1.0 sky depth, so terrain callers should pair DH
+// depth with the current-frame DH terrain marker in colortex2.b.
 
 const float DH_DEPTH_EPS = 1e-6;
+const float DH_TERRAIN_FLAG = 0.0625;
 
 bool isVanillaSkyDepth(float vanillaDepth) {
     return vanillaDepth >= 1.0 - DH_DEPTH_EPS;
+}
+
+bool isDhTerrainFlag(float flag) {
+    return flag > 0.03125 && flag < 0.125;
+}
+
+bool isDhWaterFlag(float flag, float normalAlpha) {
+    return flag > 0.875 && normalAlpha < 0.5;
 }
 
 #ifdef DISTANT_HORIZONS
@@ -21,29 +30,18 @@ uniform sampler2D dhDepthTex1;     // LOD depth opaque-only        (mirrors dept
 uniform mat4 dhProjection;
 uniform mat4 dhProjectionInverse;
 uniform mat4 dhPreviousProjection;
-uniform float dhNearPlane;
-uniform float dhFarPlane;
-uniform float dhRenderDistance;
 
 // scaledUV = render-scaled screen uv (the convention the rest of the pack samples
 // depthtex with). Returns the DH opaque+translucent depth there.
 float dhSampleDepth(vec2 scaledUV) { return texture(dhDepthTex0, scaledUV).r; }
 
-// The shader option can be compiled on while DH rendering is disabled in-game.
-// In that state Iris may leave the reserved DH depth sampler unset/cleared instead
-// of as a clean 1.0 texture. Treat DH as active only when its runtime uniforms look
-// sane, and only accept plausible nonzero depth values from the DH depth buffer.
-bool dhRuntimeActive() {
-    return dhRenderDistance > 0.0 && dhFarPlane > dhNearPlane + 1.0;
-}
-
 bool isDhDepthValue(float dhDepth) {
     return dhDepth > DH_DEPTH_EPS && dhDepth < 1.0 - DH_DEPTH_EPS;
 }
 
-// True when a vanilla-sky pixel actually has DH LOD geometry behind it.
-bool isDhPixel(float vanillaDepth, vec2 scaledUV) {
-    if (!isVanillaSkyDepth(vanillaDepth) || !dhRuntimeActive()) return false;
+// True when a vanilla-sky pixel actually has current-frame DH LOD terrain behind it.
+bool isDhTerrainPixel(float vanillaDepth, vec2 scaledUV, float gbufferFlag) {
+    if (!isVanillaSkyDepth(vanillaDepth) || !isDhTerrainFlag(gbufferFlag)) return false;
     return isDhDepthValue(dhSampleDepth(scaledUV));
 }
 

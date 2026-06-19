@@ -68,7 +68,7 @@ void main() {
 
     float depth = texture(depthtex0, unjit * renderScale).r;
 
-    // Distant Horizons: a vanilla-sky pixel with DH LOD behind it gets the SAME
+    // Distant Horizons: a vanilla-sky pixel with DH LOD terrain behind it gets the SAME
     // volumetric march as near terrain (d8 deliberately skips its flat fog for DH
     // when VL is on). True sky still passes through — d8 already drew it.
     vec3 fragPosition;
@@ -77,9 +77,10 @@ void main() {
     #ifdef DISTANT_HORIZONS
     float dhd = 1.0;
     bool  dhGeom = false;
-    if (vanillaSky && dhRuntimeActive()) {
+    if (vanillaSky) {
         dhd = dhSampleDepth(unjit * renderScale);
-        dhGeom = isDhDepthValue(dhd);
+        float dhFlag = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
+        dhGeom = isDhDepthValue(dhd) && isDhTerrainFlag(dhFlag);
     }
     #else
     bool  dhGeom = false;

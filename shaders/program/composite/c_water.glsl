@@ -133,9 +133,8 @@ void main() {
     // have d1==1 while DH depth exists behind it. Use the g-buffer alpha written by
     // dh_water (0.0; vanilla water writes 1.0) so normal water keeps the near path.
     #ifdef DISTANT_HORIZONS
-    bool dhActive = dhRuntimeActive();
-    float dhDepth = dhActive ? dhSampleDepth(uv * renderScale) : 1.0;
-    bool isDhWater = isWater && c1.a < 0.5 && d1 >= 1.0 && isDhDepthValue(dhDepth);
+    float dhDepth = dhSampleDepth(uv * renderScale);
+    bool isDhWater = isDhWaterFlag(flag, c1.a) && d1 >= 1.0 && isDhDepthValue(dhDepth);
     #else
     bool isDhWater = false;
     #endif
@@ -164,51 +163,85 @@ void main() {
         float eyeAltD    = cameraPosition.y - 64.0;
         float dayFactorD = clamp(worldSunD.y * 1.5 + 0.2, 0.04, 1.0);
 
-        // Absorption/scatter EXACTLY like near water so the two blend: optical depth
-        // to the DH seabed (dhDepthTex1) where present, else deep. No screen-space
-        // bottom colour is available at DH range, so the body is pure scatter.
+        // Match near water's outside-the-water fog model: vertical water depth,
+        // not view/slant distance. The slant path over-absorbs at grazing angles
+        // and makes DH water read like a separate opaque fog sheet.
         vec3  absorptionD  = vec3(WATER_ABSORPTION_R, WATER_ABSORPTION_G, WATER_ABSORPTION_B);
         vec3  scatterCoefD = vec3(WATER_SCATTER_R, WATER_SCATTER_G, WATER_SCATTER_B);
         const float DH_THICKNESS_MAX = 16.0; // matches the near-water cap below
-        float thicknessD = DH_THICKNESS_MAX;
+        vec3  surfD = dhViewPos(unjitD, dhDepth);
+        vec3  surfWorldRD = (gbufferModelViewInverse * vec4(surfD, 1.0)).xyz;
+        float surfWorldYD = surfWorldRD.y + cameraPosition.y;
+        float thicknessD = 0.0;
+        bool  hasDhBedD = false;
         float dhBed = texture(dhDepthTex1, uv * renderScale).r;
         if (dhBed < 1.0) {
-            vec3 surf = dhViewPos(unjitD, dhDepth);
-            vec3 bed  = dhViewPos(unjitD, dhBed);
-            thicknessD = min(distance(surf, bed), DH_THICKNESS_MAX);
+            vec3 bedD = dhViewPos(unjitD, dhBed);
+            if (bedD.z < surfD.z - 0.1) {
+                float bedWorldYD = (gbufferModelViewInverse * vec4(bedD, 1.0)).y + cameraPosition.y;
+                thicknessD = min(max(surfWorldYD - bedWorldYD, 0.0), DH_THICKNESS_MAX);
+                hasDhBedD = thicknessD > 0.0;
+            }
         }
-        // Same lit single-scatter model as near water (so they blend); no seabed
-        // colour is available at DH range, so the body is pure in-scatter.
+        // Same lit single-scatter model as near water (so they blend). colortex0
+        // usually carries the lit/background bed color, but DH water can overwrite
+        // the water g-buffer while leaving that background missing/black. Fall back
+        // to a soft sky-lit bed proxy so shallow DH water does not go dark.
         vec3 extinctionD = absorptionD + scatterCoefD;
-        vec3 transD      = exp(-extinctionD * thicknessD);
-        vec3 ssAlbedoD   = scatterCoefD / max(extinctionD, vec3(1e-4));
-        vec3 waterLightD = getSkyAmbient(eyeAltD) * skyVis * dayFactorD;
-        vec3 inScatterD  = ssAlbedoD * waterLightD;
-        const float WATER_INSCATTER_DESAT_D = 0.45; // match the near-water desaturation
-        inScatterD = mix(inScatterD, vec3(dot(inScatterD, vec3(0.2126, 0.7152, 0.0722))), WATER_INSCATTER_DESAT_D);
-        vec3 refractColorD = inScatterD * (1.0 - transD);
+        vec3 scatterAlbedoD = scatterCoefD / max(extinctionD, vec3(1e-4));
+        float vDepthD = hasDhBedD ? thicknessD : 0.0;
+        vec3 seabedTransD = exp(-extinctionD * vDepthD);
 
-        // Reflection: sky + clouds, overridden by an on-screen mirror of the lit
-        // scene (the shoreline/terrain) via the reflected direction — colortex5 is
-        // the previous frame. (waterReflectSSR marches the NEAR depth buffer, which
-        // has no DH geometry, so it can't mirror the far shore — this can.)
+        const int WSTEPS_D = 6;
+        float stepLenD = vDepthD / float(WSTEPS_D);
+        vec3 stepTransD = exp(-extinctionD * stepLenD);
+        float wDitherD = waterDither(gl_FragCoord.xy, frameCounter);
+
+        vec3 worldViewDirD = normalize(mat3(gbufferModelViewInverse) * surfD);
+        float VdotLwD = dot(worldViewDirD, worldSunD);
+        float gWD = 0.6, gW2D = gWD * gWD;
+        float phaseSunD = (1.0 - gW2D) / (4.0 * PI * pow(max(1.0 + gW2D - 2.0 * gWD * VdotLwD, 1e-4), 1.5));
+        const float isoPhaseD = 1.0 / (4.0 * PI);
+
+        vec3 sunIllumD = SUN_COLOR_BASE * sampleTransmittanceLUT_fast(worldSunD.y, PLANET_RADIUS) * dayFactorD;
+        vec3 skyIllumD = getSkyAmbient(eyeAltD) * skyVis;
+        float resScaleD = 4096.0 / float(SHADOW_RESOLUTION);
+
+        vec3 scatteringD = vec3(0.0);
+        vec3 transmittanceD = vec3(1.0);
+        for (int i = 0; i < WSTEPS_D; i++) {
+            float t = stepLenD * (float(i) + wDitherD);
+            vec3 posWR = surfWorldRD - vec3(0.0, t, 0.0);
+
+            vec4 sp = shadowProjection * shadowModelView * vec4(posWR, 1.0);
+            sp /= sp.w;
+            float distb = length(sp.xy);
+            float distort = (1.0 - SHADOW_MAP_BIAS) + distb * SHADOW_MAP_BIAS;
+            sp.xy /= distort; sp = sp * 0.5 + 0.5;
+            float shadow = 1.0;
+            if (sp.x >= 0.0 && sp.x <= 1.0 && sp.y >= 0.0 && sp.y <= 1.0)
+                shadow = step(sp.z - 0.0004 * resScaleD, texture(shadowtex1, sp.xy).r);
+
+            vec3 sunTransD = exp(-extinctionD * (t / max(worldSunD.y, 0.1)));
+            scatteringD += transmittanceD * sunIllumD * phaseSunD * shadow * sunTransD;
+            scatteringD += transmittanceD * skyIllumD * isoPhaseD;
+            transmittanceD *= stepTransD;
+        }
+        scatteringD *= (1.0 - stepTransD) * scatterAlbedoD;
+
+        float sceneLumaD = dot(scene, vec3(0.2126, 0.7152, 0.0722));
+        vec3 bedFallbackD = getSkyAmbient(eyeAltD) * (0.08 + 0.45 * skyVis) * dayFactorD;
+        vec3 bedColorD = mix(bedFallbackD, scene, smoothstep(0.01, 0.08, sceneLumaD));
+        vec3 refractColorD = bedColorD * seabedTransD + scatteringD;
+
+        // Reflection: sky + clouds only. Do not pull colortex5/history here; that
+        // previous-frame far-reflection trick smears badly on DH water.
         vec3 viewRefl  = reflect(viewDir, vN);
         vec3 worldRefl = mat3(gbufferModelViewInverse) * viewRefl;
         vec3 reflectColor = getSkyReflection(worldRefl, eyeAltD);
         #ifdef WATER_CLOUD_REFLECTIONS
         reflectColor = cloudReflection(reflectColor, cameraPosition, worldRefl);
         #endif
-        {
-            vec4 clipR = gbufferProjection * vec4(viewRefl * 2048.0, 1.0);
-            if (clipR.w > 0.0) {
-                vec2 ruv = (clipR.xy / clipR.w) * 0.5 + 0.5;
-                if (all(greaterThanEqual(ruv, vec2(0.0))) && all(lessThanEqual(ruv, vec2(1.0)))) {
-                    bool hitGeom = texture(depthtex0, ruv * renderScale).r < 1.0
-                                || (dhRuntimeActive() && isDhDepthValue(dhSampleDepth(ruv * renderScale)));
-                    if (hitGeom) reflectColor = textureLod(colortex5, ruv, 0.0).rgb;
-                }
-            }
-        }
         reflectColor *= skyVis;
 
         // Sun/moon glint (shared GGX).
@@ -224,19 +257,23 @@ void main() {
         float FmaxD = max(1.0 - WATER_ROUGHNESS, F0D);
         float fresD = F0D + (FmaxD - F0D) * pow(1.0 - cosTD, 5.0);
 
-        vec3 resultD = mix(refractColorD, reflectColor, fresD) + specD;
+        vec3 surfacePartD = reflectColor * fresD + specD;
+        vec3 underwaterPartD = refractColorD * (1.0 - fresD);
 
-        // Atmospheric fog at the DH water distance.
-        vec3  fogDirD  = mat3(gbufferModelViewInverse) * viewDir;
-        float fogDistD = length(dhViewPos(unjitD, dhDepth));
+        // Atmospheric fog at the DH water surface distance. As with normal water,
+        // apply air fog only to reflection/glint; the submerged part is water fog.
+        vec3  fogDirD  = normalize(mat3(gbufferModelViewInverse) * surfD);
+        float fogDistD = length(surfD);
         #ifdef VOLUMETRIC_LIGHT
             float fd = waterDither(gl_FragCoord.xy, frameCounter);
             VolFog vf = computeVolumetricFog(fogDirD, fogDistD, eyeAltD, fd);
-            resultD = resultD * vf.transmittance + vf.scatter;
+            surfacePartD = surfacePartD * vf.transmittance + vf.scatter;
         #else
             AerialPerspective ap = computeAerialPerspective(fogDirD, worldSunD, worldMoonD, eyeAltD, fogDistD);
-            resultD = resultD * ap.transmittance + ap.scatter;
+            surfacePartD = surfacePartD * ap.transmittance + ap.scatter;
         #endif
+
+        vec3 resultD = underwaterPartD + surfacePartD;
 
         gl_FragData[0] = vec4(resultD, 1.0);
         return;
@@ -607,7 +644,7 @@ void main() {
     // WATER_THICKNESS_MAX there makes the last strip of normal water go opaque.
     // Use DH opaque depth where available, else DH depthTex0 (often the next water
     // surface, which gives a near-zero handoff depth instead of double-fogging).
-    if (d1 >= 1.0 && dhActive && isDhDepthValue(dhDepth)) {
+    if (d1 >= 1.0 && isDhDepthValue(dhDepth)) {
         float dhFallbackDepth = texture(dhDepthTex1, uv * renderScale).r;
         if (dhFallbackDepth >= 1.0) dhFallbackDepth = dhDepth;
 

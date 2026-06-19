@@ -305,11 +305,13 @@ void main() {
     vec3 color = texture(colortex0, texCoord * renderScale).rgb;
 
     #ifdef DISTANT_HORIZONS
-    // Distant Horizons LOD opaque terrain (vanilla sky depth, DH depth present).
+    // Distant Horizons LOD opaque terrain (vanilla sky depth, DH depth + current
+    // frame terrain marker present).
     // DH WATER is translucent — it writes the vanilla depth buffer (depth0 < 1) and
     // is shaded by the water composite (c_water) like near water, so it is NOT
     // handled here.
-    if (isDhPixel(depth0, texCoord * renderScale)) {
+    float dhFlag = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
+    if (isDhTerrainPixel(depth0, texCoord * renderScale, dhFlag)) {
         gl_FragData[1] = vec4(0.0, 0.0, 0.0, 1.0); // pbrSunVis = 0 (no PBR on LODs)
         vec3 dhViewP = dhViewPos(unjitteredTexCoord, dhSampleDepth(texCoord * renderScale));
         gl_FragData[0] = vec4(shadeDhTerrain(dhViewP, color), 1.0);

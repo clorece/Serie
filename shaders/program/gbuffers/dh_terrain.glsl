@@ -15,6 +15,8 @@
 // real (textured, voxel-GI-lit) terrain shows through and the LOD only fills the
 // far ring beyond it.
 
+const float DH_TERRAIN_FLAG = 0.0625;
+
 #ifdef VERTEX
 
 #include "/lib/util/jitter.glsl"
@@ -32,7 +34,7 @@ void main() {
     mat       = 0;
     glColor   = vec4(0.0);
     lmCoord   = vec2(0.0);
-    normal    = vec3(0.0, 1.0, 0.0);
+    viewNormal = vec3(0.0, 1.0, 0.0);
     playerPos = vec3(0.0);
     return;
 #else
@@ -95,7 +97,7 @@ void main() {
     /* DRAWBUFFERS:012 */
     gl_FragData[0] = vec4(albedo, 1.0);                          // colortex0: albedo
     gl_FragData[1] = vec4(viewNormal * 0.5 + 0.5, matAlpha);     // colortex1: view normal + material
-    gl_FragData[2] = vec4(lmCoord, 0.0, emission);              // colortex2: lightmap, flag=0, emission
+    gl_FragData[2] = vec4(lmCoord, DH_TERRAIN_FLAG, emission);  // colortex2: lightmap, DH terrain flag, emission
 #endif
 }
 
