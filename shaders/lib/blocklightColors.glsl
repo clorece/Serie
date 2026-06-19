@@ -55,7 +55,7 @@ vec4 GetSpecialBlocklightColor(int mat) {
 					//#if COLORED_LIGHTING == 0 && GLOBAL_ILLUMINATION == 2
 					//	if (mat == 2) return vec4(vec3(3.05, 0.33, 0.17), 0.0); // Torch
 					//#else
-						if (mat == 2) return vec4(fireSpecialLightColor, 0.0); // Torch
+						if (mat == 2) return vec4(fireSpecialLightColor * 1.5, 0.0); // Torch
 					//#endif
 					#ifndef END
 						if (mat == 3) return vec4(vec3(1.0, 1.0, 1.0) * 4.0, 0.0); // End Rod - This is the base for all lights. Total value 12
