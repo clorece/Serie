@@ -889,12 +889,26 @@ vec3 cloudReflection(vec3 clearSky, vec3 origin, vec3 rd) {
     float cloudMidAlt = (CLOUDS_LAYER_BOTTOM + CLOUDS_LAYER_TOP) * 0.5;
     vec3  ambient     = getSkyAmbient(cloudMidAlt);
 
-    TimeState t   = getTimeState();
-    vec3 lightDir = t.activeLightDir;
+    TimeState t = getTimeState();
 
-    // Reflection clouds use the same direct-light palette and twilight overlap
-    // as terrain; the gain only restores the cloud march's presentation scale.
-    vec3  lightCol = t.lightColor * (SUN_ILLUMINANCE * 1.5);
+    // Keep the selected colour attached to its actual celestial direction.
+    // Combining both colours with activeLightDir put residual sunset/sunrise
+    // light on the moon side of reflected clouds during the twilight overlap.
+    float sunLum  = dot(t.sunColor,  vec3(0.2126, 0.7152, 0.0722));
+    float moonLum = dot(t.moonColor, vec3(0.2126, 0.7152, 0.0722));
+    bool  useSun  = sunLum >= moonLum;
+    vec3  cloudSunDir  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+    vec3  cloudMoonDir = -cloudSunDir;
+    vec3  lightDir = useSun ? cloudSunDir : cloudMoonDir;
+    vec3  lightCol = (useSun ? t.sunColor : t.moonColor)
+                   * (SUN_ILLUMINANCE * 1.5);
+
+    // Match the main-sky cloud enhancement: richer red near the solar horizon,
+    // fading to neutral in daylight and remaining disabled for moonlight.
+    float cloudSunsetGlow = useSun
+                         ? 1.0 - smoothstep(0.0, 0.35, abs(t.sunUp))
+                         : 0.0;
+    lightCol *= mix(vec3(1.0), vec3(2.0, 1.75, 1.10), cloudSunsetGlow);
 
     vec3  color    = clearSky;
     float cloudOcc = 1.0;

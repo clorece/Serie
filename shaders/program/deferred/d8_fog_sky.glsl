@@ -102,11 +102,27 @@ void main() {
         vec3  ambient     = getSkyAmbient(cloudMidAlt);
 
         TimeState t = getTimeState();
-        vec3  lightDir = t.activeLightDir;
 
-        // Terrain supplies the canonical twilight blend and sun/moon colors.
-        // Retain the cloud presentation gain without maintaining another palette.
-        vec3 lightCol = lightColor * (SUN_ILLUMINANCE * 1.5);
+        // Clouds can only cone-march one directional light. During twilight the
+        // old path combined sun+moon colour, then attached it to activeLightDir,
+        // whose fixed world-time switch could put the lingering red sunlight on
+        // the opposite (moon) side of the sky. Select one coherent direction /
+        // colour pair instead. The sun remains dominant through golden hour, so
+        // its warm dawn/dusk glow is preserved in the physically correct place.
+        float sunLum  = dot(t.sunColor,  vec3(0.2126, 0.7152, 0.0722));
+        float moonLum = dot(t.moonColor, vec3(0.2126, 0.7152, 0.0722));
+        bool  useSun  = sunLum >= moonLum;
+        vec3  lightDir = useSun ? worldSunDir : worldMoonDir;
+        vec3  lightCol = (useSun ? t.sunColor : t.moonColor)
+                       * (SUN_ILLUMINANCE * 1.5);
+
+        // Intensify the warm cloud glow only while the sun is near the horizon.
+        // The channel-weighted boost makes it richer/redder as well as brighter;
+        // it fades out by ordinary daytime and never tints moon-lit clouds.
+        float cloudSunsetGlow = useSun
+                             ? 1.0 - smoothstep(0.0, 0.35, abs(t.sunUp))
+                             : 0.0;
+        lightCol *= mix(vec3(1.0), vec3(2.0, 1.75, 1.10), cloudSunsetGlow);
 
         // Cumulus is the dominant FRONT layer; altocumulus is the high backdrop.
         // Compose sky → altocumulus → cumulus, but GATE the altocumulus by the
