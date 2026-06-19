@@ -28,6 +28,14 @@ out vec4 glColor;
 void main() {
     gl_Position = ftransform();
 
+#ifndef DISTANT_HORIZONS
+    mat       = 0;
+    glColor   = vec4(0.0);
+    lmCoord   = vec2(0.0);
+    normal    = vec3(0.0, 1.0, 0.0);
+    playerPos = vec3(0.0);
+    return;
+#else
     mat      = dhMaterialId;
     glColor  = gl_Color;
     lmCoord  = mat2(gl_TextureMatrix[1]) * gl_MultiTexCoord1.st;
@@ -40,6 +48,7 @@ void main() {
     #endif
 
     gl_Position.xy = gl_Position.xy * renderScale + gl_Position.w * (renderScale - 1.0);
+#endif
 }
 
 #endif
@@ -59,6 +68,10 @@ void main() {
 #ifndef DISTANT_HORIZONS
     discard;
 #else
+    // (No manual depthtex1 occlusion discard here: Iris already depth-tests the
+    // opaque DH terrain against the vanilla scene. Adding one created a 1-texel
+    // seam at near-terrain silhouettes that TAA read as disocclusion.)
+
     // Near-edge dither fade so vanilla terrain (closer than `far`) wins.
     float dist     = length(playerPos);
     float dither   = interleavedGradientNoise(gl_FragCoord.xy, frameCounter);
@@ -68,11 +81,14 @@ void main() {
     vec3 albedo = glColor.rgb;
 
     // Material code (matches gbuffers_terrain colortex1.a packing):
-    //   1/3 = foliage (leaves, wrap NdotL), 2/3 = grass (soft), 1.0 = emissive.
+    //   1/3 = foliage (wrap NdotL + SSS), 1.0 = emissive, 0 = normal Lambert.
+    // NOTE: only true foliage (leaves) wraps. DH_BLOCK_GRASS is the grass-topped
+    // GROUND block — near terrain shades grass_block (10003) with NORMAL Lambert,
+    // so it must be matAlpha 0 here too; the old 2/3 code gave the whole grassy
+    // landscape wrap-around NdotL (never darkens) = flat, wrong directional light.
     float matAlpha = 0.0;
     float emission = 0.0;
-    if (mat == DH_BLOCK_LEAVES)      { matAlpha = 1.0 / 3.0; }
-    else if (mat == DH_BLOCK_GRASS)  { matAlpha = 2.0 / 3.0; }
+    if (mat == DH_BLOCK_LEAVES)           { matAlpha = 1.0 / 3.0; }
     else if (mat == DH_BLOCK_ILLUMINATED) { matAlpha = 1.0; emission = 0.6; }
     else if (mat == DH_BLOCK_LAVA)        { matAlpha = 1.0; emission = 1.0; }
 

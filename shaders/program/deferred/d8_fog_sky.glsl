@@ -82,13 +82,17 @@ void main() {
     // Distant Horizons: a vanilla-sky pixel that has DH LOD geometry behind it is
     // NOT sky — dh_terrain/dh_water already shaded it into colortex0. Treat it as
     // distant geometry (aerial perspective) instead of overwriting it with sky.
+    bool vanillaSky = isVanillaSkyDepth(depth0);
     bool isDH = false;
     #ifdef DISTANT_HORIZONS
-    float dhDepth = dhSampleDepth(texCoord * renderScale);
-    isDH = isDhPixel(depth0, texCoord * renderScale);
+    float dhDepth = 1.0;
+    if (vanillaSky && dhRuntimeActive()) {
+        dhDepth = dhSampleDepth(texCoord * renderScale);
+        isDH = isDhDepthValue(dhDepth);
+    }
     #endif
 
-    if (depth0 == 1.0 && !isDH) {
+    if (vanillaSky && !isDH) {
         color = getSky(worldDir, worldSunDir, worldMoonDir, eyeAltitude);
 
         #if defined CLOUDS || defined CLOUDS_ALTO
@@ -149,8 +153,9 @@ void main() {
     }
     #endif
     #ifndef VOLUMETRIC_LIGHT
-    else {
-
+    else if (texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b <= 0.875) {
+        // (Water pixels skipped: the colortex0 here is the submerged seabed, which
+        // must not get AIR aerial perspective — c_water applies the water fog.)
         AerialPerspective ap = computeAerialPerspective(
             worldDir, worldSunDir, worldMoonDir, eyeAltitude, dist);
         color = color * ap.transmittance + ap.scatter;

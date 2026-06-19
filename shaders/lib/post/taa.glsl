@@ -163,14 +163,15 @@ vec2 getPreviousUV(vec2 uv, vec2 screenSize, out vec3 velocityPixels) {
                                2.0 / screenSize, vec2(renderScale) - 2.0 / screenSize);
     float depth0 = getClosestDepth(sampleCoord, screenSize);
 
-    if (depth0 >= 1.0) {
+    if (isVanillaSkyDepth(depth0)) {
         #ifdef DISTANT_HORIZONS
         // Distant Horizons LOD geometry sits at vanilla depth 1.0 but is real,
         // finite-distance geometry — reproject it WITH camera translation (using
         // the DH projection), not the rotation-only sky path, or it smears badly
         // when the camera moves.
-        float dhd = texture(dhDepthTex0, sampleCoord).r;
-        if (dhd < 1.0) {
+        float dhd = 1.0;
+        if (dhRuntimeActive()) dhd = texture(dhDepthTex0, sampleCoord).r;
+        if (isDhDepthValue(dhd)) {
             vec3 viewPos  = dhViewPos(uv, dhd);
             vec3 worldPos = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
             vec3 prevWorld = worldPos + (cameraPosition - previousCameraPosition);
@@ -248,11 +249,13 @@ vec4 taa(vec2 currentPos, vec2 screenSize, sampler2D currentFrame, sampler2D his
     vec3 prevColorYCoCg = RGBtoYCoCg(max(prevRGB, 0.0));
 
     bool isWater = textureLod(colortex2, cuv, 0.0).b > 0.5;
-    bool isSky   = textureLod(depthtex0, cuv, 0.0).r >= 1.0;
+    bool isSky   = isVanillaSkyDepth(textureLod(depthtex0, cuv, 0.0).r);
     #ifdef DISTANT_HORIZONS
         // DH LODs are vanilla-sky depth but real geometry — don't give them the
         // sky's sticky 0.97 blend / loose clamp, or moving the camera smears them.
-        if (isSky && textureLod(dhDepthTex0, cuv, 0.0).r < 1.0) isSky = false;
+        if (isSky && dhRuntimeActive()) {
+            if (isDhDepthValue(textureLod(dhDepthTex0, cuv, 0.0).r)) isSky = false;
+        }
     #endif
 
     float aggression = (isWater || isSky) ? 3.0 : 1.0;

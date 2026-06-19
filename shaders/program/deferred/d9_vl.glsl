@@ -72,15 +72,31 @@ void main() {
     // volumetric march as near terrain (d8 deliberately skips its flat fog for DH
     // when VL is on). True sky still passes through — d8 already drew it.
     vec3 fragPosition;
+    bool vanillaSky = isVanillaSkyDepth(depth);
+
     #ifdef DISTANT_HORIZONS
-    float dhd = (depth >= 1.0) ? dhSampleDepth(unjit * renderScale) : 1.0;
-    bool  dhGeom = (depth >= 1.0 && dhd < 1.0);
+    float dhd = 1.0;
+    bool  dhGeom = false;
+    if (vanillaSky && dhRuntimeActive()) {
+        dhd = dhSampleDepth(unjit * renderScale);
+        dhGeom = isDhDepthValue(dhd);
+    }
     #else
     bool  dhGeom = false;
     #endif
 
-    if (depth >= 1.0 && !dhGeom) {
+    if (vanillaSky && !dhGeom) {
         // Sky pixel — d8's sampleSky() already handled it.
+        gl_FragData[0] = vec4(sceneColor, 1.0);
+        return;
+    }
+
+    // Water pixels: the colortex0 here is the SEABED (opaque, behind the water
+    // surface). It is underwater, so it must NOT get AIR volumetric fog — that
+    // washed distant submerged terrain to the bright atmosphere scatter colour
+    // (e.g. far seaweed turning solid cyan). c_water applies the WATER fog (depth
+    // absorption + in-scatter) and the surface's own atmospheric fog instead.
+    if (texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b > 0.875) {
         gl_FragData[0] = vec4(sceneColor, 1.0);
         return;
     }

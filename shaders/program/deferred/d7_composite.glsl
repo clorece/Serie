@@ -170,6 +170,9 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 #ifdef DISTANT_HORIZONS
 // dhLighting.glsl provides dhSunShadow (the shadow-map term used below).
 #include "/lib/fragment/dhLighting.glsl"
+#include "/lib/fragment/pbrCommon.glsl"
+#include "/lib/fragment/directSpecular.glsl"
+#include "/lib/fragment/sky.glsl"
 
 // Deferred shading for a Distant Horizons LOD terrain pixel. Reads the same
 // globals d7 already populated from colortex1/2 (normal, lightmap, material) —
@@ -182,8 +185,23 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     vec3  playerPos   = (gbufferModelViewInverse * vec4(viewPos, 1.0)).xyz;
     bool  foliage     = (material > 0.16 && material < 0.83);
 
-    float NdotL    = dot(normal, lightVector);
-    float diffuse  = foliage ? max(NdotL * 0.5 + 0.5, 0.0) : max(NdotL, 0.0);
+    // Diffuse NdotL — identical model to the near scene's getNdotL: wrap-around for
+    // foliage, Burley/Disney diffuse otherwise (using the DH view position for V).
+    float NdotL = dot(normal, lightVector);
+    float diffuse;
+    if (foliage) {
+        diffuse = max(NdotL * 0.5 + 0.5, 0.0);
+    } else {
+        float roughness = 0.5;
+        vec3  v     = normalize(-viewPos);
+        vec3  h     = normalize(lightVector + v);
+        float dotNV = clamp(dot(normal, v), 1e-5, 1.0);
+        float dotLH = clamp(dot(lightVector, h), 0.0, 1.0);
+        float fd90  = 0.5 + 2.0 * dotLH * dotLH * roughness;
+        float ls    = 1.0 + (fd90 - 1.0) * pow(1.0 - clamp(NdotL, 0.0, 1.0), 5.0);
+        float vs    = 1.0 + (fd90 - 1.0) * pow(1.0 - dotNV, 5.0);
+        diffuse     = max(NdotL, 0.0) * ls * vs;
+    }
     // DH LODs are outdoors; if the LOD lightmap is missing/low, don't let the
     // whole tile go black — floor the sky exposure so it still receives sun+sky.
     float skyLight = max(lightmap.y, 0.35);
@@ -192,7 +210,7 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     vec3 shadow = dhSunShadow(playerPos, worldNormal, lightmap.y); // shadow map (near range)
     #ifdef SCREENSPACE_SHADOWS
         float dith = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
-        shadow *= dhScreenShadow(viewPos, lightVector, dith);       // far LOD self-shadowing
+        shadow *= dhScreenShadow(viewPos, normal, lightVector, dith); // far LOD self-shadowing
     #endif
 
     float cloudShadow = mix(1.0, sampleCloudShadow(playerPos + cameraPosition), 1.0 - rainStrength);
@@ -206,7 +224,24 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
                 * (1.0 - rainStrength * 0.75) * lightmap.y * 2.5;
     }
 
-    vec3 indirect = getLightmap(vec3(lightmap.x, skyLight, lightmap.z));
+    // Ambient. DH is out of the voxel-GI range, so approximate the near scene's
+    // resolved sky irradiance with the SAME base the cache is fed (irc_update.glsl:
+    // ambientColor * GI_SKY_BRIGHTNESS, warmed by GI_SKY_WARMTH) — this is what
+    // makes the LODs read warm/golden like the near terrain instead of flat-blue.
+    // Hemisphere weight + a mild "sky ambient dims where directly sunlit" term
+    // (mirrors d7's giSkyComponent modulation) give it shape instead of flatness.
+    float shadowLuma = dot(shadow, vec3(0.2126, 0.7152, 0.0722));
+    vec3  giSky = ambientColor * float(GI_SKY_BRIGHTNESS);
+    giSky *= mix(vec3(1.0), vec3(1.25, 1.04, 0.72), GI_SKY_WARMTH);
+    float hemi  = worldNormal.y * 0.35 + 0.65;
+    vec3  ambient = giSky * skyLight * hemi * (1.0 - 0.5 * shadowLuma * max(NdotL, 0.0));
+
+    // Torch term (matches getLightmap's daylight suppression).
+    float sunUpA = clamp(dot(normalize(sunPosition), normalize(upPosition)), 0.0, 1.0);
+    float blockSupp = mix(1.0, 0.05, sunUpA * smoothstep(0.75, 0.9, skyLight));
+    vec3  torch = pow(lightmap.x, 5.06) * torchColor * blockSupp;
+
+    vec3 indirect = ambient + torch;
 
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
@@ -225,6 +260,37 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     }
     #endif
 
+    // Integrated-PBR cohesion: give the LODs the same soft sun glint + faint sky
+    // Fresnel the near dielectric terrain gets (grass/dirt read as a matte
+    // dielectric — smoothness ~0.18, F0 0.04), so the sun's sheen runs continuously
+    // from near to far instead of stopping at the LOD boundary.
+    #ifdef INTEGRATED_PBR
+    {
+        const float dhSmoothness = 0.18;
+        float roughness = 1.0 - dhSmoothness;
+        vec3  V      = normalize(-viewPos);
+        float sunVis = clamp(shadowLuma * skyOcc * cloudShadow, 0.0, 1.0);
+
+        vec3 spec = vec3(0.0);
+        #if SPECULAR_SUN == 1
+            spec = sunMoonSpecular(normal, V, viewPos, roughness, vec3(0.04), sunVis)
+                 * float(PBR_DIELECTRIC_SUN);
+        #endif
+
+        #ifdef SPECULAR_REFLECTIONS
+            float NoV     = clamp(dot(normal, V), 1e-3, 1.0);
+            float fres    = pbrFresnel(NoV, vec3(0.04)).r;
+            float skyGate = pow(clamp(skyLight / 0.75, 0.0, 1.0), REFLECTION_SKY_FADE);
+            vec3  reflW   = mat3(gbufferModelViewInverse) * reflect(normalize(viewPos), normal);
+            vec3  skyRefl = getSkyReflection(reflW, cameraPosition.y - 64.0)
+                          * REFLECTION_SKY_STRENGTH * PBR_DIELECTRIC_REFLECT * skyGate;
+            spec += skyRefl * fres * (0.5 + 0.5 * sunVis); // dimmer in shadow
+        #endif
+
+        outColor += spec;
+    }
+    #endif
+
     return outColor;
 }
 #endif
@@ -239,22 +305,14 @@ void main() {
     vec3 color = texture(colortex0, texCoord * renderScale).rgb;
 
     #ifdef DISTANT_HORIZONS
-    // Distant Horizons LOD pixel (vanilla sky, DH geometry behind it). Route by
-    // the water flag dh_water writes into colortex2.b (robust — a depth compare
-    // between the two DH buffers flickered with precision and broke lighting).
+    // Distant Horizons LOD opaque terrain (vanilla sky depth, DH depth present).
+    // DH WATER is translucent — it writes the vanilla depth buffer (depth0 < 1) and
+    // is shaded by the water composite (c_water) like near water, so it is NOT
+    // handled here.
     if (isDhPixel(depth0, texCoord * renderScale)) {
         gl_FragData[1] = vec4(0.0, 0.0, 0.0, 1.0); // pbrSunVis = 0 (no PBR on LODs)
-        float dhWaterFlag = texelFetch(colortex2, ivec2(gl_FragCoord.xy), 0).b;
-        if (dhWaterFlag > 0.5) {
-            // DH water is forward-shaded into colortex0 by dh_water — pass through
-            // (d8/d9 still apply atmosphere / volumetric light on top).
-            gl_FragData[0] = vec4(color, 1.0);
-        } else {
-            // DH opaque terrain: deferred-shade from the g-buffer (colortex0 here
-            // is the raw albedo dh_terrain wrote; it doubles as the albedo).
-            vec3 dhViewP = dhViewPos(unjitteredTexCoord, dhSampleDepth(texCoord * renderScale));
-            gl_FragData[0] = vec4(shadeDhTerrain(dhViewP, color), 1.0);
-        }
+        vec3 dhViewP = dhViewPos(unjitteredTexCoord, dhSampleDepth(texCoord * renderScale));
+        gl_FragData[0] = vec4(shadeDhTerrain(dhViewP, color), 1.0);
         return;
     }
     #endif

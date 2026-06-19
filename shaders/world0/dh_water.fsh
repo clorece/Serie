@@ -2,6 +2,6 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-/* DRAWBUFFERS:02 */
+/* DRAWBUFFERS:12 */
 
 #include "/program/gbuffers/dh_water.glsl"
