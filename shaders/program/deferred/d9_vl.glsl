@@ -149,7 +149,9 @@ void main() {
     vec3 scatter = vec3(0.0);
 
     float lightFade = t.shadowFade;
-    vec3 lightColorBase = t.lightColor * mix(1.0, SUN_ILLUMINANCE, t.sunActivity);
+    // Use the exact terrain direct-light color; SUN_ILLUMINANCE remains only
+    // the medium's exposure scale, not a separate day/night color system.
+    vec3 lightColorBase = lightColor * SUN_ILLUMINANCE;
 
     for (int i = 0; i < N; ++i) {
         float t = (float(i) + dither) * stepLen;
@@ -177,9 +179,23 @@ void main() {
         vec3  psi_ms_light = sampleMultiScatterLUT_fast(mu_light, altitude);
 
         const float phaseIsotropic = 1.0 / (4.0 * pi);
+        const vec3 lumaWeights = vec3(0.2126, 0.7152, 0.0722);
 
-        vec3 phaseScatterLight = (sigma_s_r * 0.02) * phaseLight.x + sigma_s_m * phaseLight.y;
-        vec3 inscatter = (lightT * phaseScatterLight + psi_ms_light * (sigma_s_r * 0.02 + sigma_s_m) * (phaseIsotropic * lightFade)) * lightColorBase * shadow;
+        // Terrain lightColor already carries the elevation-dependent amber ->
+        // golden tint. Applying the RGB atmosphere LUT to Mie as well warmed it
+        // a second time, producing a mid-elevation red lobe. Mie is effectively
+        // achromatic here: retain the LUT's attenuation/energy as luminance and
+        // take its chroma from the shared terrain light. Rayleigh remains fully
+        // spectral, as does any user-configured wavelength dependence in sigma_s_m.
+        float mieLightT = dot(lightT, lumaWeights);
+        float mieMulti  = dot(psi_ms_light, lumaWeights);
+        vec3 directScatter = lightT * (sigma_s_r * 0.02) * phaseLight.x
+                           + sigma_s_m * (mieLightT * phaseLight.y);
+        vec3 multiScatter  = psi_ms_light * (sigma_s_r * 0.02)
+                           + sigma_s_m * mieMulti;
+        vec3 inscatter = (directScatter
+                       + multiScatter * (phaseIsotropic * lightFade))
+                       * lightColorBase * shadow;
 
         vec3 stepT = exp(-sigma_e * stepLen);
         vec3 inscatterStep = trans * inscatter * (1.0 - stepT) / max(sigma_e, vec3(1e-7));

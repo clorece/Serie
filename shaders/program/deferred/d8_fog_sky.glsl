@@ -104,13 +104,9 @@ void main() {
         TimeState t = getTimeState();
         vec3  lightDir = t.activeLightDir;
 
-        vec3 exoSun  = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
-        vec3 exoMoon = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE * 10.0;
-
-        // We must NOT use t.shadowFade here, because shadowFade returns to 1.0 at night
-        // to render moon shadows. We need a simple day/night mix factor.
-        float isDay = smoothstep(-0.1, 0.1, t.sunUp);
-        vec3 lightCol = mix(exoMoon, exoSun, isDay) * 1.5;
+        // Terrain supplies the canonical twilight blend and sun/moon colors.
+        // Retain the cloud presentation gain without maintaining another palette.
+        vec3 lightCol = lightColor * (SUN_ILLUMINANCE * 1.5);
 
         // Cumulus is the dominant FRONT layer; altocumulus is the high backdrop.
         // Compose sky → altocumulus → cumulus, but GATE the altocumulus by the

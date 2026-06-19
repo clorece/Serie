@@ -19,6 +19,7 @@ void main() {
 #include "/lib/options.glsl"
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
+#include "/lib/util/time.glsl"
 #include "/lib/fragment/sky.glsl"
 #include "/lib/fragment/clouds.glsl"
 #include "/lib/fragment/pbrCommon.glsl"
@@ -158,10 +159,12 @@ void main() {
         vN = normalize(vN - viewDir * clamp(dot(vN, viewDir) + 1e-5, 0.0, 1.0)); // face the camera
         vec3 V       = -viewDir;
 
-        vec3  worldSunD  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
-        vec3  worldMoonD = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
+        TimeState timeD = getTimeState();
+        vec3  worldSunD = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+        vec3  worldMoonD = -worldSunD;
+        vec3  worldLightD = timeD.activeLightDir;
         float eyeAltD    = cameraPosition.y - 64.0;
-        float dayFactorD = clamp(worldSunD.y * 1.5 + 0.2, 0.04, 1.0);
+        float lightFactorD = clamp(dot(timeD.lightColor, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
 
         // Match near water's outside-the-water fog model: vertical water depth,
         // not view/slant distance. The slant path over-absorbs at grazing angles
@@ -198,12 +201,13 @@ void main() {
         float wDitherD = waterDither(gl_FragCoord.xy, frameCounter);
 
         vec3 worldViewDirD = normalize(mat3(gbufferModelViewInverse) * surfD);
-        float VdotLwD = dot(worldViewDirD, worldSunD);
+        float VdotLwD = dot(worldViewDirD, worldLightD);
         float gWD = 0.6, gW2D = gWD * gWD;
         float phaseSunD = (1.0 - gW2D) / (4.0 * PI * pow(max(1.0 + gW2D - 2.0 * gWD * VdotLwD, 1e-4), 1.5));
         const float isoPhaseD = 1.0 / (4.0 * PI);
 
-        vec3 sunIllumD = SUN_COLOR_BASE * sampleTransmittanceLUT_fast(worldSunD.y, PLANET_RADIUS) * dayFactorD;
+        vec3 directIllumD = timeD.lightColor * SUN_ILLUMINANCE
+                          * sampleTransmittanceLUT_fast(worldLightD.y, PLANET_RADIUS);
         vec3 skyIllumD = getSkyAmbient(eyeAltD) * skyVis;
         float resScaleD = 4096.0 / float(SHADOW_RESOLUTION);
 
@@ -222,15 +226,15 @@ void main() {
             if (sp.x >= 0.0 && sp.x <= 1.0 && sp.y >= 0.0 && sp.y <= 1.0)
                 shadow = step(sp.z - 0.0004 * resScaleD, texture(shadowtex1, sp.xy).r);
 
-            vec3 sunTransD = exp(-extinctionD * (t / max(worldSunD.y, 0.1)));
-            scatteringD += transmittanceD * sunIllumD * phaseSunD * shadow * sunTransD;
+            vec3 lightTransD = exp(-extinctionD * (t / max(worldLightD.y, 0.1)));
+            scatteringD += transmittanceD * directIllumD * phaseSunD * shadow * lightTransD;
             scatteringD += transmittanceD * skyIllumD * isoPhaseD;
             transmittanceD *= stepTransD;
         }
         scatteringD *= (1.0 - stepTransD) * scatterAlbedoD;
 
         float sceneLumaD = dot(scene, vec3(0.2126, 0.7152, 0.0722));
-        vec3 bedFallbackD = getSkyAmbient(eyeAltD) * (0.08 + 0.45 * skyVis) * dayFactorD;
+        vec3 bedFallbackD = getSkyAmbient(eyeAltD) * (0.08 + 0.45 * skyVis) * lightFactorD;
         vec3 bedColorD = mix(bedFallbackD, scene, smoothstep(0.01, 0.08, sceneLumaD));
         vec3 refractColorD = bedColorD * seabedTransD + scatteringD;
 
@@ -245,9 +249,8 @@ void main() {
         reflectColor *= skyVis;
 
         // Sun/moon glint (shared GGX).
-        vec3  Ld = (worldTime < 12700 || worldTime > 23250) ? normalize(sunPosition) : normalize(-sunPosition);
-        float sunUpD  = max(worldSunD.y, 0.0);
-        vec3  lightColD = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 1.0, 1.1), sunUpD);
+        vec3  Ld = normalize(mat3(gbufferModelView) * worldLightD);
+        vec3  lightColD = timeD.lightColor;
         const float F0D = 0.02;
         vec3  specD = ggxSpecular(vN, V, Ld, WATER_ROUGHNESS, vec3(F0D), lightColD)
                     * (1.0 - rainStrength * 0.75) * skyVis;
@@ -300,10 +303,11 @@ void main() {
     #ifdef WATER_FOG
 
     if (isEyeInWater == 1) {
-        vec3  wSun  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
+        TimeState timeWater = getTimeState();
+        vec3  wLight = timeWater.activeLightDir;
         vec3  wMoon = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
         float eyeAlt = cameraPosition.y - 64.0;
-        float dayFactor = clamp(wSun.y * 1.5 + 0.2, 0.04, 1.0); // dim at night / dusk
+        float lightFactor = clamp(dot(timeWater.lightColor, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
         vec3 absorption = vec3(WATER_ABSORPTION_R, WATER_ABSORPTION_G, WATER_ABSORPTION_B);
 
         // Ambient in-scatter ("fog") colour. The OLD code keyed this off the
@@ -318,7 +322,9 @@ void main() {
         float eyeSky = clamp(float(eyeBrightnessSmooth.y) / 240.0, 0.0, 1.0);
         eyeSky = max(eyeSky - WATER_SKYLIGHT_THRESHOLD, 0.0) / max(1.0 - WATER_SKYLIGHT_THRESHOLD, 0.001);
         float ambientVis = mix(eyeSky, skyVis, 0.3);
-        vec3  scatter = scatterCoeff * ambientVis * dayFactor;
+        vec3  skyAmbient = getSkyAmbient(eyeAlt);
+        vec3  skyTint = skyAmbient / max(max(skyAmbient.r, skyAmbient.g), max(skyAmbient.b, 1e-4));
+        vec3  scatter = scatterCoeff * skyTint * ambientVis * lightFactor;
 
         vec2 unjitU = uv;
         #ifdef TAA
@@ -374,9 +380,9 @@ void main() {
             float depthBelow  = max(surfaceY - opaqueWorld.y, 0.0);
             if (depthBelow < WATER_CAUSTICS_DEPTH_MAX && !isInShadow(opaqueWorldR)) {
                 vec3 sampleWorld = opaqueWorld * vec3(WATER_CAUSTICS_SCALE, 1.0, WATER_CAUSTICS_SCALE);
-                float k = computeWaterCaustics(sampleWorld, depthBelow, wSun,
+                float k = computeWaterCaustics(sampleWorld, depthBelow, wLight,
                                                frameTimeCounter * WATER_WAVE_SPEED);
-                float mod = 1.0 + k * WATER_CAUSTICS_STRENGTH * skyVis * dayFactor;
+                float mod = 1.0 + k * WATER_CAUSTICS_STRENGTH * skyVis * lightFactor;
                 sceneCaustic = scene * max(mod, 0.05);
             }
         }
@@ -402,7 +408,7 @@ void main() {
         //                    surfaceY reference) that paints the seabed also
         //                    modulates the in-scatter, so a bright shaft lands on
         //                    a bright floor band. This is the "match caustics".
-        if (wSun.y > 0.02) {
+        if (wLight.y > 0.02 && lightFactor > 0.001) {
             const float pi_local = 3.14159265359;
             vec3  viewDirW   = normalize(mat3(gbufferModelViewInverse) * screenToView(unjitU, d0));
             float gStepLen   = dist / float(WATER_GODRAY_STEPS);
@@ -412,14 +418,13 @@ void main() {
             // Henyey-Greenstein phase: forward-peaked for water particle scattering.
             float gHG     = WATER_GODRAY_PHASE_G;
             float gHG2    = gHG * gHG;
-            float cosT    = dot(viewDirW, wSun);
+            float cosT    = dot(viewDirW, wLight);
             float phase   = (1.0 - gHG2) / (4.0 * pi_local
                           * pow(max(1.0 + gHG2 - 2.0 * gHG * cosT, 1e-4), 1.5));
 
             // Sun reaching the water surface (T-LUT at sea level).
-            vec3 sunAtSurface = SUN_COLOR_BASE
-                              * sampleTransmittanceLUT_fast(wSun.y, PLANET_RADIUS)
-                              * dayFactor;
+            vec3 lightAtSurface = timeWater.lightColor * SUN_ILLUMINANCE
+                                * sampleTransmittanceLUT_fast(wLight.y, PLANET_RADIUS);
 
             float resScale = 4096.0 / float(SHADOW_RESOLUTION);
 
@@ -459,15 +464,15 @@ void main() {
                 #ifdef WATER_CAUSTICS
                 vec3 sampleScaled = samplePos
                                   * vec3(WATER_CAUSTICS_SCALE, 1.0, WATER_CAUSTICS_SCALE);
-                caustic = 1.0 + computeWaterCaustics(sampleScaled, depthBelow, wSun,
+                caustic = 1.0 + computeWaterCaustics(sampleScaled, depthBelow, wLight,
                                                      frameTimeCounter * WATER_WAVE_SPEED)
                               * WATER_CAUSTICS_STRENGTH;
                 #endif
 
                 // Multiply by the RAW scatter coefficient (not the skyVis-modulated
-                // ambient `scatter`): dayFactor is already in sunAtSurface and the
+                // ambient `scatter`): light activity is already in lightAtSurface and the
                 // shaft must not be re-killed by the terrain's per-pixel lightmap.
-                vec3 lightAtSample = sunAtSurface * shadow * max(caustic, 0.0)
+                vec3 lightAtSample = lightAtSurface * shadow * max(caustic, 0.0)
                                    * exp(-absorption * depthBelow);
                 vec3 transCam      = exp(-absorption * t);
 
@@ -502,9 +507,10 @@ void main() {
         else if (isClearIce) { ior = 1.31; opacity = CLEAR_ICE_OPACITY; doRefract = true;  }
         else                 { ior = 1.50; opacity = GLASS_OPACITY;     doRefract = true;  }
 
+        TimeState timeGlass = getTimeState();
         vec3 wSunT  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
         vec3 wMoonT = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
-        float dayFactor = clamp(wSunT.y * 1.5 + 0.2, 0.04, 1.0);
+        float lightFactorT = clamp(dot(timeGlass.lightColor, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
         const vec3 torchColor = vec3(0.9922, 0.6471, 0.1922);
 
         vec2 unjitT = uv;
@@ -538,9 +544,10 @@ void main() {
             base = bg; // colortex0 already holds the lit opaque ice
         } else {
             vec3 seeThrough = bg * albedoT;
-            // Scale skylight and ambient floor by dayFactor so glass doesn't glow at night.
+            // Scale skylight and ambient floor by the shared light activity so
+            // glass follows the same dusk/night transition as terrain.
             // Torchlight uses the warm blocklight color and is not suppressed at night.
-            vec3 ownColor   = albedoT * ((0.05 + 0.95 * skylight) * dayFactor + 1.2 * c2.r * torchColor);
+            vec3 ownColor   = albedoT * ((0.05 + 0.95 * skylight) * lightFactorT + 1.2 * c2.r * torchColor);
             base = mix(seeThrough, ownColor, opacity);
         }
 
@@ -573,14 +580,8 @@ void main() {
         // Sun/moon glint on glass/ice (shared GGX, matching water + PBR blocks).
         #if SPECULAR_SUN == 1
         {
-            vec3  sunV = normalize(sunPosition);
-            vec3  wS   = mat3(gbufferModelViewInverse) * sunV;
-            bool  dayT = wS.y > -0.04;
-            vec3  Lt   = dayT ? sunV : -sunV;
-            float upT  = dayT ? wS.y : -wS.y;
-            vec3  lcT  = (dayT ? mix(vec3(1.0, 0.55, 0.28), vec3(1.0, 0.96, 0.90), clamp(upT, 0.0, 1.0))
-                               : vec3(0.55, 0.66, 0.95) * 0.05)
-                       * smoothstep(-0.04, 0.08, upT) * SPECULAR_SUN_STRENGTH;
+            vec3  Lt  = normalize(mat3(gbufferModelView) * timeGlass.activeLightDir);
+            vec3  lcT = timeGlass.lightColor * SPECULAR_SUN_STRENGTH;
             float roughT = isSolidIce ? 0.28 : 0.05;
             tResult += ggxSpecular(tN, tV, Lt, roughT, vec3(F0t), lcT) * skyVis * (1.0 - rainStrength * 0.75);
         }
@@ -680,10 +681,12 @@ void main() {
 
     vec2 distortN = (viewNormal - geoViewN).xy;
 
+    TimeState timeWater = getTimeState();
     vec3  worldSunDir  = mat3(gbufferModelViewInverse) * normalize(sunPosition);
     vec3  worldMoonDir = mat3(gbufferModelViewInverse) * normalize(-sunPosition);
     float eyeAltitude  = cameraPosition.y - 64.0;
-    float dayFactor    = clamp(worldSunDir.y * 1.5 + 0.2, 0.04, 1.0);
+    vec3  worldLightDir = timeWater.activeLightDir;
+    float lightFactor = clamp(dot(timeWater.lightColor, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
 
     vec3 refractColor = scene;
     #ifdef WATER_REFRACTION
@@ -725,9 +728,9 @@ void main() {
     #if defined(WATER_CAUSTICS) && defined(WATER_REFRACTION)
     if (refractedHit && seabedDepth > 0.05 && seabedDepth < WATER_CAUSTICS_DEPTH_MAX) {
         vec3 sampleWorld = seabedWorld * vec3(WATER_CAUSTICS_SCALE, 1.0, WATER_CAUSTICS_SCALE);
-        float k = computeWaterCaustics(sampleWorld, seabedDepth, worldSunDir,
+        float k = computeWaterCaustics(sampleWorld, seabedDepth, worldLightDir,
                                        frameTimeCounter * WATER_WAVE_SPEED);
-        float mod = 1.0 + k * WATER_CAUSTICS_STRENGTH * skyVis * dayFactor;
+        float mod = 1.0 + k * WATER_CAUSTICS_STRENGTH * skyVis * lightFactor;
         refractColor = refractColor * max(mod, 0.05);
     }
     #endif
@@ -757,12 +760,13 @@ void main() {
         vec3  stepTrans = exp(-extinction * stepLenW);
         float wDither   = waterDither(gl_FragCoord.xy, frameCounter);
 
-        float VdotLw   = dot(normalize(mat3(gbufferModelViewInverse) * viewWater), worldSunDir);
+        float VdotLw   = dot(normalize(mat3(gbufferModelViewInverse) * viewWater), worldLightDir);
         float gW = 0.6, gW2 = gW * gW;
         float phaseSun = (1.0 - gW2) / (4.0 * PI * pow(max(1.0 + gW2 - 2.0 * gW * VdotLw, 1e-4), 1.5));
         const float isoPhase = 1.0 / (4.0 * PI);
 
-        vec3  sunIllum  = SUN_COLOR_BASE * sampleTransmittanceLUT_fast(worldSunDir.y, PLANET_RADIUS) * dayFactor;
+        vec3  directIllum = timeWater.lightColor * SUN_ILLUMINANCE
+                          * sampleTransmittanceLUT_fast(worldLightDir.y, PLANET_RADIUS);
         vec3  skyIllum  = getSkyAmbient(eyeAltitude) * skyVis;
         float resScaleW = 4096.0 / float(SHADOW_RESOLUTION);
 
@@ -784,8 +788,8 @@ void main() {
                 shadow = step(sp.z - 0.0004 * resScaleW, texture(shadowtex1, sp.xy).r);
 
             // Sun reaching depth t (attenuated by the water column above it).
-            vec3 sunTrans = exp(-extinction * (t / max(worldSunDir.y, 0.1)));
-            scattering += transmittance * sunIllum * phaseSun * shadow * sunTrans;
+            vec3 lightTrans = exp(-extinction * (t / max(worldLightDir.y, 0.1)));
+            scattering += transmittance * directIllum * phaseSun * shadow * lightTrans;
             scattering += transmittance * skyIllum * isoPhase;
             transmittance *= stepTrans;
         }
@@ -816,17 +820,8 @@ void main() {
     }
     #endif
 
-    vec3  sunDir  = normalize(sunPosition);
-    vec3  moonDir = normalize(-sunPosition);
-
-    vec3 L = (worldTime < 12700 || worldTime > 23250) ? sunDir : moonDir;
-
-    float sunUp     = max(dot(worldSunDir, vec3(0.0, 1.0, 0.0)), 0.0);
-    vec3  sunCol    = mix(vec3(1.0, 0.65, 0.35) * 0.15, vec3(1.0, 1.0, 1.1), sunUp);
-    float moonUp    = max(dot(worldMoonDir, vec3(0.0, 1.0, 0.0)), 0.0);
-    vec3  moonCol   = vec3(0.65, 0.85, 1.0) * 0.02;
-    float moonVis   = pow(clamp(dot(worldMoonDir, vec3(0.0, 1.0, 0.0)) + 0.1, 0.0, 0.1) / 0.1, 2.0);
-    vec3  lightCol  = mix(sunCol, moonCol, moonVis);
+    vec3 L = normalize(mat3(gbufferModelView) * worldLightDir);
+    vec3 lightCol = timeWater.lightColor;
 
     // Sun/moon glint via the shared GGX (same Cook-Torrance as the integrated-PBR
     // blocks — water/glass/PBR now share one specular model).

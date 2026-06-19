@@ -892,10 +892,9 @@ vec3 cloudReflection(vec3 clearSky, vec3 origin, vec3 rd) {
     TimeState t   = getTimeState();
     vec3 lightDir = t.activeLightDir;
 
-    vec3  exoSun   = vec3(1.0, 1.0, 1.1) * SUN_ILLUMINANCE;
-    vec3  exoMoon  = vec3(0.65, 0.85, 1.0) * MOON_ILLUMINANCE * 10.0;
-    float isDay    = smoothstep(-0.1, 0.1, t.sunUp);
-    vec3  lightCol = mix(exoMoon, exoSun, isDay) * 1.5;
+    // Reflection clouds use the same direct-light palette and twilight overlap
+    // as terrain; the gain only restores the cloud march's presentation scale.
+    vec3  lightCol = t.lightColor * (SUN_ILLUMINANCE * 1.5);
 
     vec3  color    = clearSky;
     float cloudOcc = 1.0;
