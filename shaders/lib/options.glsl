@@ -4,12 +4,6 @@
 #define RENDER_SCALE 0.67 // [0.33 0.5 0.59 0.67 0.77 1.0] ultra performance, performance, balanced, quality, ultra quality, native
 const float renderScale = RENDER_SCALE;
 
-// --- Distant Horizons --------------------------------------------------------
-// LOD terrain/water rendered by the Distant Horizons mod, beyond the vanilla
-// render distance. The dh_terrain/dh_water programs forward-light the LODs into
-// colortex0; the deferred chain (d7/d8) detects DH pixels via dhDepthTex0 and
-// applies atmosphere instead of overwriting them with sky. Enable only with the
-// DH mod installed (inert otherwise — DH depth reads 1.0 everywhere).
 #define DISTANT_HORIZONS
 #define DH_FOG // apply the atmospheric aerial perspective to DH LOD terrain/water
 
@@ -68,13 +62,6 @@ const float renderScale = RENDER_SCALE;
 
 #define BELT_OF_VENUS
 #define BELT_SHADOW_SOFTNESS 0.06 // [0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.14 0.20] angular half-width of Earth's shadow penumbra (sun cosine units). Smaller = crisper belt (more banding risk); larger = softer/washed out.
-// Earth's shadow in VIEW space: once the sun is low, the forward Mie phase peaks
-// toward the (below-horizon) sun, so the warm DIRECT sun/moon glow pools BELOW the
-// horizon line and renders as a misaligned warm band under the horizon. This
-// anchors the direct (warm) glow to the horizon so it hugs the horizon line.
-// Multi-scatter is left alone, so the sub-horizon limb still glows softly. Only
-// active near/below the horizon while the sun is low; the above-horizon belt
-// detail (the per-sample eShadow gradient) is untouched. 0 = old behavior.
 #define BELT_VIEW_SHADOW 1.0 // [0.0 0.25 0.5 0.75 1.0] strength of the view-space horizon anchor on the direct warm glow.
 
 #define SUN_ILLUMINANCE 10.0  // [1.0 2.5 5.0 7.5 10.0 12.5 15.0 20.0] Sun light intensity multiplier for atmospheric scattering
@@ -116,12 +103,6 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_MIN_TRANSMITTANCE 0.01 // [0.001 0.005 0.01 0.02 0.05] early-out when accumulated transmittance falls below this
 #define CLOUDS_DEBUG 0
 
-// ── Altocumulus (2nd layer: thin VOLUMETRIC "mackerel sky") ──────────────────
-// A thin volumetric shell ABOVE the cumulus deck, raymarched like the cumulus
-// but with an egg-shape altitude profile so the small cellular
-// elements have real body instead of reading as flat speckles. Cheap: thin
-// shell = few steps. Shares the cumulus lighting/AP path so it tints the same
-// at sunrise/sunset and dissolves into horizon haze.
 #define CLOUDS_ALTO
 #define CLOUDS_ALTO_ALTITUDE 2000.0   // [2000.0 3000.0 4000.0 5000.0 6000.0 6200.0 7000.0 8000.0 9000.0] shell base altitude (m above surface). The cumulus layer always composites over (occludes) the altocumulus regardless of this.
 #define CLOUDS_ALTO_THICKNESS 200.0   // [200.0 300.0 400.0 500.0 700.0 1000.0] shell vertical thickness (m) — altocumulus is a thin layer
@@ -153,7 +134,7 @@ const float renderScale = RENDER_SCALE;
 #define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.001 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
-#define AUTO_EXPOSURE_MAX 1.5 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
+#define AUTO_EXPOSURE_MAX 4.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
 #define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
@@ -215,26 +196,11 @@ const float renderScale = RENDER_SCALE;
 #define WATER_SCATTER_G 0.045 // [0.0 0.02 0.03 0.045 0.06 0.09 0.12]
 #define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
 
-// ---------------------------------------------------------------------------
-// PBR / specular reflections (opaque) — v2 rebuild, metals first.
-// Material (metal albedo + smoothness) is written per-texel to colortex7 by the
-// gbuffers (block IDs 21001). The d7b_reflections deferred pass does VNDF
-// importance-sampled SSR that reflects the PREVIOUS frame (colortex5) reprojected,
-// with a sky-view fallback.
-// ---------------------------------------------------------------------------
 #define INTEGRATED_PBR        // write per-block-ID material to colortex7
 #define SPECULAR_REFLECTIONS  // opaque reflection pass (gates d7b_reflections)
 
-// Per-texel roughness: metal smoothness is derived from each pixel's albedo
-// lightness (using a `sqrt(linear_step)` response), so bright facets read
-// near-mirror and dark / worn texels read rough — varying roughness WITHIN one
-// block's texture. METAL_SMOOTHNESS is the center, _VARIATION the per-texel spread.
 #define METAL_SMOOTHNESS 0.9          // [0.40 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90] center smoothness of metals
 #define METAL_ROUGHNESS_VARIATION 1.0 // [0.0 0.1 0.2 0.3 0.4 0.45 0.5 0.6 0.7 0.8] how much per-texel roughness varies with the texture's brightness (0 = uniform, high = bright spots mirror / dark spots rough)
-
-// Auto-generated normals: perturb the surface normal by the albedo's luminance
-// gradient (same finite-difference bump used for ice), so reflections pick up the
-// texture's relief — adds detail to the reflection without a normal map.
 #define PBR_GEN_NORMALS                // generate bump normals for PBR blocks from the texture
 #define PBR_NORMAL_STRENGTH 0.6        // [0.1 0.2 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0] bump strength (higher = more relief / wavier reflections)
 #define PBR_DIELECTRIC_NORMAL 2.0      // [1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0] extra bump-normal strength for NON-metals (stone/wood/etc.), on top of PBR_NORMAL_STRENGTH
@@ -248,10 +214,6 @@ const float renderScale = RENDER_SCALE;
 #define SPECULAR_SUN 1              // [0 1] direct GGX sun/moon specular highlight (glint) on PBR blocks
 #define SPECULAR_SUN_STRENGTH 1.0   // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] brightness of the sun/moon glint
 #define PBR_REFLECT_SHADE 0.75       // [0.0 0.25 0.35 0.5 0.65 0.8 1.0] dim PBR reflections + sun glint in shadow / low sky-access (caves), using the real filtered+contact sun visibility from d7_composite. 0 = reflections ignore shading (physically pure, but shines in dark areas); 1 = reflections fully gated by sun visibility
-// Non-metals (stone, wood, concrete, glass-like) -> strong SUN glint, weak SKY wash.
-// The SCENE (surroundings) reflection strength is set per-class by F0 in
-// terrain.glsl (polished/gem high = glossy; dirt/wood low = matte). This knob only
-// scales the SKY portion, so you can keep glossy surroundings while killing sky.
 #define PBR_DIELECTRIC_REFLECT 0.1 // [0.0 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] non-metal SKY reflection strength only (scene reflection is F0-driven per class)
 #define PBR_DIELECTRIC_SUN 1.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
 #define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
@@ -289,38 +251,12 @@ const float renderScale = RENDER_SCALE;
 #define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
 #define VOXEL_SHAPES
 
-// --- Special blocklight detail ------------------------------------------------
-// A dedicated lighting path for light-emitting blocks (torches, lava, lanterns,
-// redstone...). Without it, emissive blocks are shaded like any opaque surface
-// (NdotL sun + GI) plus a flat whole-block glow hack -> lava darkens when it
-// faces away from the sun and a torch's wooden stick glows as brightly as the
-// flame. With it ON, a per-texel emissive MASK (heuristic from albedo, no labPBR
-// needed) drives an UNSHADED self-emission term, so only the genuinely glowing
-// texels (flame, hot lava, lit filament) emit and the rest shade normally.
 #define SPECIAL_BLOCKLIGHT // master toggle for the per-texel self-emission path (d7_composite)
 #define EMISSIVE_THRESHOLD_LO 0.42 // [0.20 0.28 0.35 0.42 0.50 0.58 0.66] albedo value below which a texel is treated as non-emissive (the stick). Lower = more of the block glows.
 #define EMISSIVE_THRESHOLD_HI 0.72 // [0.55 0.62 0.66 0.72 0.78 0.85 0.92] albedo value at/above which a texel is fully emissive (the flame). Raise to confine the glow to only the brightest texels.
 #define EMISSIVE_BRIGHTNESS 6.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0] HDR strength of the self-emission added to emissive texels. The texel's own albedo supplies the color.
-// Experimental: make the voxelization aware of WHERE on a blocklight the emission
-// comes from. A torch's emission is concentrated in a flame sub-box at the top of
-// its post while the post stays an opaque occluder, so nearby surfaces low behind
-// the stick fall into its shadow (fancy directional blocklight detail in GI).
 #define VOXEL_EMISSIVE_SHAPES // gate the gi.glsl emissive sub-box logic; off = whole-voxel emission (legacy)
-// --- World-space irradiance cache (IRC) --------------------------------------
-// Indirect light is gathered into a persistent, camera-relative 3D grid (the
-// irradiance cache) by compute passes in the shadowcomp stage, then sampled
-// per-pixel during shading. Because the cache lives in WORLD space, lighting is
-// stable under camera motion (no screen-space temporal crawl) and newly revealed
-// surfaces read an already-converged cell (no disocclusion flush). This replaces
-// the old per-pixel ReSTIR reservoirs + screen-space SVGF denoiser entirely.
-//
-// Grid: 1 cell = 1 world block (IRC_CELL 1) for sharp, per-block GI resolution.
-// The cache is a NEAR-FIELD grid DECOUPLED from the big voxel grid (the voxel grid
-// reaches VOXEL_DISTANCE chunks for ray tracing, but storing 1-block irradiance over
-// all of it would be tens of millions of cells). IRC_QUALITY sets the cache extent;
-// beyond it, surfaces fall back to sky ambient. Origin is snapped to 1 block so the
-// camera reprojects the cache by integer cells. The image dims in shaders.properties
-// (IRC_XZ / IRC_Y) MUST match the IRC_QUALITY chain below.
+
 #define IRC_CELL 1             // world blocks per cache cell (keep 1 — sharp GI)
 #define IRC_QUALITY 1          // [0 1 2] cache extent/res: 0 = 128x96x128 near-field (fast), 1 = 192x128x192 (balanced), 2 = 256x128x256 (wide, costly). MUST match IRC_XZ/IRC_Y in shaders.properties.
 #if IRC_QUALITY == 0
@@ -336,6 +272,7 @@ const float renderScale = RENDER_SCALE;
     #define IRC_DIM_Y  128
     #define IRC_WG ivec3(32, 16, 32)
 #endif
+
 #define IRC_RAYS 1             // [1 2 3 4] GI rays traced per cell per update
 #define IRC_DECAY 0.99         // [0.90 0.94 0.96 0.97 0.98 0.99 0.992 0.995] per-frame temporal retention of the cache. Higher = more effective samples = far less per-frame flicker ("disco"), at the cost of slower response to lighting changes. The reference packs run ~0.99.
 #define IRC_MULTIBOUNCE 0.30   // [0.0 0.15 0.30 0.5 0.7 1.0] strength of the cache self-feedback (infinite bounce). 0 = single bounce (darker, closer to the old ReSTIR look); 1 = full multi-bounce (brighter, more color bleed, can wash out dark interiors).
@@ -353,11 +290,6 @@ const float renderScale = RENDER_SCALE;
 #define GTAO_STEPS 4         // [2 3 4 6 8] horizon-march taps per slice side
 #define GTAO_RADIUS 1.0      // [0.5 0.75 1.0 1.5 2.0 3.0] AO world radius (blocks); short = tight contact shading
 
-// --- Screen-space GI denoiser (per-pixel PT path: d1 temporal + d2..d5 a-trous) --
-// The per-pixel ray (d0_trace) is a noisy 1-spp signal. d1 reprojects + accumulates
-// it across frames; d2..d5 run four variance-guided a-trous wavelet passes that blur
-// noise while preserving geometric/lighting edges. History length (the .a channel)
-// drives BOTH the temporal blend rate and the spatial filter width per pixel.
 #define GID_TEMPORAL_MAX_FRAMES 48 // [8 12 16 24 32 48 64 128] max temporal history. Higher = cleaner/steadier but more ghosting when lighting changes.
 #define GID_NORMAL_EXP_MIN 8.0     // loose normal rejection for LOW-history pixels: accepts slightly off-normal history at curved edges so disocclusions FILL IN instead of locking at 1-spp (the old fixed pow-128 caused permanent edge fireflies).
 #define GID_NORMAL_EXP_MAX 64.0    // sharp normal rejection once history has CONVERGED (keeps edges crisp).
