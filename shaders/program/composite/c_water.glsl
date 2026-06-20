@@ -136,8 +136,10 @@ void main() {
     #ifdef DISTANT_HORIZONS
     float dhDepth = dhSampleDepth(uv * renderScale);
     bool isDhWater = isDhWaterFlag(flag, c1.a) && d1 >= 1.0 && isDhDepthValue(dhDepth);
+    bool isDhTranslucent = isTranslucent && c1.a < 0.25 && d1 >= 1.0 && isDhDepthValue(dhDepth);
     #else
     bool isDhWater = false;
+    bool isDhTranslucent = false;
     #endif
     float skylight = clamp(c2.g, 0.0, 1.0); 
     float skyVis = max(skylight - WATER_SKYLIGHT_THRESHOLD, 0.0) / max(1.0 - WATER_SKYLIGHT_THRESHOLD, 0.001);
@@ -517,7 +519,13 @@ void main() {
         #ifdef TAA
         unjitT -= getTaaJitter() / vec2(viewWidth, viewHeight);
         #endif
+        // DH translucent depth belongs to the DH projection. Reconstructing it
+        // with the vanilla inverse projection collapses distant ice toward the
+        // far plane, breaking its reflection direction and atmospheric fog.
         vec3 viewSurf = screenToView(unjitT, d0);
+        #ifdef DISTANT_HORIZONS
+        if (isDhTranslucent) viewSurf = dhViewPos(unjitT, dhDepth);
+        #endif
         vec3 tN = normalize(c1.rgb * 2.0 - 1.0);
         vec3 tV = normalize(-viewSurf);
 
@@ -527,7 +535,7 @@ void main() {
 
         vec3 bg = scene;
         #ifdef WATER_REFRACTION
-        if (doRefract) {
+        if (doRefract && !isDhTranslucent) {
             vec3 rDir = refract(normalize(viewSurf), tN, 1.0 / ior);
             if (dot(rDir, rDir) > 1e-6) {
                 vec2 rUV = viewToScreen(viewSurf + rDir * TRANSLUCENT_REFRACTION_DEPTH).xy;
@@ -563,10 +571,15 @@ void main() {
         vec3 reflectColor = getSkyReflection(worldRefl, eyeAltT) * skyVis;
         #ifdef WATER_REFLECTIONS
         {
-            float nz = waterDither(gl_FragCoord.xy, frameCounter);
-            vec2 hUV;
-            if (waterReflectSSR(viewSurf + tN * 0.1, viewReflDir, nz, hUV)) {
-                reflectColor = textureLod(colortex0, hUV * renderScale, 0.0).rgb;
+            // SSR marches vanilla depth/projection. DH ice still gets the stable
+            // sky reflection (plus glint) but must not trace that incompatible
+            // buffer or it samples unrelated near-scene pixels.
+            if (!isDhTranslucent) {
+                float nz = waterDither(gl_FragCoord.xy, frameCounter);
+                vec2 hUV;
+                if (waterReflectSSR(viewSurf + tN * 0.1, viewReflDir, nz, hUV)) {
+                    reflectColor = textureLod(colortex0, hUV * renderScale, 0.0).rgb;
+                }
             }
         }
         #endif
