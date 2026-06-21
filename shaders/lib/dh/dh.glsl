@@ -65,15 +65,14 @@ vec3 dhViewPos(vec2 ndcUV, float dhd) {
 // Distant water/glass counting as an occluder is negligible.
 float dhScreenShadow(vec3 viewPos, vec3 viewNormal, vec3 lightDirView, float dither) {
     const int STEPS = 32;
-    float viewDist = length(viewPos);
     float rayLen   = 128.0; // blocks toward the sun (matches the near far-shadow ray)
     vec3  stepV    = lightDirView * (rayLen / float(STEPS));
     float stepLen  = length(stepV);
 
-    // Push off the surface along its normal (distance-scaled) so the ray separates
-    // from the start surface — without this, at LOD distance the ray hugs the
-    // surface and never detects an occluder (the patchiness the user saw).
-    float nBias  = 0.2 + viewDist * 0.0025;
+    // Match getInfiniteShadows()'s far path. A distance-growing normal bias can
+    // jump several DH voxels and make the ray miss the terrain that should cast
+    // the shadow, which reads as uniformly bright/flat distant terrain.
+    float nBias  = 0.2;
     vec3  rayPos = viewPos + viewNormal * nBias + stepV * dither;
 
     float thickness     = max(stepLen * 1.5, 8.0);

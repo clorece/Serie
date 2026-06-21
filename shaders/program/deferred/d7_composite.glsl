@@ -204,10 +204,12 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     }
     // DH LODs are outdoors; if the LOD lightmap is missing/low, don't let the
     // whole tile go black — floor the sky exposure so it still receives sun+sky.
-    float skyLight = max(lightmap.y, 0.35);
+    // A large safety floor lifts genuinely dark DH faces and makes the LOD ring
+    // flatter/brighter than regular terrain, especially at high indirect light.
+    float skyLight = max(lightmap.y, 0.08);
     float skyOcc   = sqrt(skyLight);
 
-    vec3 shadow = dhSunShadow(playerPos, worldNormal, lightmap.y); // shadow map (near range)
+    vec3 shadow = dhSunShadow(playerPos, worldNormal, lightmap.y, NdotL, material); // shadow map (near range)
     #ifdef SCREENSPACE_SHADOWS
         float dith = interleavedGradientNoise(floor(gl_FragCoord.xy), frameCounter);
         shadow *= dhScreenShadow(viewPos, normal, lightVector, dith); // far LOD self-shadowing
@@ -233,8 +235,33 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     float shadowLuma = dot(shadow, vec3(0.2126, 0.7152, 0.0722));
     vec3  giSky = ambientColor * float(GI_SKY_BRIGHTNESS);
     giSky *= mix(vec3(1.0), vec3(1.25, 1.04, 0.72), GI_SKY_WARMTH);
-    float hemi  = worldNormal.y * 0.35 + 0.65;
-    vec3  ambient = giSky * skyLight * hemi * (1.0 - 0.5 * shadowLuma * max(NdotL, 0.0));
+    // DH has no voxel GI/AO, so recover large-scale form from its geometry normal.
+    // The previous 65% wall floor erased most of the slope contrast.
+    float hemi = 0.14 + 0.86 * pow(max(worldNormal.y, 0.0), 1.35);
+    // Match the near GI path: sky irradiance yields to visible direct light
+    // instead of stacking a half-strength ambient wash on sun-facing surfaces.
+    vec3 ambient = giSky * skyLight * hemi;
+
+    #ifdef VOXEL_GI
+        // Reproduce d0_trace's energy pipeline for the raster DH fallback. Near
+        // terrain applies GI_STRENGTH, a small light-colour tint, and the source
+        // luminance clamp before d7 receives the resolved indirect buffer. DH
+        // previously skipped all three, so LIGHTING_INDIRECT amplified a much
+        // larger raw ambient value than it did on regular terrain.
+        ambient *= float(GI_STRENGTH) / 100.0;
+
+        vec3 normLightCol = lightColor
+                          / max(dot(lightColor, vec3(0.2126, 0.7152, 0.0722)), 0.1);
+        ambient = mix(ambient, ambient * normLightCol, 0.10);
+
+        float ambientLuma = dot(ambient, vec3(0.2126, 0.7152, 0.0722));
+        if (GID_FIREFLY_MAX < 1000.0 && ambientLuma > GID_FIREFLY_MAX) {
+            ambient *= GID_FIREFLY_MAX / ambientLuma;
+        }
+    #endif
+
+    float directSkyMask = 1.0 - shadowLuma * max(NdotL, 0.0);
+    ambient *= directSkyMask;
 
     // Torch term (matches getLightmap's daylight suppression).
     float sunUpA = clamp(dot(normalize(sunPosition), normalize(upPosition)), 0.0, 1.0);
@@ -246,7 +273,12 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
 
-    vec3 outColor = albedo * (direct + indirect);
+    // Small DH-only exposure trim. The LOD albedo is a spatially averaged block
+    // colour and therefore retains less dark texture detail than regular terrain;
+    // this keeps its perceived brightness aligned without changing either global
+    // lighting multiplier.
+    const float DH_LIGHTING_EXPOSURE = 0.86;
+    vec3 outColor = albedo * (direct + indirect) * DH_LIGHTING_EXPOSURE;
 
     #ifdef SPECIAL_BLOCKLIGHT
     if (material > 0.83) {

@@ -11,9 +11,9 @@
 // same shadows / fog / volumetric light as the near scene. (No voxel GI — DH is
 // beyond the voxel grid, so it falls back to lightmap ambient.)
 //
-// The near edge is dither-faded to 0 across the vanilla render distance so the
-// real (textured, voxel-GI-lit) terrain shows through and the LOD only fills the
-// far ring beyond it.
+// DH is allowed to overlap the vanilla render region. Iris depth-tests this
+// opaque pass against vanilla terrain, so the detailed geometry wins naturally
+// while DH remains underneath to fill chunk-boundary and loading gaps.
 
 const float DH_TERRAIN_FLAG = 0.0625;
 
@@ -24,7 +24,6 @@ const float DH_TERRAIN_FLAG = 0.0625;
 flat out int  mat;
 out vec2 lmCoord;
 out vec3 viewNormal;
-out vec3 playerPos;
 out vec4 glColor;
 
 void main() {
@@ -35,7 +34,6 @@ void main() {
     glColor   = vec4(0.0);
     lmCoord   = vec2(0.0);
     viewNormal = vec3(0.0, 1.0, 0.0);
-    playerPos = vec3(0.0);
     return;
 #else
     mat      = dhMaterialId;
@@ -43,8 +41,6 @@ void main() {
     lmCoord  = mat2(gl_TextureMatrix[1]) * gl_MultiTexCoord1.st;
 
     viewNormal = normalize(gl_NormalMatrix * gl_Normal);
-    playerPos  = (gbufferModelViewInverse * gl_ModelViewMatrix * gl_Vertex).xyz;
-
     #ifdef TAA
         gl_Position.xy += getTaaJitter() * 2.0 * gl_Position.w / vec2(viewWidth, viewHeight);
     #endif
@@ -57,13 +53,9 @@ void main() {
 
 #ifdef FRAGMENT
 
-#include "/lib/util/common.glsl"
-#include "/lib/util/dither.glsl"
-
 flat in int  mat;
 in vec2 lmCoord;
 in vec3 viewNormal;
-in vec3 playerPos;
 in vec4 glColor;
 
 void main() {
@@ -73,12 +65,6 @@ void main() {
     // (No manual depthtex1 occlusion discard here: Iris already depth-tests the
     // opaque DH terrain against the vanilla scene. Adding one created a 1-texel
     // seam at near-terrain silhouettes that TAA read as disocclusion.)
-
-    // Near-edge dither fade so vanilla terrain (closer than `far`) wins.
-    float dist     = length(playerPos);
-    float dither   = interleavedGradientNoise(gl_FragCoord.xy, frameCounter);
-    float nearFade = smoothstep(far * 0.5, far * 0.7, dist);
-    if (nearFade < dither) discard;
 
     vec3 albedo = glColor.rgb;
 

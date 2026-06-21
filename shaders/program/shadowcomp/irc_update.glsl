@@ -129,7 +129,8 @@ void main() {
             // (compounds across frames -> multi/infinite bounce). imageLoad (point
             // fetch) — the cache is bound here as an image, not a sampler.
             ivec3 hc;
-            if (ircCoordOf(h.pos, h.normal, camPos, hc)) {
+            // IRC_ANTI_LEAK_CALLSITE -- revert with the marked irc.glsl section.
+            if (ircCoordOf(voxelSampler, h.pos, h.normal, camPos, hc)) {
                 vec4 b = imageLoad(irradianceImg, hc);
                 rad += float(IRC_MULTIBOUNCE) * h.albedo * (b.rgb / max(b.a, 1e-4));
             }

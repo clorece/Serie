@@ -21,21 +21,31 @@ float dhShadow2D(sampler2D tex, vec2 uv, float receiverDepth) {
 }
 
 // Returns the (possibly coloured) sun shadow for a distant LOD fragment.
-vec3 dhSunShadow(vec3 playerPos, vec3 worldNormal, float skyLight) {
+vec3 dhSunShadow(vec3 playerPos, vec3 worldNormal, float skyLight,
+                 float NdotL, float material) {
     float dist = length(playerPos.xz);
     // Beyond the shadow map there is no occluder data — fade to fully lit so the
     // far LODs don't snap dark at the shadow-distance boundary.
     float coverage = 1.0 - smoothstep(shadowDistance * 0.85, shadowDistance, dist);
     if (coverage <= 0.0) return vec3(1.0);
 
-    vec3 bias = worldNormal * (0.10 + 0.05 * dist) * (1.0 - 0.5 * skyLight);
-    vec4 shadowPos = toShadowSpace(vec4(playerPos + bias, 1.0));
+    // Match getShadow()'s bounded normal/voxel-edge bias.  The previous DH bias
+    // grew by 0.05 blocks per block of distance (5+ whole blocks at LOD range),
+    // moving the receiver off its real surface and causing pervasive light leaks.
+    float playerDist = length(playerPos);
+    vec3 bias = 0.25 * worldNormal
+              * clamp(0.12 + 0.01 * playerDist, 0.0, 1.0)
+              * (2.0 - clamp(NdotL, 0.0, 1.0));
+    vec3 edge = (0.1 - 0.2 * fract(playerPos + cameraPosition + worldNormal * 0.01))
+              * (1.0 - skyLight);
+    vec4 shadowPos = toShadowSpace(vec4(playerPos + bias + edge, 1.0));
     if (shadowPos.x < 0.0 || shadowPos.x > 1.0 ||
         shadowPos.y < 0.0 || shadowPos.y > 1.0 ||
         shadowPos.z < 0.0 || shadowPos.z > 1.0) return vec3(1.0);
 
     float resScale = 4096.0 / float(shadowMapResolution);
-    float receiverDepth = shadowPos.z - 0.0004 * resScale;
+    float receiverDepth = shadowPos.z - 0.00006 * resScale;
+    if (material > 0.16 && material < 0.83) receiverDepth -= 0.000175;
 
     float s0 = dhShadow2D(shadowtex0, shadowPos.xy, receiverDepth);
     float s1 = dhShadow2D(shadowtex1, shadowPos.xy, receiverDepth);

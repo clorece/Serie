@@ -126,7 +126,7 @@ const float renderScale = RENDER_SCALE;
 #define TAA_SHARPNESS 0.6 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 #define BLOOM
-#define BLOOM_STRENGTH 0.22 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
+#define BLOOM_STRENGTH 0.10 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define AUTO_EXPOSURE
 #define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
@@ -142,8 +142,8 @@ const float renderScale = RENDER_SCALE;
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 //#define VIGNETTE
 
-#define LIGHTING_DIRECT 110   // [50 75 100 110 125 150 200]
-#define LIGHTING_INDIRECT 70  // [25 40 55 70 85 100 125 150]
+#define LIGHTING_DIRECT 75   // [50 75 100 110 125 150 200]
+#define LIGHTING_INDIRECT 150  // [25 40 55 70 85 100 125 150]
 #define PT_RASTER_AMBIENT_FLOOR 0 // [0 5 10 15 20 35 50] neutral indirect-light floor for path-traced GI. Fades out where real PT energy exists; does not inject sky or block lightmap color.
 //#define LIGHTING_AO_FULL
 
@@ -213,12 +213,12 @@ const float renderScale = RENDER_SCALE;
 #define REFLECTION_SKY_STRENGTH 0.5 // [0.0 0.2 0.3 0.4 0.5 0.6 0.7 0.8 1.0] brightness of the environment SKY reflection on PBR blocks (lower = less flat sky wash; SSR scene hits + sun glint unaffected)
 #define SPECULAR_SUN 1              // [0 1] direct GGX sun/moon specular highlight (glint) on PBR blocks
 #define SPECULAR_SUN_STRENGTH 1.0   // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] brightness of the sun/moon glint
-#define PBR_REFLECT_SHADE 0.75       // [0.0 0.25 0.35 0.5 0.65 0.8 1.0] dim PBR reflections + sun glint in shadow / low sky-access (caves), using the real filtered+contact sun visibility from d7_composite. 0 = reflections ignore shading (physically pure, but shines in dark areas); 1 = reflections fully gated by sun visibility
+#define PBR_REFLECT_SHADE 0.5       // [0.0 0.25 0.35 0.5 0.65 0.8 1.0] dim PBR reflections + sun glint in shadow / low sky-access (caves), using the real filtered+contact sun visibility from d7_composite. 0 = reflections ignore shading (physically pure, but shines in dark areas); 1 = reflections fully gated by sun visibility
 #define PBR_DIELECTRIC_REFLECT 0.1 // [0.0 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] non-metal SKY reflection strength only (scene reflection is F0-driven per class)
 #define PBR_DIELECTRIC_SUN 1.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
 #define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
 #define REFLECTION_ACCUM_FRAMES 48 // [4 8 12 16 24 32 48] frames blended by the reflection temporal filter (higher = cleaner but more ghosting on motion)
-#define REFLECTION_FIREFLY_CLAMP 8.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] hard ceiling on a single reflected sample — backstop for pathological HDR spikes (1000 = off)
+#define REFLECTION_FIREFLY_CLAMP 24.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] hard ceiling on a single reflected sample — backstop for pathological HDR spikes (1000 = off)
 #define REFLECTION_FIREFLY_WEIGHT 1.0 // [0.0 0.25 0.5 1.0 2.0 4.0] Karis inverse-luma weight on the per-ray average — suppresses sparkly fireflies from reflected emissive blocklights (lava/torch). 0 = off (plain average); higher = darker but cleaner. Self-correcting: never dims smooth/coherent reflections
 #define REFLECTION_SPATIAL_FIREFLY 4.0 // [0.0 2.0 3.0 4.0 6.0 8.0] spatial denoise (d7c): reject a neighbour tap whose luma exceeds the center by this factor — stops the bilateral blur from SMEARING a surviving emissive spike into a streak. 0 = off
 #define REFLECTION_SPATIAL_RADIUS 14.0 // [0.0 6.0 8.0 10.0 14.0 18.0 24.0] max blur radius (px) of the spatial reflection denoise; scales UP when temporal history is low (in motion), so motion noise is blurred but converged pixels stay sharp
@@ -278,13 +278,13 @@ const float renderScale = RENDER_SCALE;
 #define IRC_MULTIBOUNCE 0.30   // [0.0 0.15 0.30 0.5 0.7 1.0] strength of the cache self-feedback (infinite bounce). 0 = single bounce (darker, closer to the old ReSTIR look); 1 = full multi-bounce (brighter, more color bleed, can wash out dark interiors).
 #define IRC_AMORTIZE 16        // [1 2 4 8 16 32] far cells (beyond IRC_AMORTIZE_DIST of the half-extent) update 1-in-N frames; near cells always update every frame. 1 = every cell every frame (full cost / most responsive distant GI). The IRC is now only a 0.5-weighted, denoised MULTIBOUNCE term (not primary GI), and IRC_DECAY 0.99 smooths ~100 frames, so the far ring can be updated very rarely with no visible "disco". HIGHER = more perf (far ring barely refreshes). Drop IRC_QUALITY to 0 for the biggest IRC speedup (3x fewer cells).
 #define IRC_AMORTIZE_DIST 0.5  // [0.25 0.35 0.5 0.65 0.8] fraction of the grid half-extent beyond which amortization applies
-#define IRC_SPATIAL_FILTER     // 7-tap neighbour blur at read (suppresses residual 1-spp flicker). Turn OFF for the sharpest (but noisier) cache read.
+//#define IRC_SPATIAL_FILTER     // 7-tap neighbour blur at read (suppresses residual 1-spp flicker). Turn OFF for the sharpest (but noisier) cache read.
 #define IRC_NORMAL_OFFSET 0.85 // [0.5 0.65 0.75 0.85 1.0 1.25 1.5] blocks the read point is pushed along the surface normal into the air. Lower = reads closer to the surface (better local occlusion / darker corners) but more leak risk; higher = smoother but flatter. The occlusion guard catches the leak case. (Now in BLOCKS since IRC_CELL=1.)
 #define IRC_OCCLUSION_GUARD    // reject the trilinear read when the offset sample point lands inside solid geometry (anti-leak); falls back to the surface cell
 //#define IRC_DEBUG            // visualize the resolved cache irradiance directly (no albedo) in d7_composite
 
 #define AO_GTAO              // ON: the irradiance cache is isotropic (no per-pixel directional occlusion), so screen-space GTAO restores the contact shadows / small-scale darkening the old per-pixel ReSTIR provided.
-#define AO_GI_STRENGTH 50    // [0 25 50 70 100] how strongly AO occludes the indirect (GI) term
+#define AO_GI_STRENGTH 50    // [0 25 50 75 100] how strongly AO occludes the indirect (GI) term
 #define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
 #define GTAO_SLICES 2        // [1 2 3 4] horizon slices per pixel per frame (rotates over the TAA cycle)
 #define GTAO_STEPS 4         // [2 3 4 6 8] horizon-march taps per slice side
@@ -295,12 +295,12 @@ const float renderScale = RENDER_SCALE;
 #define GID_NORMAL_EXP_MAX 64.0    // sharp normal rejection once history has CONVERGED (keeps edges crisp).
 #define GID_CLAMP_K 4.0            // [2.0 3.0 4.0 6.0 8.0 1000.0] firefly clamp width (xσ) for the current sample vs its planar neighbourhood, in LUMA space so chroma survives and only bright outliers are rescaled. Lower = stronger firefly kill but dims sparse light; 1000 = off.
 #define GID_SIGMA_L 4.0            // [1.0 2.0 3.0 4.0 6.0 8.0] luminance edge-stop strength of the a-trous filter. Lower = more blur (smoother, softer detail); higher = preserves detail but lets through more noise.
-#define GID_DISOCC_BOOST 8.0       // [0.0 2.0 4.0 8.0 16.0] extra blur for freshly disoccluded (low-history) pixels: loosens the luma edge-stop so newly revealed geometry blurs out fast instead of showing raw 1-spp.
+#define GID_DISOCC_BOOST 4.0       // [0.0 2.0 4.0 8.0 16.0] extra blur for freshly disoccluded (low-history) pixels: loosens the luma edge-stop so newly revealed geometry blurs out fast instead of showing raw 1-spp.
 #define GID_ATROUS_RADIUS 1        // [1 2] half-width of the per-pass à-trous kernel. 1 = 3x3 (8 taps/pass, the fast default — the per-pass spatial variance loop was also removed, edge-stop now derived from history length, so this is ~4x fewer denoiser taps than the old 5x5+variance). 2 = 5x5 (24 taps/pass, the old wider kernel) if 1 looks too noisy.
 #define GID_MOTION_TOLERANCE 1.0   // [0.5 1.0 1.5 2.0 3.0 4.0 6.0] how loose the temporal motion/disocclusion rejection is. Higher = history survives camera motion far more (much less motion noise) at the cost of some ghosting; lower = sharper/more responsive but noisier in motion. Was effectively ~0.2 before.
 #define GID_DEPTH_STRICTNESS 0.5   // [0.1 0.25 0.5 0.75 1.0 1.5 2.0] tightness of the SPATIAL à-trous depth edge-stop. Lower = looser: GI blurs more freely across depth so the filter denoises harder (smoother), at the risk of bleeding across depth edges; higher = preserves depth edges but keeps more noise. Lower this if the spatial filter rejects neighbours too aggressively.
 #define GID_LUMA_FLOOR 0.02        // [0.005 0.01 0.02 0.04 0.08 0.15] dark cutoff for the SCALE-INVARIANT luma edge-stop. The luma weight compares neighbours RELATIVE to local brightness (so dark interiors filter as hard as lit surfaces — fixes low-light "boiling"); below this brightness the relative metric is clamped so near-black noise is just blurred away instead of treated as detail. Raise if dark areas still boil; lower if dark GI detail washes out.
-#define GID_FIREFLY_MAX 0.5        // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] SOURCE firefly clamp (d0_trace): max luminance a single 1-spp GI ray may return, rescaled to keep chroma. A lone ray catching the bright sky/sun through a gap returns a huge spike no screen-space filter can tell from signal (neighbours near a bright opening are also bright) — bloom then smears it into glowing white blobs. Clamping at the source kills the blobs. LOWER if blobs remain; RAISE if GI next to bright openings looks dimmed/capped. 1000 = off.
+#define GID_FIREFLY_MAX 0.1        // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] SOURCE firefly clamp (d0_trace): max luminance a single 1-spp GI ray may return, rescaled to keep chroma. A lone ray catching the bright sky/sun through a gap returns a huge spike no screen-space filter can tell from signal (neighbours near a bright opening are also bright) — bloom then smears it into glowing white blobs. Clamping at the source kills the blobs. LOWER if blobs remain; RAISE if GI next to bright openings looks dimmed/capped. 1000 = off.
 
 //#define VOXEL_AO
 #define AO_SAMPLES 2   // [2 4 6 8] 
