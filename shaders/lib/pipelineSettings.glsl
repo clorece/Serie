@@ -8,6 +8,7 @@ const int RGBA16F = 5;
 const int RGBA32F = 7;
 const int RGBA8UI = 11;
 
+const int colortex0Format = RGBA16F; // lit HDR scene (tonemapped in final.glsl). MUST be float: d7 writes albedo*(direct+indirect)+emission > 1.0 and final.glsl tonemaps it. Default RGBA8 clips to 1.0 before the tonemapper -> flat/desaturated "no HDR" look on drivers whose default colortex0 isn't float-backed (e.g. Mesa/radeonsi on Linux).
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
 const int colortex3Format = RGBA16F; // bloom atlas (composite). (Former SVGF a-trous role removed with the IRC migration.)

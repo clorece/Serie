@@ -165,7 +165,16 @@ void main() {
             }
         }
 
-        if (any(isnan(history)) || any(isinf(history))) {
+        // Reject uninitialized / garbage history. Mesa/radeonsi (unlike the Windows
+        // AMD driver) does NOT zero a clear=false image at (re)allocation, and
+        // frameCounter never resets on a shader reload, so the frame-0 zero-guard
+        // doesn't fire. A garbage accumulation age (.a) reads large -> blendWeight
+        // collapses -> the temporal resolve LOCKS onto VRAM garbage, giving random
+        // flat-vs-correct GI on every reload. Anything outside the real age range
+        // [0, maxFrames] or with negative radiance was never validly written.
+        if (any(isnan(history)) || any(isinf(history))
+            || history.a < 0.0 || history.a > 300.0
+            || any(lessThan(history.rgb, vec3(0.0)))) {
             maxWeight = 0.0;
             history = vec4(0.0);
         }
@@ -182,7 +191,18 @@ void main() {
             float accumFrames = min(history.a * maxWeight + 1.0, maxFrames);
             float blendWeight = 1.0 / accumFrames;
             
-            temporalOut.rgb = mix(history.rgb, currentRad, blendWeight);
+            // Tonemapped (Karis) temporal resolve. A plain mix() lets a transient
+            // 1-spp firefly (luma >> history) spike the accumulator, then it lingers
+            // for the whole window. Weighting each term by 1/(1+luma) makes a bright
+            // outlier contribute far less than its raw value, so it averages away
+            // instead of blooming — WITHOUT a hard luminance clamp that also crushes
+            // genuinely bright, stable GI (the GID_FIREFLY_MAX=0.1 "flat" problem).
+            // Stable signal keeps balanced weights -> converged mean + full dynamic
+            // range preserved; this is the firefly handling done in tonemapped/SDR
+            // space rather than as a source clamp.
+            float wC = blendWeight         / (1.0 + luma(currentRad));
+            float wH = (1.0 - blendWeight) / (1.0 + luma(history.rgb));
+            temporalOut.rgb = (currentRad * wC + history.rgb * wH) / max(wC + wH, 1e-6);
             temporalOut.a = accumFrames;
         } else {
             temporalOut.rgb = currentRad;

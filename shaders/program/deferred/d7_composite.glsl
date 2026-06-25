@@ -335,6 +335,12 @@ void main() {
     clipSpace = vec3(unjitteredTexCoord, depth0) * 2.0 - 1.0;
 
     vec3 color = texture(colortex0, texCoord * renderScale).rgb;
+    // sRGB->linear: the block atlas arrives gamma-encoded on Mesa/radeonsi (no implicit
+    // sRGB sampler decode, unlike the Windows GL stack Serie was tuned on). Lighting must
+    // run in linear space so the single final pow(1/2.09) encode isn't a double-gamma -> the
+    // washed-out/low-contrast look. Bliss/Photon do this on input; we do it where albedo
+    // meets lighting (covers terrain, entities, hand, DH).
+    color = pow(max(color, 0.0), vec3(2.2));
 
     #ifdef DISTANT_HORIZONS
     // Distant Horizons LOD opaque terrain (vanilla sky depth, DH depth + current

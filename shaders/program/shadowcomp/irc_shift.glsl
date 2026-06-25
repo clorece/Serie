@@ -39,7 +39,20 @@ void main() {
     // its contents on the very first frame are undefined, so zero-init then. The
     // clamp keeps any stray garbage / overflow bounded (radiance is non-negative;
     // rgba16f maxes ~65504) so the leaky integrator can never get stuck.
-    if (frameCounter == 0 || any(isnan(v)) || any(isinf(v))) v = vec4(0.0);
+    //
+    // Reject uninitialized / garbage history the same way d1_temporal does for the
+    // per-pixel buffer. Mesa/RADV (unlike the Windows AMD driver) does NOT zero a
+    // clear=false image at (re)allocation, and frameCounter never resets on a shader
+    // RELOAD, so the frame-0 guard above doesn't fire then -> the cache starts on VRAM
+    // garbage and, if that garbage is finite and within the clamp, it survives and the
+    // resolved mean washes out to flat GI (random per reload, since fresh RADV pages
+    // are sometimes zeroed, sometimes recycled). .a is a leaky integrator that can only
+    // ever converge UP to its fixed point IRC_RAYS/(1-IRC_DECAY); anything well past
+    // that, or negative weight / radiance, was never validly written.
+    float aMax = float(IRC_RAYS) / max(1.0 - float(IRC_DECAY), 1e-3);
+    if (frameCounter == 0 || any(isnan(v)) || any(isinf(v))
+        || v.a < 0.0 || v.a > aMax * 2.0
+        || any(lessThan(v.rgb, vec3(0.0)))) v = vec4(0.0);
     v = clamp(v, vec4(0.0), vec4(60000.0));
     // Flush a fully-decayed cell to EXACT zero. A stale cell (one that stopped being
     // updated — e.g. you walked away, or it got culled as buried) keeps multiplying
