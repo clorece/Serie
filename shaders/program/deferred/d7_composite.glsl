@@ -338,8 +338,8 @@ void main() {
     // sRGB->linear: the block atlas arrives gamma-encoded on Mesa/radeonsi (no implicit
     // sRGB sampler decode, unlike the Windows GL stack Serie was tuned on). Lighting must
     // run in linear space so the single final pow(1/2.09) encode isn't a double-gamma -> the
-    // washed-out/low-contrast look. Bliss/Photon do this on input; we do it where albedo
-    // meets lighting (covers terrain, entities, hand, DH).
+    // washed-out/low-contrast look. The decode is done here where albedo meets lighting
+    // (covers terrain, entities, hand, DH) rather than on input.
     color = pow(max(color, 0.0), vec3(2.2));
 
     #ifdef DISTANT_HORIZONS
@@ -433,10 +433,15 @@ void main() {
 
     vec3 indirect;
     #if defined(VOXEL_GI)
-        // Resolved world-space irradiance cache (d0_giresolve -> colortex8). The
-        // cache is the GI temporal store; there is no screen-space denoiser. The
-        // buffer is jitter-free, so sample at the surface's logical uv.
-        vec3 gi = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
+        // Per-pixel ReSTIR GI. With the denoiser on, the a-trous chain lands the
+        // filtered result on colortex3; with it off, read the raw temporally-
+        // accumulated GI from colortex8 (d0_accum). Both buffers are jitter-free,
+        // so sample at the surface's logical uv.
+        #ifdef GI_DENOISE
+            vec3 gi = texture(colortex3, unjitteredTexCoord * renderScale).rgb;
+        #else
+            vec3 gi = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
+        #endif
         #ifdef AO_GTAO
             #ifdef LIGHTING_AO_FULL
                 gi *= aoTerm;
@@ -586,13 +591,19 @@ void main() {
                           * cloudShadow * skyOcc * (1.0 - rainStrength * 0.75), 0.0, 1.0);
     gl_FragData[1] = vec4(pbrSunVis, 0.0, 0.0, 1.0);
 
-    #if defined(GI_DEBUG_VIEW) || defined(IRC_DEBUG)
-        // raw resolved irradiance cache (no albedo) — validates the cache directly
-        vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
-        /* RENDERTARGETS: 0,14 */
+    #if defined(GI_DEBUG_VIEW)
+        // Raw resolved per-pixel GI buffer (no albedo): the denoised result on
+        // colortex3 when GI_DENOISE is on, otherwise the raw temporally-accumulated
+        // GI on colortex8. Jitter-free, so sample at the surface's logical uv.
+        #ifdef GI_DENOISE
+            vec3 debugIllum = texture(colortex3, unjitteredTexCoord * renderScale).rgb;
+        #else
+            vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
+        #endif
+        /* RENDERTARGETS: 0,6 */
         gl_FragData[0] = vec4(debugIllum, 1.0);
     #else
-        /* RENDERTARGETS: 0,14 */
+        /* RENDERTARGETS: 0,6 */
         gl_FragData[0] = vec4(color, 1.0);
     #endif
 }

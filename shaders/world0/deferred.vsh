@@ -1,6 +1,4 @@
 #version 430 compatibility
 #define VERTEX
 #include "/lib/uniforms.glsl"
-
-#include "/program/deferred/d0_trace.glsl"
-
+#include "/program/deferred/d0_restir.glsl"

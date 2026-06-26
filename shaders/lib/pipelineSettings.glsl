@@ -21,14 +21,14 @@ const int colortex6Format = RGBA16F; // FREE (was SVGF a-trous ping-pong B; SVGF
 //   .a   = perceptual smoothness (0 = non-reflective; metal pixels > 0)
 // RGBA8 is enough; cleared to 0 so any pixel that doesn't write it is non-metal.
 const int colortex7Format = RGBA8;
-const int colortex8Format = RGBA16F; // resolved per-pixel GI (.rgb = irradiance sampled from the cache this frame, .a = 1); written by d0_giresolve, read by d7_composite
-const int colortex9Format = RGBA16F; // AO temporal: .r = raw depth (reproject key), .a = accumulated GTAO. (.g/.b free; former SVGF luma moments removed.)
-const int colortex10Format = RGBA16F; // FREE (was ReSTIR reservoir radiance + M)
-const int colortex11Format = RGBA16F; // FREE (was ReSTIR reservoir samplePos + W)
+const int colortex8Format = RGBA16F; // temporally-accumulated per-pixel GI (.rgb); written by d0_accum, denoised toward colortex3, read by d7_composite
+const int colortex9Format = RGBA16F; // .r = linear depth (reproject key), .g/.b = luminance moments (SVGF), .a = accumulated GTAO; written by d0_accum
+const int colortex10Format = RGBA16F; // ReSTIR reservoir: radiance (.rgb) + M (.a)
+const int colortex11Format = RGBA16F; // ReSTIR reservoir: samplePos (.xyz) + W (.a)
 const int colortex12Format = RGBA16F;
 const int colortex13Format = RGBA16F;
-const int colortex14Format = RGBA16F; // FREE (was ReSTIR reservoir sample-hit normal)
-const int colortex15Format = RGBA16F; // FREE (was packed denoise G-buffer; SVGF removed by the IRC migration)
+const int colortex14Format = RGBA16F; // ReSTIR reservoir: sample-hit normal (.xy octahedral)
+const int colortex15Format = RGBA16F; // ReSTIR: packed G-buffer/normal history (.xy oct world normal, .z linear depth)
 
 const bool colortex3Clear = true;
 const bool colortex5Clear = false;

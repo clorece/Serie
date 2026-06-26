@@ -65,10 +65,10 @@ void main() {
     vec3  viewPos = convertScreenSpaceToWorldSpace(uv, depth);
     float NoV  = clamp(dot(N, normalize(-viewPos)), 1e-3, 1.0);
 
-    // Sun visibility from d7_composite (colortex14): real filtered PCSS +
+    // Sun visibility from d7_composite (colortex6): real filtered PCSS +
     // screen-space contact + cloud + sky-access shadow. Dims reflections in shadow
     // / caves (reflShade, with a floor) and shadows the glint.
-    float sunVis    = clamp(texture(colortex14, uv * renderScale).r, 0.0, 1.0);
+    float sunVis    = clamp(texture(colortex6, uv * renderScale).r, 0.0, 1.0);
     float reflShade = 1.0 - PBR_REFLECT_SHADE * (1.0 - sunVis);
 
     // Sharp per-texel Fresnel, computed at full res and applied AFTER the blur.
