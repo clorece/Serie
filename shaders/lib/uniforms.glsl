@@ -73,4 +73,10 @@ uniform usampler3D voxelSampler; // fine voxel grid, dedicated 3D image (see ima
 uniform usampler3D brickSampler;      // 8³-block occupancy (64×16×64), written by the shadow pass
 uniform usampler3D superBrickSampler; // 64³-block occupancy (8×2×8), written by the shadow pass
 
+// NOTE: do NOT add option-gated (#ifdef) uniforms here. The world0/*.fsh wrappers
+// include this file before the program pulls in options.glsl, so any #ifdef on an
+// options macro is evaluated before the macro exists, and the include guard then
+// blocks the re-include. The unconditional samplers above are fine; blueNoise
+// (RESTIR_BLUE_NOISE) is declared in lib/pt/restir.glsl, next to its use.
+
 #endif // UNIFORMS_GLSL_INCLUDED

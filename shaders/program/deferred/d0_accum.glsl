@@ -62,6 +62,8 @@ float calculateJacobian(vec3 shadingPos, vec3 neighborShadingPos, vec3 samplePos
     
     float jacobian = (cosNew * dOriginal2) / (cosOriginal * dNew2);
 
+    // RESTIR_JACOBIAN is ON: if grazing reuse starts hijacking flat walls (bright
+    // splotches on flat surfaces), tighten this clamp toward [0.1, 5.0].
     return clamp(jacobian, 0.05, 20.0);
 }
 
@@ -153,10 +155,10 @@ void main() {
         vec2 paddingSpatial = 2.0 * texelSize;
         
         int spatialSamples = RESTIR_SPATIAL_SAMPLES;
-        if (shade.M > float(RESTIR_M_CAP) * 0.8) {
-            spatialSamples = 0; // fully converged: skip spatial
-        } else if (shade.M > float(RESTIR_M_CAP) * 0.4) {
-            spatialSamples = min(RESTIR_SPATIAL_SAMPLES, 1); // partially converged: scale down
+        if (shade.M > float(RESTIR_M_CAP) * 0.4) {
+            // Converged: keep ONE spatial tap (was a full skip at M>0.8*cap) so stable
+            // surfaces still get neighbour dilution of residual noise / fireflies.
+            spatialSamples = min(RESTIR_SPATIAL_SAMPLES, 1);
         }
 
         for (int i = 0; i < spatialSamples; i++) {

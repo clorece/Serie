@@ -58,7 +58,6 @@ vec3 clipSpace;
 #include "/lib/pt/denoise.glsl"
 
 
-
 void main() {
     vec2 currentJitter = getTaaJitter(frameCounter) * texelSize;
     vec2 sampleCenter = clamp((texCoord + currentJitter) * renderScale, vec2(0.0), vec2(renderScale));
@@ -123,7 +122,9 @@ void main() {
             vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
             vec3 origin = worldAbs + normalWorld * 0.15;
 
+            #ifndef RESTIR_BLUE_NOISE
             uint dirSeed = pixelSeed(ivec2(gl_FragCoord.xy) / RESTIR_COHERENT_TILE, frameCounter * 31 + 17);
+            #endif
 
             int numCandidates = RESTIR_INITIAL_SAMPLES;
             #ifdef RESTIR_CONVERGED_SKIP
@@ -144,7 +145,11 @@ void main() {
 
             Reservoir res = newReservoir();
             for (int i = 0; i < numCandidates; i++) {
+                #ifdef RESTIR_BLUE_NOISE
+                vec3 dir = stbnCosineHemisphere(normalWorld, ivec2(gl_FragCoord.xy), frameCounter + i);
+                #else
                 vec3 dir = cosHemisphereDir(normalWorld, randFloat(dirSeed), randFloat(dirSeed));
+                #endif
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory; vec3 rayEmission;
 
                 VoxelHit h = traceVoxelGI(voxelSampler, gridOrigin, origin, dir, float(GI_RADIUS));
@@ -158,6 +163,7 @@ void main() {
                 vec3 rad = vec3(0.0);
                 bool reprojected = false;
 
+              #if RESTIR_SCREEN_BOUNCE
                 if (wasHit && hitCategory != VOXEL_EMISSIVE && hitCategory < 100u) {
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
                     vec4  viewHit    = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
@@ -178,6 +184,8 @@ void main() {
                         }
                     }
                 }
+
+              #endif
 
                 if (!reprojected) {
                     if (wasHit) {
@@ -214,7 +222,7 @@ void main() {
                 }
                 rad = max(rad, vec3(0.0)) + max(rayEmission, vec3(0.0));
 
-                updateReservoir(res, rad, hitPos - cameraPosition, hitNormal, luma(rad), seed);
+                updateReservoir(res, rad, hitPos - cameraPosition, hitNormal, wasHit ? 1.0 : 0.0, luma(rad), seed);
             }
 
             if (validReproj) {
@@ -222,7 +230,13 @@ void main() {
                 float prevDepthRaw = p9.r;
                 float actualClipZ = prevDepthRaw * 2.0 - 1.0;
                 float actualLinDepth = getDepth(prevDepthRaw);
-                
+
+                // Clip-space Z test (original). The relative linear-depth variant
+                // rejected valid history on grazing-angle surfaces: their steep
+                // screen-space depth gradient makes the reprojected depth differ from
+                // the stored texel depth, so the 5% test failed -> view-angle-dependent
+                // streaks that swam under panning. Clip-Z is compressed at far/grazing,
+                // so it tolerates that. (Hand keeps a relative linear test for bobbing.)
                 bool depthValid = false;
                 if (isHand) {
                     float relDepthErr = abs(actualLinDepth - expectedLinDepth) / max(expectedLinDepth, 1e-3);
@@ -235,6 +249,10 @@ void main() {
                 vec3 prevNormalWorld = octDecodeNormal(texture(colortex15, uvPrev * renderScale).xy);
                 float normalSim = max(dot(normalWorld, prevNormalWorld), 0.0);
 
+                // 0.5 (original). 0.8 over-rejected temporal history on bump/curved
+                // surfaces -> pixels dropped to fresh (M~1), which both flickers like
+                // disocclusion AND starves the spatial pass of converged neighbours to
+                // borrow from, so real disocclusions filled in worse.
                 if (depthValid && normalSim > 0.5) {
                     Reservoir prev = readReservoir(colortex10, colortex11, colortex14, uvPrev * renderScale);
 
@@ -258,7 +276,7 @@ void main() {
 
             resv10Out = vec4(res.radiance, res.M);
             resv11Out = vec4(res.samplePos, res.W);
-            resv14Out = vec4(octEncodeNormal(res.sampleNormal), 0.0, 0.0);
+            resv14Out = vec4(octEncodeNormal(res.sampleNormal), res.wasHit, 0.0);
 
             Reservoir shade = res;
 
