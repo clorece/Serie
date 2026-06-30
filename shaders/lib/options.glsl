@@ -153,8 +153,8 @@ const float renderScale = RENDER_SCALE;
 #define AUTO_EXPOSURE_MAX 12.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
-#define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
-#define COLOR_SATURATION 1.12 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_CONTRAST 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+#define COLOR_SATURATION 1.08 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 
 #define PURKINJE_EFFECT
 #define PURKINJE_STRENGTH 0.6 // [0.2 0.4 0.6 0.8 1.0 1.2 1.5 2.0]
@@ -165,7 +165,7 @@ const float renderScale = RENDER_SCALE;
 #define SPLIT_TONING
 #define SPLIT_TONING_STRENGTH 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
-#define FILM_GRAIN_I 2 // [0 1 2 3 4 5 6 7 8 9 10]
+#define FILM_GRAIN_I 1 // [0 1 2 3 4 5 6 7 8 9 10]
 #define OVERWORLD_LUT 5 // [0 1 2 3 4 5 6 7 8 9]
 #define OVERWORLD_LUT_I 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 //#define VIGNETTE
@@ -271,10 +271,10 @@ const float renderScale = RENDER_SCALE;
 #define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
 #define GI_STRENGTH 200 // [25 50 75 100 150 200]
-#define GI_SKY_BRIGHTNESS 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0]
+#define GI_SKY_BRIGHTNESS 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_BOUNCE_SHADOWMAP
-#define GI_BOUNCE_SKY 1.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
+#define GI_BOUNCE_SKY 0.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
 #define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
 #define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
 #define VOXEL_SHAPES
