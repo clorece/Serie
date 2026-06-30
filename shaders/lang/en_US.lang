@@ -21,6 +21,22 @@ option.TAA_SHARPNESS=Image Sharpening
 option.BLOOM_STRENGTH=Bloom Strength
 option.BLOOM_STRENGTH.comment=Controls the brightness and intensity of the soft-knee bloom glow around light sources.
 
+option.CINEMATIC_LENS_FLARE=Cinematic Lens Flare
+option.CINEMATIC_LENS_FLARE.comment=Enables photorealistic cinematic camera lens flare effects (streaks, ghosts, halos, starbursts) on bright light sources.
+option.LENS_FLARE_STRENGTH=Flare Strength
+option.LENS_FLARE_STRENGTH.comment=Adjusts the overall brightness and visibility of the lens flare effects.
+option.LENS_FLARE_THRESHOLD=Flare Threshold
+option.LENS_FLARE_THRESHOLD.comment=Determines how bright a pixel must be to trigger lens flares. Higher values restrict flares to the most intense emitters.
+option.LENS_FLARE_STREAK=Anamorphic Streaks
+option.LENS_FLARE_STREAK.comment=Enables the horizontal blue-cyan anamorphic lens streak effect.
+option.LENS_FLARE_GHOSTS=Lens Ghosts
+option.LENS_FLARE_GHOSTS.comment=Enables multiple colorful reflection artifacts (ghosts) aligned along the screen axis.
+option.LENS_FLARE_HALO=Lens Halo
+option.LENS_FLARE_HALO.comment=Enables a wide circular ring of light centered on light sources.
+option.LENS_FLARE_STARBURST=Aperture Starburst
+option.LENS_FLARE_STARBURST.comment=Enables radial diffraction spikes (starburst) originating from bright light sources.
+
+
 option.AUTO_EXPOSURE=Auto Exposure
 option.AUTO_EXPOSURE.comment=Enables dynamic camera-like eye adaptation, automatically adjusting exposure when transitioning between dark caves and bright skylines.
 option.EXPOSURE=Exposure Bias

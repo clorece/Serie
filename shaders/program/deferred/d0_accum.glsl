@@ -237,7 +237,7 @@ void main() {
         vec4 prev8, p9_tmp;
         if (fetchBilateralHistory(uvPrev * renderScale, expectedClipZ, normalWorld, colortex8, colortex9, colortex15, prev8, p9_tmp)) {
             if (prev8.a > 0.5) {
-                // --- temporal-moment firefly clamp (MollyVX-style variance reject) ---
+                // --- temporal-moment firefly clamp ---
                 // History luma mean/variance (stored in colortex9 by the SVGF) is a
                 // reliable reference for accumulated pixels; cap the CURRENT sample's
                 // luminance to mean + k*std so a current-frame outlier can't punch

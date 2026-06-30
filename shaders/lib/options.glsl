@@ -66,7 +66,7 @@ const float renderScale = RENDER_SCALE;
 
 #define SUN_ILLUMINANCE 10.0  // [1.0 2.5 5.0 7.5 10.0 12.5 15.0 20.0] Sun light intensity multiplier for atmospheric scattering
 #define MOON_ILLUMINANCE 0.02 // [0.005 0.01 0.02 0.04 0.06 0.08 0.10] Moon light intensity multiplier for atmospheric scattering
-#define MIE_G 0.80            // [0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95] Mie phase function asymmetry factor (controls sun glow size/sharpness)
+#define MIE_G 1.0            // [0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95] Mie phase function asymmetry factor (controls sun glow size/sharpness)
 
 // Rayleigh scattering coefficients for R, G, B channels (scaled by 1e-6, default: 5.8e-6, 1.35e-5, 3.31e-5)
 #define RAYLEIGH_SCATTER_R 5.8   // [1.0 2.0 3.0 4.0 5.0 5.8 6.5 7.0 8.0 10.0] Rayleigh scattering red channel
@@ -128,13 +128,26 @@ const float renderScale = RENDER_SCALE;
 #define BLOOM
 #define BLOOM_STRENGTH 0.22 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
+#define CINEMATIC_LENS_FLARE
+#define LENS_FLARE_STRENGTH 0.01 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 3.0 4.0]
+#define LENS_FLARE_THRESHOLD 1.0 // [0.5 0.75 1.0 1.25 1.5 2.0 2.5 3.0 4.0 6.0]
+#define LENS_FLARE_STREAK
+#define LENS_FLARE_STREAK_STRENGTH 0.5 // [0.1 0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+#define LENS_FLARE_GHOSTS
+#define LENS_FLARE_GHOSTS_STRENGTH 0.5 // [0.1 0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+#define LENS_FLARE_HALO
+#define LENS_FLARE_HALO_STRENGTH 1.0 // [0.1 0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+#define LENS_FLARE_STARBURST
+#define LENS_FLARE_STARBURST_STRENGTH 0.5 // [0.1 0.25 0.5 0.75 1.0 1.5 2.0 3.0]
+
+
 #define AUTO_EXPOSURE
 #define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
 #define AUTO_EXPOSURE_TARGET 0.16 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
 #define AUTO_EXPOSURE_SPEED 2.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
 #define AUTO_EXPOSURE_CENTER_WEIGHT 0.1 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.001 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
-#define AUTO_EXPOSURE_MAX 4.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
+#define AUTO_EXPOSURE_MAX 12.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
 #define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
@@ -143,7 +156,7 @@ const float renderScale = RENDER_SCALE;
 #define FILM_GRAIN_I 3 // [0 1 2 3 4 5 6 7 8 9 10]
 #define OVERWORLD_LUT 5 // [0 1 2 3 4 5 6 7 8 9]
 #define OVERWORLD_LUT_I 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
-//#define VIGNETTE
+#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
 #define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150]

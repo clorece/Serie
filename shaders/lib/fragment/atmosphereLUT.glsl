@@ -557,7 +557,7 @@ vec3 _sunDisc_LUT(vec3 rd, vec3 sunDir, vec3 transmittance) {
     float sunCos = cos(sunHalfAngle);
     float sunViewDot = dot(rd, sunDir);
     float sunDisc = smoothstep(sunCos - 0.0001, sunCos + 0.0001, sunViewDot);
-    vec3  discColor = SUN_COLOR_BASE * transmittance * sunDisc * 250.0;
+    vec3  discColor = SUN_COLOR_BASE * transmittance * sunDisc * 1000.0;
     return pow(max(discColor, 0.0), vec3(1.0 / 1.2));
 }
 
