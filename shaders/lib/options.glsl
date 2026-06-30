@@ -160,7 +160,7 @@ const float renderScale = RENDER_SCALE;
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
 #define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150]
-#define PT_RASTER_AMBIENT_FLOOR 5 // [0 5 10 15 20 35 50] neutral indirect-light floor for path-traced GI. Fades out where real PT energy exists; does not inject sky or block lightmap color.
+#define PT_RASTER_AMBIENT_FLOOR 2 // [0 5 10 15 20 35 50] neutral indirect-light floor for path-traced GI. Fades out where real PT energy exists; does not inject sky or block lightmap color.
 //#define LIGHTING_AO_FULL
 
 //#define WIND_MOVEMENT // WIP
