@@ -220,7 +220,26 @@ vec3 calculateStarburst(vec2 uv) {
 }
 
 void main() {
-    vec4 sceneColor = texture(colortex0, texCoord);
+    #ifdef CHROMATIC_ABERRATION
+        vec2 C = vec2(0.5);
+        vec2 d = texCoord - C;
+        
+        // Squared distance for physically accurate edge-heavy distortion
+        float r2 = dot(d, d); 
+        
+        // Fancy Niche Effect: Anamorphic CA. 
+        // It fringes more aggressively on the horizontal axis than the vertical axis, simulating a cinema lens.
+        vec2 caOffset = d * r2 * vec2(0.015, 0.005) * 1.0 * CHROMATIC_ABERRATION_STRENGTH;
+        
+        // Extremely lightweight: 3 taps total.
+        float r = texture(colortex0, texCoord - caOffset).r;
+        vec4 g_a = texture(colortex0, texCoord); // Green and Alpha (autoExposure)
+        float b = texture(colortex0, texCoord + caOffset).b;
+        
+        vec4 sceneColor = vec4(r, g_a.g, b, g_a.a);
+    #else
+        vec4 sceneColor = texture(colortex0, texCoord);
+    #endif
 
     #if defined(LENS_FLARE_STREAK) || defined(LENS_FLARE_GHOSTS) || defined(LENS_FLARE_HALO) || defined(LENS_FLARE_STARBURST)
     vec3 flareColor = vec3(0.0);
