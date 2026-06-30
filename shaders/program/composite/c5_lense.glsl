@@ -11,10 +11,15 @@ void main() {
 
 #ifdef FRAGMENT
 
+#include "/lib/options.glsl"
+
 in vec2 texCoord;
 
 void main() {
-    gl_FragColor = vec4(clamp(texture(colortex0, texCoord).rgb, 0.0, 1.0), 1.0);
+    vec4 sceneColor = texture(colortex0, texCoord);
+
+    /* DRAWBUFFERS:0 */
+    gl_FragData[0] = sceneColor;
 }
 
 #endif

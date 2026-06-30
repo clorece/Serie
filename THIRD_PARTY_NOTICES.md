@@ -14,7 +14,7 @@ Those source comments must be preserved. Any portions still derived from that pr
 
 The special block-light mapping in `shaders/block.properties` is marked as ported from Allium. The Allium copy used during development was distributed under the Complementary License Agreement 1.5. That license is preserved verbatim in `third_party/Complementary-License-1.5.txt` for the applicable material.
 
-This notice does not claim that current Serie rendering code is derived from Complementary. It preserves the known provenance of the specifically identified mapping.
+The post-processing LUT atlas `shaders/lib/IMG/Luts2.png`, its metadata, and the LUT sampling logic in `shaders/program/composite/c6_post.glsl` are ported from Allium/Complementary and retain the in-code credit to Query for the LUTs.
 
 ## Minecraft and related projects
 

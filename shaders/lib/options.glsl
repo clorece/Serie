@@ -140,6 +140,9 @@ const float renderScale = RENDER_SCALE;
 #define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_SATURATION 1.12 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
+#define FILM_GRAIN_I 3 // [0 1 2 3 4 5 6 7 8 9 10]
+#define OVERWORLD_LUT 5 // [0 1 2 3 4 5 6 7 8 9]
+#define OVERWORLD_LUT_I 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 //#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
