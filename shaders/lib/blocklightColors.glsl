@@ -1,7 +1,7 @@
 #ifndef BLOCKLIGHT_COLORS_GLSL
 #define BLOCKLIGHT_COLORS_GLSL
 
-// Complementary blocklight colors for special light-emitting blocks, pre-rewrite of Serie
+// Blocklight colors for special light-emitting blocks, pre-rewrite of Serie
 
 #ifndef XLIGHT_R
 #define XLIGHT_R 1.0

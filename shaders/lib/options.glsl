@@ -116,7 +116,7 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_ALTO_WAVE 0.6          // [0.0 0.2 0.4 0.6 0.8 1.0] undulatus billow strength — lines the puffs into wavy parallel rows (0 = uniform field)
 #define CLOUDS_ALTO_WAVE_SCALE 5.0    // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0 10.0] billow roll frequency (higher = tighter/closer rows)
 #define CLOUDS_ALTO_WARP 0.05         // [0.0 0.1 0.2 0.3 0.35 0.45 0.6 0.8] domain-warp strength — breaks up the repetitive cell tiling (0 = raw repeating worley)
-#define CLOUDS_ALTO_PRIMARY_STEPS 8  // [8 12 16 24 32] primary raymarch steps through the shell
+#define CLOUDS_ALTO_PRIMARY_STEPS 12  // [8 12 16 24 32] primary raymarch steps through the shell
 #define CLOUDS_ALTO_LIGHT_STEPS 4     // [2 3 4 6] sun cone-march steps for self-shadow
 #define CLOUDS_ALTO_SKY_BLEND 2.5     // [0.0 0.5 1.0 1.5 2.0 2.5 3.5 5.0 7.0] aerial-perspective: how strongly the high layer washes toward sky colour with distance (0 = crisp like the cumulus, higher = hazier/recedes more)
 
@@ -126,7 +126,7 @@ const float renderScale = RENDER_SCALE;
 #define TAA_SHARPNESS 0.6 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 
 #define BLOOM
-#define BLOOM_STRENGTH 0.22 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
+#define BLOOM_STRENGTH 0.18 // [0.01 0.03 0.06 0.08 0.10 0.12 0.15 0.18 0.22 0.26 0.30]
 
 #define CINEMATIC_LENS_FLARE
 #define LENS_FLARE_STRENGTH 0.01 // [0.0 0.25 0.5 0.75 1.0 1.25 1.5 2.0 3.0 4.0]
@@ -147,19 +147,28 @@ const float renderScale = RENDER_SCALE;
 #define AUTO_EXPOSURE
 #define EXPOSURE 1.00 // [0.10 0.20 0.30 0.40 0.50 0.60 0.70 0.80 0.90 1.00 1.10 1.20 1.30 1.40 1.50 1.60 1.70 1.80 1.90 2.00 2.20 2.40 2.60 2.80 3.00]
 #define AUTO_EXPOSURE_TARGET 0.16 // [0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 0.26 0.28 0.30 0.35 0.40 0.45 0.50]
-#define AUTO_EXPOSURE_SPEED 5.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0]
-#define AUTO_EXPOSURE_CENTER_WEIGHT 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+#define AUTO_EXPOSURE_SPEED 3.0 // [0.1 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0 3.0 5.0]
+#define AUTO_EXPOSURE_CENTER_WEIGHT 0.6 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define AUTO_EXPOSURE_MIN 0.001 // [0.01 0.02 0.03 0.04 0.05 0.06 0.08 0.10 0.15 0.20]
 #define AUTO_EXPOSURE_MAX 12.0 // [2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0 25.0 30.0]
 
 #define TONEMAP_OPERATOR 0 // [0 1 2 3 4]
 #define COLOR_CONTRAST 1.001 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_SATURATION 1.12 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
+
+#define PURKINJE_EFFECT
+#define PURKINJE_STRENGTH 0.6 // [0.2 0.4 0.6 0.8 1.0 1.2 1.5 2.0]
+
+//#define HALATION
+#define HALATION_STRENGTH 0.8 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.5 2.0]
+
+#define SPLIT_TONING
+#define SPLIT_TONING_STRENGTH 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
-#define FILM_GRAIN_I 3 // [0 1 2 3 4 5 6 7 8 9 10]
+#define FILM_GRAIN_I 2 // [0 1 2 3 4 5 6 7 8 9 10]
 #define OVERWORLD_LUT 5 // [0 1 2 3 4 5 6 7 8 9]
 #define OVERWORLD_LUT_I 1.0 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
-#define VIGNETTE
+//#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
 #define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150]

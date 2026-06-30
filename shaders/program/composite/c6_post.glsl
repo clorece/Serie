@@ -15,7 +15,7 @@ void main() {
 
 in vec2 texCoord;
 
-// LUT code/asset credit: Query. Ported from Allium's Luts2.png color-grading path.
+// LUT code/asset credit: Query. Ported from Luts2.png color-grading path.
 void applyLookupTable(inout vec3 color) {
     const vec2 inverseSize = vec2(1.0 / 512.0, 1.0 / 5120.0);
 
@@ -57,11 +57,7 @@ void main() {
     vec4 sceneColor = texture(colortex0, texCoord);
     #endif
 
-    #if FILM_GRAIN_I > 0
-    float noise = fract(sin(dot((texCoord * RENDER_SCALE) * sin(frameTimeCounter) + 1.0, vec2(12.9898, 78.233) * 2.0)) * 43758.5453);
-    sceneColor.rgb *= max(noise, 1.0 - (float(FILM_GRAIN_I) / 10.0));
-    sceneColor.rgb *= 1.3;
-    #endif
+    // Film grain moved to the end of the post-processing chain for advanced simulation
 
     vec3 color = sceneColor.rgb;
 
@@ -78,6 +74,12 @@ void main() {
     #ifdef BLOOM
     vec3 bloomColor = ReadBloomAtlas(colortex3, texCoord) * totalExposure;
     color = mix(color, bloomColor, BLOOM_STRENGTH);
+    
+    #ifdef HALATION
+        // Extract the brightest parts of the bloom for halation (red/orange film bleed)
+        vec3 halationColor = pow(bloomColor, vec3(1.5)) * vec3(1.0, 0.2, 0.05);
+        color += halationColor * HALATION_STRENGTH;
+    #endif
     #endif
 
     vec3 tempShift = vec3(1.0);
@@ -102,11 +104,60 @@ void main() {
     float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = clamp(mix(vec3(luma), color, COLOR_SATURATION), 0.0, 1.0);
 
+    #ifdef SPLIT_TONING
+        // Cinematic Teal & Orange split-toning
+        float splitMask = smoothstep(0.2, 0.8, luma);
+        
+        vec3 shadowTint = vec3(0.5, 0.8, 1.0); // Deep Teal
+        vec3 highlightTint = vec3(1.0, 0.8, 0.5); // Warm Orange
+        
+        vec3 targetTint = mix(shadowTint, highlightTint, splitMask);
+        vec3 splitColor = color * targetTint;
+        
+        // Preserve original luminance so the image doesn't darken/brighten
+        float splitLuma = dot(splitColor, vec3(0.2126, 0.7152, 0.0722));
+        splitColor *= luma / max(splitLuma, 1e-5);
+        
+        color = mix(color, clamp(splitColor, 0.0, 1.0), SPLIT_TONING_STRENGTH);
+    #endif
+
+    #ifdef PURKINJE_EFFECT
+        // The darker the scene, the higher autoExposure gets. 
+        // We use this to detect if the player is in a dark environment (e.g. night or deep cave).
+        #ifdef AUTO_EXPOSURE
+            float ambientDarkness = clamp((autoExposure - 1.0) / 4.0, 0.0, 1.0); 
+        #else
+            float ambientDarkness = 0.5; 
+        #endif
+        
+        // Only affect the darker tones of the image, scaled by how dark the environment is
+        float purkinjeMask = clamp(1.0 - (luma * 8.0), 0.0, 1.0) * ambientDarkness;
+        
+        // Scotopic vision (cyan/blue shift, desaturated)
+        float scotopicLuma = dot(color, vec3(0.1, 0.5, 0.4)); // Human eye is most sensitive to green/blue at night
+        vec3 scotopicColor = vec3(0.1, 0.35, 0.5) * scotopicLuma * 2.5; 
+        
+        color = mix(color, scotopicColor, purkinjeMask * PURKINJE_STRENGTH);
+    #endif
+
     color = pow(color, vec3(1.0 / 2.09));
 
     if (OVERWORLD_LUT_I > 0.0) {
         applyLookupTable(color);
     }
+
+    #if FILM_GRAIN_I > 0
+        // Advanced 35mm Film Grain Simulation
+        float noise = fract(sin(dot((texCoord * RENDER_SCALE) * sin(frameTimeCounter) + 1.0, vec2(12.9898, 78.233) * 2.0)) * 43758.5453);
+        noise = noise - 0.5; // shift to -0.5 .. 0.5
+        
+        // Grain is strongest in midtones, and vanishes in pure black or pure white (physically accurate film stock)
+        float finalLuma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        float grainWeight = 1.0 - abs(finalLuma - 0.5) * 2.0; 
+        grainWeight = smoothstep(0.0, 1.0, grainWeight);
+        
+        color += noise * grainWeight * (float(FILM_GRAIN_I) / 20.0);
+    #endif
 
     color += vec3(dither) / 255.0;
 

@@ -70,7 +70,7 @@ option.COLOR_TEMP=Color Temperature
 option.COLOR_TEMP.comment=Shifts color temperature. Negative values introduce cooler blue tones, positive values add warmer golden-hour amber tones.
 
 option.FILM_GRAIN_I=Film Grain Strength
-option.FILM_GRAIN_I.comment=Adds Allium-style camera noise in the final post-processing composite stage. Set to 0 to disable.
+option.FILM_GRAIN_I.comment=Adds camera noise in the final post-processing composite stage. Set to 0 to disable.
 value.FILM_GRAIN_I.0=Off
 
 option.OVERWORLD_LUT=Overworld LUT

@@ -215,11 +215,14 @@ void main() {
 
         vec3 scatteringD = vec3(0.0);
         vec3 transmittanceD = vec3(1.0);
+        mat4 shadowMatrix = shadowProjection * shadowModelView;
+        vec4 sp_start = shadowMatrix * vec4(surfWorldRD, 1.0);
+        vec4 sp_dir   = shadowMatrix * vec4(0.0, -1.0, 0.0, 0.0);
         for (int i = 0; i < WSTEPS_D; i++) {
             float t = stepLenD * (float(i) + wDitherD);
             vec3 posWR = surfWorldRD - vec3(0.0, t, 0.0);
 
-            vec4 sp = shadowProjection * shadowModelView * vec4(posWR, 1.0);
+            vec4 sp = sp_start + sp_dir * t;
             sp /= sp.w;
             float distb = length(sp.xy);
             float distort = (1.0 - SHADOW_MAP_BIAS) + distb * SHADOW_MAP_BIAS;
@@ -431,6 +434,9 @@ void main() {
             float resScale = 4096.0 / float(SHADOW_RESOLUTION);
 
             vec3 godray = vec3(0.0);
+            mat4 shadowMatrix = shadowProjection * shadowModelView;
+            vec4 sp_start = shadowMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+            vec4 sp_dir   = shadowMatrix * vec4(viewDirW, 0.0);
             for (int gi = 0; gi < WATER_GODRAY_STEPS; ++gi) {
                 float t          = gStepLen * (float(gi) + gDither);
                 vec3  samplePosR = viewDirW * t;              // camera-relative world
@@ -448,7 +454,7 @@ void main() {
                 // everywhere => no shafts at all (this is why they didn't show up).
                 // shadowtex1 excludes the water surface, leaving only real terrain
                 // to cut the shafts.
-                vec4 sp = shadowProjection * shadowModelView * vec4(samplePosR, 1.0);
+                vec4 sp = sp_start + sp_dir * t;
                 sp /= sp.w;
                 float distb   = length(sp.xy);
                 float distort = (1.0 - SHADOW_MAP_BIAS) + distb * SHADOW_MAP_BIAS;
@@ -782,16 +788,19 @@ void main() {
                           * sampleTransmittanceLUT_fast(worldLightDir.y, PLANET_RADIUS);
         vec3  skyIllum  = getSkyAmbient(eyeAltitude) * skyVis;
         float resScaleW = 4096.0 / float(SHADOW_RESOLUTION);
+        mat4  shadowMatrix = shadowProjection * shadowModelView;
+        vec4  sp_start = shadowMatrix * vec4(surfaceWR, 1.0);
+        vec4  sp_dir   = shadowMatrix * vec4(0.0, -1.0, 0.0, 0.0);
 
-        vec3 scattering    = vec3(0.0);
-        vec3 transmittance = vec3(1.0);
+        vec3  scattering    = vec3(0.0);
+        vec3  transmittance = vec3(1.0);
         for (int i = 0; i < WSTEPS; i++) {
             float t     = stepLenW * (float(i) + wDither);   // depth below surface
             vec3  posWR = surfaceWR - vec3(0.0, t, 0.0);     // straight DOWN the column
 
             // Sun shadow (opaque-only shadowtex1 so the water surface doesn't
             // self-occlude every sample) -> crepuscular shafts in the volume.
-            vec4 sp = shadowProjection * shadowModelView * vec4(posWR, 1.0);
+            vec4 sp = sp_start + sp_dir * t;
             sp /= sp.w;
             float distb   = length(sp.xy);
             float distort = (1.0 - SHADOW_MAP_BIAS) + distb * SHADOW_MAP_BIAS;
