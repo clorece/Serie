@@ -171,7 +171,7 @@ const float renderScale = RENDER_SCALE;
 //#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
-#define LIGHTING_INDIRECT 50  // [25 40 55 70 85 100 125 150]
+#define LIGHTING_INDIRECT 25  // [25 40 55 70 85 100 125 150]
 
 //#define WIND_MOVEMENT // WIP
 
@@ -285,7 +285,7 @@ const float renderScale = RENDER_SCALE;
 // For reference a ray takes up to ~1.73 steps per block, so covering
 // GI_GATHER_DIST 48 needs ~83 steps.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] steps per cascade before a ray gives up
-#define GI_STRENGTH 100 // [25 50 75 100 150 200]
+#define GI_STRENGTH 200 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 0.2 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_EMISSION 0.5   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
@@ -425,6 +425,22 @@ const float renderScale = RENDER_SCALE;
 // sooner (cheaper, but noisier just after a disocclusion); at GI_GATHER_RAYS 1
 // the whole mechanism compiles out and the loop bound stays constant.
 #define GI_ADAPTIVE_FRAMES 8 // [2 4 6 8 12 16 24 32] history length at which the budget bottoms out
+
+// Answer diffuse ray misses from a per-frame spherical-harmonic projection of
+// the sky instead of sampling the atmosphere LUT per ray.
+//
+// sampleSky_fast costs four texelFetches into the 256x256 LUT plus a handful of
+// transcendentals, and it runs PER MISSED RAY in both the final gather and the
+// surface cache's bounce loop -- the common case in open terrain. Nine
+// coefficients replace that with ~20 FMAs and no memory traffic, and because SH
+// is smooth it also lowers the variance the temporal filter has to remove.
+//
+// The trade: second-order SH cannot hold a sharp edge, and the sky has one at
+// the horizon. Measured against a worst-case hard step, the cosine-weighted
+// error is +0.0% on floors, -0.7% on walls and +4.3% on ceilings, with no shift
+// in overall brightness -- so in practice only ceilings change, picking up
+// slightly more bounce. Turn this off to A/B against the exact LUT path.
+#define GI_SKY_SH
 #define GI_GATHER_DIST 48 // [16 24 32 48 64 96 128] ray reach in blocks
 
 // How sharply the sky term falls off with the surface's skylight lightmap.

@@ -67,6 +67,7 @@ void main() {
 #include "/lib/pt/reproject.glsl"
 #include "/lib/pt/voxelTrace.glsl"
 #include "/lib/fragment/sky.glsl"
+#include "/lib/pt/skySH.glsl"
 
 in vec2 texCoord;
 
@@ -187,8 +188,12 @@ void main() {
             // moon discs (x1000 and x100) and one ray clipping a disc is a
             // guaranteed firefly.
             float skyWeight = h.escaped ? 1.0 : skyVis;
-            incoming += sampleSky_fast(dir, eyeAlt) * float(GI_SKY_BRIGHTNESS) * skyWeight
-                      + h.emission;
+            #ifdef GI_SKY_SH
+                vec3 skyRad = skySHRadiance(dir);
+            #else
+                vec3 skyRad = sampleSky_fast(dir, eyeAlt);
+            #endif
+            incoming += skyRad * float(GI_SKY_BRIGHTNESS) * skyWeight + h.emission;
         }
     }
 

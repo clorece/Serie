@@ -68,6 +68,7 @@
 #include "/lib/pt/sampling.glsl"
 #include "/lib/pt/voxelTrace.glsl"
 #include "/lib/fragment/sky.glsl"
+#include "/lib/pt/skySH.glsl"
 
 // GRID-STRIDE dispatch, deliberately.
 //
@@ -346,8 +347,12 @@ void updateVoxel(uint idx) {
                 // minutes of world time, and the cache's own temporal blend has a
                 // far longer time constant than a frame.
                 float skyWeight = h.escaped ? 1.0 : faceSkyVis;
-                incoming += sampleSky_fast(dir, eyeAlt) * float(GI_SKY_BRIGHTNESS) * skyWeight
-                          + h.emission;
+                #ifdef GI_SKY_SH
+                    vec3 skyRad = skySHRadiance(dir);
+                #else
+                    vec3 skyRad = sampleSky_fast(dir, eyeAlt);
+                #endif
+                incoming += skyRad * float(GI_SKY_BRIGHTNESS) * skyWeight + h.emission;
             }
         }
         incoming *= 1.0 / float(SC_BOUNCE_RAYS);
