@@ -318,9 +318,29 @@ const float renderScale = RENDER_SCALE;
 
 // Distance bands for the above, in blocks. Inside NEAR every voxel refreshes
 // every frame; past FAR everything runs at the full SC_UPDATE_STRIDE period.
+// SC_NEAR_DIST also sets the always-warm radius for the feedback gate below,
+// so it is what covers a fast camera turn without a visible warm-up.
 #define SC_NEAR_DIST 32 // [16 24 32 48 64 96] always-refresh radius
 #define SC_MID_DIST  64 // [32 48 64 96 128]   quarter-period radius
 #define SC_FAR_DIST  96 // [48 64 96 128 192]  half-period radius
+
+// --- Update feedback ---------------------------------------------------------
+// Only refresh the parts of the cache something has actually looked at. Every
+// gather ray stamps the 8^3 brick it resolved through into a 16 KB request
+// volume, and the update pass skips any brick outside SC_NEAR_DIST that carries
+// no recent stamp. This is Lumen's LumenSurfaceCacheFeedback: rays report which
+// card pages they hit and only those get captured.
+//
+// Turning this OFF falls back to refreshing everything occupied, which is
+// correct but pays for the whole cascade rather than the visible part of it.
+// Worth switching off to isolate a suspected staleness bug.
+#define SURFACE_CACHE_FEEDBACK
+
+// How many frames a stamp keeps a brick eligible. MUST be >= SC_UPDATE_STRIDE,
+// or a brick can be stamped, have its scheduled phase fall outside the window,
+// and never refresh at all. Larger values keep more of the cache warm behind
+// you, which costs work but softens fast camera turns.
+#define SC_REQUEST_TTL 16 // [4 8 16 32 64 128] frames a request stays live
 
 // Faces refreshed per voxel per frame, as one in every N of the six. A face's
 // lighting changes slowly and SC_BLEND is a much longer time constant than this,
@@ -380,7 +400,7 @@ const float renderScale = RENDER_SCALE;
 // Per-pixel cosine rays that resolve through the surface cache rather than
 // shading their hit. Cheap enough to do per pixel precisely because there is no
 // shading at the hit: a DDA walk plus one texel fetch.
-#define GI_GATHER_RAYS 1  // [1 2 3 4 6 8 12 16] rays per pixel per frame
+#define GI_GATHER_RAYS 2  // [1 2 3 4 6 8 12 16] rays per pixel per frame
 #define GI_GATHER_DIST 48 // [16 24 32 48 64 96 128] ray reach in blocks
 
 // How sharply the sky term falls off with the surface's skylight lightmap.
@@ -399,11 +419,13 @@ const float renderScale = RENDER_SCALE;
 //   5 = cache coverage: green = tag valid, red = tag rejected, black = ray miss
 //   6 = tag actually STORED in the slot (grey ramp; pure black = never written)
 //   7 = tag the reader EXPECTS (same ramp) -- compare with 6
+//   8 = feedback coverage: green = brick stamped recently and being refreshed,
+//       red = frozen, blue = SURFACE_CACHE_FEEDBACK compiled out
 // If 3 is lit but 1 is black, the gather is at fault. If 3 is black, the surface
 // cache update (sc1_surface_direct) is -- then compare 4 and 5: lit in 4 but
 // black in 3 means the tag is wrongly rejecting entries; black in both means
 // those slots are simply never written (a dispatch-coverage problem).
-#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5]
+#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8]
 
 // Temporal accumulation. The surface cache is already converged, so this is a
 // light denoise rather than the old SVGF-scale machinery.

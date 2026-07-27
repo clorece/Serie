@@ -48,6 +48,18 @@
 //   fragment/sky     sampleSky_fast
 //   blocklightColors GetSpecialBlocklightColor
 #include "/lib/options.glsl"
+
+// Feedback: this pass READS the request volume as its main gate, and stamps it
+// from near-field bounce rays only. It deliberately does NOT set
+// SC_FEEDBACK_WRITE -- that would make every cache lookup stamp, including the
+// far-field ones, which is exactly the unbounded-growth failure described in
+// surfaceCache.glsl. This has to sit AFTER options.glsl and BEFORE
+// surfaceCache.glsl: the first defines SURFACE_CACHE_FEEDBACK, the second reads
+// SC_FEEDBACK.
+#ifdef SURFACE_CACHE_FEEDBACK
+    #define SC_FEEDBACK
+#endif
+
 #include "/lib/util/common.glsl"
 #include "/lib/pt/surfaceCache.glsl"
 #include "/lib/pt/voxelFormat.glsl"
@@ -102,30 +114,6 @@ uint fetchLocal(ivec3 local) {
     return texelFetch(voxelSampler, cascadeAtlasCoord(local, 0), 0).r;
 }
 
-// How many frames this voxel waits between refreshes.
-//
-// Lumen budgets card captures per frame and spends that budget by priority
-// rather than refreshing the whole scene on a fixed rotation. This is the same
-// idea in the cheapest form that fits a flat dispatch: the period comes from
-// distance to the camera, so the wall you are standing against relights the
-// frame the sun moves while the far corner of the cascade -- which occupies a
-// handful of pixels and is mostly seen through the temporal filter anyway --
-// relights over SC_UPDATE_STRIDE frames.
-//
-// The old scheme refreshed one Z slab in every N, which spent exactly as much
-// work on the far edge of the volume as on the voxel underfoot AND relit in
-// planar sweeps, so a lighting change crossed the world as a visible wavefront.
-// Hashing the phase per voxel (below) replaces that wavefront with dither, which
-// the temporal blend absorbs without it ever reading as structure.
-int scRefreshPeriod(ivec3 wv) {
-    vec3  d     = vec3(wv) + 0.5 - cameraPosition;
-    float dist2 = dot(d, d);
-    if (dist2 < float(SC_NEAR_DIST * SC_NEAR_DIST)) return 1;
-    if (dist2 < float(SC_MID_DIST  * SC_MID_DIST )) return max(SC_UPDATE_STRIDE / 4, 1);
-    if (dist2 < float(SC_FAR_DIST  * SC_FAR_DIST )) return max(SC_UPDATE_STRIDE / 2, 1);
-    return SC_UPDATE_STRIDE;
-}
-
 void updateVoxel(uint idx) {
     // --- flat index -> cascade-0 local coordinate ---------------------------
     // BRICK-MAJOR ordering, deliberately: consecutive threads walk one 8^3 brick
@@ -156,17 +144,45 @@ void updateVoxel(uint idx) {
     ivec3 org = scCascadeOriginVoxel();
     ivec3 wv  = org + local;
 
-    // --- gate 1: refresh budget (pure ALU, no memory touched) ---------------
-    int period = scRefreshPeriod(wv);
+    // --- gate 1: distance band (pure ALU, no memory touched) ----------------
+    //
+    // Lumen budgets card captures per frame and spends that budget by priority
+    // rather than refreshing the whole scene on a fixed rotation. The period
+    // comes from distance, so the wall you are standing against relights the
+    // frame the sun moves while the far corner of the cascade -- a handful of
+    // pixels, seen through the temporal filter anyway -- takes
+    // SC_UPDATE_STRIDE frames.
+    vec3  dcam      = vec3(wv) + 0.5 - cameraPosition;
+    float dist2     = dot(dcam, dcam);
+    bool  nearField = dist2 < float(SC_NEAR_DIST * SC_NEAR_DIST);
+
+    int period = nearField ? 1
+               : dist2 < float(SC_MID_DIST * SC_MID_DIST) ? max(SC_UPDATE_STRIDE / 4, 1)
+               : dist2 < float(SC_FAR_DIST * SC_FAR_DIST) ? max(SC_UPDATE_STRIDE / 2, 1)
+               : SC_UPDATE_STRIDE;
+
+    // --- gate 2: has anything actually looked at this brick? ----------------
+    //
+    // The strongest filter, and group-uniform: a whole work group shares one
+    // brick, so one L2 fetch decides all 256 threads. Everything outside the
+    // always-warm near field must earn its refresh by having been hit by a
+    // gather ray within SC_REQUEST_TTL frames. Bricks nothing looks at hold
+    // their last value; nothing reads them, so nothing notices.
+    #ifdef SC_FEEDBACK
+    if (!nearField && !scRequested(wv)) return;
+    #endif
+
+    // --- gate 3: refresh phase ----------------------------------------------
     if (period > 1) {
         uint phase = pcgHash(uint(wv.x * 73856093) ^ uint(wv.y * 19349663)
                            ^ uint(wv.z * 83492791));
         // Every period the ladder can produce is a power of two, so the mask is
-        // exact and this stays a single AND.
+        // exact and this stays a single AND. Hashing the phase spreads updates
+        // as dither instead of the planar sweep a slab stride produced.
         if (((uint(frameCounter) + phase) & uint(period - 1)) != 0u) return;
     }
 
-    // --- gate 2: hierarchical occupancy (group-uniform, L1-resident) --------
+    // --- gate 4: hierarchical occupancy (group-uniform, L1-resident) --------
     // The 64^3 super-brick and 8^3 brick maps the DDA already builds answer
     // "is there any geometry near here" in two fetches over 32 and 16 KB of
     // data, both of which stay in cache. Roughly nine tenths of this volume is
@@ -304,6 +320,18 @@ void updateVoxel(uint idx) {
                 // The whole point: resolve the hit through the cache instead of
                 // shading it. Emitters passed through on the way are additive.
                 incoming += scImageLookup(h.pos, h.normal) + h.emission;
+
+                // ONE level of feedback propagation, and only from the near
+                // field. This keeps the surfaces that light what you are
+                // standing next to warm even when the camera never looks at
+                // them directly. Letting every updated voxel stamp would make
+                // the requested set grow by SC_BOUNCE_DIST per frame and
+                // saturate the cascade in about eight frames -- see the note in
+                // surfaceCache.glsl. Near-field voxels refresh unconditionally,
+                // so the shell they warm cannot itself propagate further.
+                #ifdef SC_FEEDBACK
+                if (nearField) scRequestAt(scVoxelForHit(h.pos, h.normal));
+                #endif
             } else {
                 // A ray that left the cascades outright sees sky unconditionally.
                 // One that merely ran out of SC_BOUNCE_DIST is still inside the

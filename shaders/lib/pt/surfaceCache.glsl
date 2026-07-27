@@ -150,6 +150,63 @@ ivec3 scCascadeOriginVoxel() { return ivec3(floor(cascadeOrigin(0))); }
 // about half the time, which would read an empty slot.
 ivec3 scVoxelForHit(vec3 worldPos, vec3 n) { return scWorldVoxel(worldPos - n * 0.5); }
 
+// ---- Update feedback -------------------------------------------------------
+//
+// Lumen does not refresh its whole surface cache. Rays record which card pages
+// they actually hit into a feedback buffer, and only those pages get updated
+// (LumenSurfaceCacheFeedback). This is that idea at brick granularity: every
+// cache lookup stamps the current frame onto the 8^3 brick it read, and the
+// update pass refuses to spend work on a brick nothing has looked at recently.
+//
+// The volume is tiny -- one byte per brick, 32 x 16 x 32 = 16 KB for cascade 0
+// -- so it lives in L2 and both the stamp and the test are effectively free.
+// It is addressed toroidally like the cache itself; the wrap and the >>3 commute
+// for power-of-two masks, so a brick's slot here always matches the bricks its
+// voxels occupy in faceRadianceImg.
+//
+// WHY THE PROPAGATION IS BOUNDED. The gather's rays stamp what the camera can
+// see. If the update pass's own bounce rays also stamped, the requested set
+// would grow by SC_BOUNCE_DIST every frame -- requested bricks cast rays, those
+// hits get requested, and next frame THEY cast rays -- saturating the whole
+// cascade within about eight frames and making the whole scheme worthless. So
+// bounce-ray stamping is restricted to the near field, which always refreshes
+// anyway: that warms exactly one shell around the camera and then stops, because
+// the shell's own voxels are outside the near field and do not stamp.
+#ifdef SC_FEEDBACK
+layout(r8ui) uniform uimage3D scRequestImg;
+
+ivec3 scRequestCoord(ivec3 wv) {
+    return ivec3((wv.x >> 3) & ((SC_XZ >> 3) - 1),
+                 (wv.y >> 3) & ((SC_Y  >> 3) - 1),
+                 (wv.z >> 3) & ((SC_XZ >> 3) - 1));
+}
+
+// Iris wraps frameCounter at 720720, which is not a multiple of 256, so the
+// stamp's phase jumps once every ~3.3 hours at 60 fps. The worst case is that
+// some bricks read as stale for a frame and skip one refresh; the gather
+// re-stamps them immediately, so it self-heals on the next frame.
+uint scFrameStamp() { return uint(frameCounter) & 255u; }
+
+void scRequestAt(ivec3 wv) {
+    ivec3 c = scRequestCoord(wv);
+    // Load-compare-store, not a blind store. A million gather rays land in a few
+    // hundred bricks, so almost every one of these would be re-stamping a value
+    // the brick already carries this frame. The load hits L2; the store almost
+    // never happens.
+    if (imageLoad(scRequestImg, c).r != scFrameStamp()) {
+        imageStore(scRequestImg, c, uvec4(scFrameStamp(), 0u, 0u, 0u));
+    }
+}
+
+// Has anything looked at this brick recently enough to be worth refreshing?
+// SC_REQUEST_TTL must be >= the largest refresh period, or a brick could be
+// stamped, have its scheduled turn fall outside the window, and never update.
+bool scRequested(ivec3 wv) {
+    uint stamp = imageLoad(scRequestImg, scRequestCoord(wv)).r;
+    return ((scFrameStamp() - stamp) & 255u) < uint(SC_REQUEST_TTL);
+}
+#endif
+
 #ifdef SC_READ
 uniform sampler3D faceRadianceSampler;
 
@@ -162,7 +219,15 @@ vec3 scFetch(ivec3 wv, int f) {
 }
 
 vec3 scLookup(vec3 worldPos, vec3 n) {
-    return scFetch(scVoxelForHit(worldPos, n), scFaceFromNormal(n));
+    ivec3 wv = scVoxelForHit(worldPos, n);
+    // Only the gather opts into stamping (SC_FEEDBACK_WRITE). The debug views in
+    // d7_composite call this too and must NOT stamp: they would keep bricks warm
+    // that nothing real is looking at, which is exactly the measurement the
+    // feedback volume exists to make.
+    #ifdef SC_FEEDBACK_WRITE
+    scRequestAt(wv);
+    #endif
+    return scFetch(wv, scFaceFromNormal(n));
 }
 
 // Diagnostics. scLookupRaw ignores the validity tag, so comparing it against

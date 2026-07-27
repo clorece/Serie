@@ -169,6 +169,15 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 
 // Read-only access to the surface cache, for GI_DEBUG_VIEW 3.
 #define SC_READ
+
+// GI_DEBUG_VIEW 8 inspects the feedback request volume, so bind it only for that
+// view -- this pass must never STAMP requests (no SC_FEEDBACK_WRITE), or the
+// debug ray would keep bricks warm that nothing real is looking at and the view
+// would report on itself.
+#if GI_DEBUG_VIEW == 8 && defined(SURFACE_CACHE_FEEDBACK)
+    #define SC_FEEDBACK
+#endif
+
 #include "/lib/pt/surfaceCache.glsl"
 
 #ifdef DISTANT_HORIZONS
@@ -462,7 +471,7 @@ void main() {
                 vec3 rd = normalize(getWorldPosition().xyz);
                 VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
                 dbg = dh.hit ? vec3(scStoredTag(dh.pos, dh.normal) / 63.0) : vec3(0.0);
-            #else
+            #elif GI_DEBUG_VIEW == 7
                 // The tag the reader EXPECTS, same ramp. Compare against view 6:
                 // 6 black while 7 is grey means nothing was written there; both
                 // grey but different means writer and reader disagree on
@@ -470,6 +479,28 @@ void main() {
                 vec3 rd = normalize(getWorldPosition().xyz);
                 VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
                 dbg = dh.hit ? vec3(scExpectedTag(dh.pos, dh.normal) / 63.0) : vec3(0.0);
+            #elif GI_DEBUG_VIEW == 8
+                // Which bricks the feedback gate is keeping alive. GREEN = a
+                // gather ray stamped this brick within SC_REQUEST_TTL, so
+                // sc1_surface_direct is refreshing it. RED = stamped too long
+                // ago; that brick is frozen, which is correct only if nothing
+                // visible depends on it.
+                //
+                // This is the view that tells you whether the feedback volume is
+                // saving anything: mostly green over the whole scene means the
+                // requested set has saturated (check that bounce-ray stamping is
+                // still confined to the near field), while red on surfaces you
+                // are looking straight at means the gather is not stamping and
+                // the cache will go stale on screen.
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
+                #ifdef SC_FEEDBACK
+                    dbg = !dh.hit ? vec3(0.0)
+                        : scRequested(scVoxelForHit(dh.pos, dh.normal))
+                            ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                #else
+                    dbg = vec3(0.0, 0.0, 1.0); // feedback compiled out
+                #endif
             #endif
             /* RENDERTARGETS: 0,6 */
             gl_FragData[0] = vec4(dbg, 1.0);

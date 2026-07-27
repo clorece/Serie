@@ -46,6 +46,17 @@ void main() {
 
 #define SC_READ
 
+// Feedback: this pass is the PRIMARY source of surface-cache update requests.
+// Every ray that resolves through the cache stamps the brick it read, and
+// sc1_surface_direct refuses to spend work on bricks nothing has stamped. That
+// makes the cache's cost track what the camera can actually see rather than the
+// size of the volume. Must come after options.glsl (which defines
+// SURFACE_CACHE_FEEDBACK) and before surfaceCache.glsl (which reads these).
+#ifdef SURFACE_CACHE_FEEDBACK
+    #define SC_FEEDBACK
+    #define SC_FEEDBACK_WRITE
+#endif
+
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 #include "/lib/pt/surfaceCache.glsl"
