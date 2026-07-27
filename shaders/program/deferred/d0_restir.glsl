@@ -51,7 +51,7 @@ vec3 clipSpace;
 #include "/lib/util/positions.glsl"
 #include "/lib/util/sampling.glsl"
 #include "/lib/fragment/atmosphereLUT.glsl"
-#include "/lib/pt/voxelData.glsl"
+#include "/lib/pt/voxelTrace.glsl"
 #include "/lib/pt/ao.glsl"
 #include "/lib/pt/gi.glsl"
 #include "/lib/pt/restir.glsl"
@@ -119,7 +119,6 @@ void main() {
             bool validReproj = all(greaterThanEqual(uvPrev, padding)) && all(lessThan(uvPrev, 1.0 - padding));
 
           #ifdef RESTIR_GI
-            vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
             vec3 origin = worldAbs + normalWorld * 0.15;
 
             #ifndef RESTIR_BLUE_NOISE
@@ -152,7 +151,7 @@ void main() {
                 #endif
                 vec3 hitPos; vec3 hitNormal; bool wasHit; uint hitCategory; vec3 rayEmission;
 
-                VoxelHit h = traceVoxelGI(voxelSampler, gridOrigin, origin, dir, float(GI_RADIUS));
+                VoxelHit h = traceVoxelCascaded(origin, dir, float(GI_RADIUS), true);
                 rayEmission = h.emission * blocklightSuppression;
 
                 wasHit = h.hit;
@@ -164,7 +163,7 @@ void main() {
                 bool reprojected = false;
 
               #if RESTIR_SCREEN_BOUNCE
-                if (wasHit && hitCategory != VOXEL_EMISSIVE && hitCategory < 100u) {
+                if (wasHit && hitCategory != VOXEL_EMISSIVE && hitCategory != VOXEL_LIGHT) {
                     vec3  hitRelPrev = hitPos - previousCameraPosition;
                     vec4  viewHit    = gbufferPreviousModelView * vec4(hitRelPrev, 1.0);
                     vec4  clipHit    = gbufferPreviousProjection * viewHit;
@@ -194,7 +193,7 @@ void main() {
                             #ifdef GI_BOUNCE_SHADOWMAP
                                 bool occluded = isInShadow(h.pos + h.normal * 0.1 - cameraPosition);
                             #else
-                                bool occluded = traceVoxelRay(voxelSampler, h.pos + h.normal * 0.1, sunDirWorld, float(GI_RADIUS), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
+                                bool occluded = traceVoxelOccluded(h.pos + h.normal * 0.1, sunDirWorld, float(GI_RADIUS), true);
                             #endif
                             if (!occluded) rad += h.albedo * lightColor * ndl * skyOcc;
                         }
@@ -204,7 +203,7 @@ void main() {
                         if (skyProbeLenSq > 1e-4 && skyOcc > 0.01) { // sky probe stays a voxel ray (the shadow map can't answer "can I see sky")
                             vec3  skyProbeDir   = skyProbeRaw * inversesqrt(skyProbeLenSq);
                             float lambertWeight = dot(h.normal, skyProbeDir);
-                            bool  skyEscape     = !traceVoxelRay(voxelSampler, h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), cameraPosition, depthtex0, gbufferProjection, gbufferModelView, false);
+                            bool  skyEscape     = !traceVoxelOccluded(h.pos + h.normal * 0.15, skyProbeDir, float(GI_SKY_PROBE_DIST), true);
 
                             if (skyEscape) rad += vec3(luma(h.albedo)) * giSky * lambertWeight * GI_BOUNCE_SKY * skyOcc;
                         }

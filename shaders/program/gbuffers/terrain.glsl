@@ -1,4 +1,6 @@
 #include "/lib/options.glsl"
+// voxelFormat.glsl provides SHAPE_ID_BASE (the packed block-id encoding).
+#include "/lib/pt/voxelFormat.glsl"
 
 #ifdef VERTEX
 
@@ -55,16 +57,17 @@ void main() {
         // so leaves/grass get a faint sheen instead of being fully flat. Special-
         // cased here (not dual-listed) exactly like grass_block.
         else if (mc_Entity.x == 10000.0 || mc_Entity.x == 10005.0) pbrClass = 14.0;
-        // Packed shaped-block ids (30000 + materialClass*100 + shapeId): the voxel
-        // SHAPE comes from the low 2 digits (shadow.glsl), the MATERIAL from the high
-        // digits. So stairs/slabs/walls/fences/etc. get their REAL per-material class
-        // (copper stairs read metal, quartz glossy, blackstone dark, wood matte) while
-        // still voxelizing as their sub-block shape. block.properties is generated so
-        // each (shape x material) pair owns a distinct id. See the header ID map.
-        else if (mc_Entity.x >= 30101.0 && mc_Entity.x <= 31666.0) pbrClass = floor((mc_Entity.x - 30000.0) / 100.0);
-        // Leftover shaped blocks with no clean material (snow/cake/candles/pots/...)
-        // stay on the 20xxx shape ids -> one generic rough-dielectric class.
-        else if (mc_Entity.x >= 20001.0 && mc_Entity.x <= 20066.0) pbrClass = 12.0;
+        // Packed shaped-block ids (40000 + shapeId*16 + matClass): the voxel SHAPE
+        // comes from the high bits (shadow.glsl), the MATERIAL from the low 4. So
+        // stairs/slabs/walls/fences/etc. get their REAL per-material class (copper
+        // stairs read metal, quartz glossy, blackstone dark, wood matte) while still
+        // voxelizing as their sub-block shape.
+        //
+        // The old 30000 + matClass*100 + shapeId packing capped shapes at 99; the
+        // table is now generated from Minecraft's own block models and needs far
+        // more, so shape got the wide field and material the narrow one. matClass 0
+        // means "no integrated-PBR class" and correctly leaves pbrClass at 0.
+        else if (mc_Entity.x >= float(SHAPE_ID_BASE)) pbrClass = mod(mc_Entity.x - float(SHAPE_ID_BASE), 16.0);
     #endif
 
     // Per-material self-emission scale for the special blocklight path. Known

@@ -159,13 +159,10 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 #include "/lib/fragment/shadows.glsl"
 #include "/lib/fragment/clouds.glsl"
 
-#ifdef PT_DEBUG_VOXELS
-#include "/lib/pt/voxelData.glsl"
-#endif
 
 
 #include "/lib/util/positions.glsl"
-#include "/lib/pt/ddaTrace.glsl"
+#include "/lib/pt/voxelTrace.glsl"
 
 #ifdef DISTANT_HORIZONS
 // dhLighting.glsl provides dhSunShadow (the shadow-map term used below).
@@ -538,47 +535,22 @@ void main() {
 
     #ifdef PT_DEBUG_VOXELS
     if (depth0 < 1.0) {
-        vec3 gridOrigin = floor(cameraPosition) - VOXEL_RADIUS_VEC;
-        vec3 rayOrig = cameraPosition - gridOrigin;
-        vec3 rayDir  = normalize(getWorldPosition().xyz);
-
-        ivec3 voxPos = ivec3(floor(rayOrig));
-        ivec3 rayStep = ivec3(sign(rayDir));
-        vec3 tDelta = 1.0 / max(abs(rayDir), vec3(1e-6));
-        vec3 tMax   = (vec3(voxPos) + max(vec3(rayStep), vec3(0.0)) - rayOrig) / rayDir;
-
-        bool hit = false;
-        vec3 hitAlbedo = vec3(0.0);
-        vec3 dbgNormal = -rayDir;
-        for (int i = 0; i < 768; i++) {
-            if (any(lessThan(voxPos, ivec3(0))) || any(greaterThanEqual(voxPos, VOXEL_DIMS))) break;
-            VoxelSample vs = readVoxel(voxelSampler, voxPos);
-            if (vs.category != VOXEL_AIR) {
-                uint dbgShape = voxelShapeId(vs.category);
-                if (dbgShape != 0u) {
-                    float tS; vec3 nS;
-                    if (intersectVoxelShape(dbgShape, rayOrig - vec3(voxPos), rayDir, i == 0, tS, nS)) {
-                        hit = true; dbgNormal = nS;
-                        hitAlbedo = mix(vs.albedo, vec3(0.1, 1.0, 0.1), 0.4); // green = shaped
-                        break;
-                    }
-                    // shape miss: keep marching
-                } else {
-                    hit = true;
-                    vec3 tint = (vs.category == VOXEL_EMISSIVE || vs.category >= 100u)
-                              ? vec3(1.0, 1.0, 0.1)                        // yellow = emissive
-                              : (vs.category == VOXEL_FOLIAGE ? vec3(0.1, 0.5, 1.0)   // blue = foliage
-                                                              : vec3(1.0, 0.1, 0.1)); // red = full opaque
-                    hitAlbedo = mix(vs.albedo, tint, 0.4);
-                    break;
-                }
-            }
-            bvec3 mask = lessThanEqual(tMax.xyz, min(tMax.yzx, tMax.zxy));
-            tMax  += vec3(mask) * tDelta;
-            voxPos += ivec3(mask) * rayStep;
+        // Debug view of the cascaded grid: trace the primary ray through it and
+        // shade by what was hit. Tint encodes the category, brightness encodes
+        // which cascade resolved the hit, so cascade seams are directly visible.
+        vec3 rayDir = normalize(getWorldPosition().xyz);
+        VoxelHit dbg = traceVoxelCascaded(cameraPosition, rayDir, 4096.0, false);
+        if (dbg.hit) {
+            vec3 tint = dbg.category == VOXEL_EMISSIVE || dbg.category == VOXEL_LIGHT
+                      ? vec3(1.0, 1.0, 0.1)                              // yellow = emissive
+                      : dbg.category == VOXEL_FOLIAGE ? vec3(0.1, 0.5, 1.0)  // blue = foliage
+                      : dbg.shapeId != 0u             ? vec3(0.1, 1.0, 0.1)  // green = sub-block shape
+                                                      : vec3(1.0, 0.1, 0.1); // red = full cube
+            int k = clamp(cascadeFor(dbg.pos), 0, VOXEL_CASCADES - 1);
+            float cascadeDim = 1.0 - 0.18 * float(k);
+            color = mix(dbg.albedo, tint, 0.4) * cascadeDim
+                  * (0.55 + 0.45 * abs(dot(dbg.normal, normalize(vec3(0.4, 0.8, 0.3)))));
         }
-        // crude face shading so the 3D form of shapes is readable
-        if (hit) color = hitAlbedo * (0.55 + 0.45 * abs(dot(dbgNormal, normalize(vec3(0.4, 0.8, 0.3)))));
     }
     #endif
 

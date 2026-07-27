@@ -156,13 +156,13 @@ const float renderScale = RENDER_SCALE;
 #define COLOR_CONTRAST 1.0 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 #define COLOR_SATURATION 1.08 // [0.8 0.9 0.95 1.0 1.04 1.08 1.12 1.16 1.2 1.25 1.3]
 
-#define PURKINJE_EFFECT
+//#define PURKINJE_EFFECT
 #define PURKINJE_STRENGTH 0.6 // [0.2 0.4 0.6 0.8 1.0 1.2 1.5 2.0]
 
 //#define HALATION
 #define HALATION_STRENGTH 0.8 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.5 2.0]
 
-#define SPLIT_TONING
+//#define SPLIT_TONING
 #define SPLIT_TONING_STRENGTH 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
 #define COLOR_TEMP 0.0 // [-0.5 -0.4 -0.3 -0.2 -0.1 0.0 0.1 0.2 0.3 0.4 0.5]
 #define FILM_GRAIN_I 1 // [0 1 2 3 4 5 6 7 8 9 10]
@@ -172,7 +172,7 @@ const float renderScale = RENDER_SCALE;
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
 #define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150]
-#define PT_RASTER_AMBIENT_FLOOR 2 // [0 5 10 15 20 35 50] neutral indirect-light floor for path-traced GI. Fades out where real PT energy exists; does not inject sky or block lightmap color.
+#define PT_RASTER_AMBIENT_FLOOR 0 // [0 5 10 15 20 35 50] neutral indirect-light floor for path-traced GI. Fades out where real PT energy exists; does not inject sky or block lightmap color.
 //#define LIGHTING_AO_FULL
 
 //#define WIND_MOVEMENT // WIP
@@ -255,18 +255,31 @@ const float renderScale = RENDER_SCALE;
 #define PBR_DEBUG 0 // [0 1 2 3 4]
 
 #define VOXEL_GI
-#define VOXEL_DISTANCE 12 // [8 12 16 24 32] horizontal voxelization radius (chunks)
-#if VOXEL_DISTANCE == 8
-    #define VOXEL_SHADOW_DISTANCE 128.0
-#elif VOXEL_DISTANCE == 12
-    #define VOXEL_SHADOW_DISTANCE 192.0
-#elif VOXEL_DISTANCE == 16
-    #define VOXEL_SHADOW_DISTANCE 256.0
-#elif VOXEL_DISTANCE == 24
-    #define VOXEL_SHADOW_DISTANCE 384.0
-#else
-    #define VOXEL_SHADOW_DISTANCE 512.0
-#endif
+
+// --- Cascaded voxel grid -----------------------------------------------------
+// Four cascades share one stacked 3D image, each covering twice the world of the
+// one before at half the resolution (1/2/4/8 blocks per voxel). Total reach is
+// VOXEL_CASCADE_SIZE * 8 blocks for the same memory a single uniform grid of
+// VOXEL_CASCADE_SIZE * 2 would have cost. See lib/pt/voxelCascade.glsl.
+//
+//   size   cascade 0 reach   total reach   voxel memory
+//    128       128 blocks     1024 blocks     33 MB
+//    192       192            1536            75 MB   (default)
+//    256       256            2048           178 MB
+#define VOXEL_CASCADE_SIZE 192 // [128 192 256] voxels per axis in EACH cascade
+
+// How far the shadow pass rasterises geometry, which is what actually fills the
+// grid. Cascades beyond this radius stay empty until chunks load, so raising it
+// extends usable GI range at real rasterisation cost. Coarse cascades only need
+// occupancy, but Minecraft has no cheaper source for it without Distant Horizons.
+#define VOXEL_SHADOW_DISTANCE 384.0 // [128.0 192.0 256.0 384.0 512.0 768.0] shadow/voxelization radius (blocks)
+
+// Entities are excluded from the voxel grid (they move every frame), so they are
+// invisible to the path tracer unless their bounds are captured separately. With
+// this on, the shadow pass records a per-entity AABB and shadowcomp builds a small
+// BVH over them, letting mobs, players and items cast path-traced shadows.
+// Shadows are box-shaped: an entity's silhouette is not resolved.
+#define ENTITY_SHADOWS
 #define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
 #define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
@@ -276,7 +289,7 @@ const float renderScale = RENDER_SCALE;
 #define GI_BOUNCE_SHADOWMAP
 #define GI_BOUNCE_SKY 0.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
 #define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
-#define GI_EMISSION 1.0   // [1 2 3 4 5 6 7 8] emissive block glow strength
+#define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
 #define VOXEL_SHAPES
 
 #define SPECIAL_BLOCKLIGHT // master toggle for the per-texel self-emission path (d7_composite)

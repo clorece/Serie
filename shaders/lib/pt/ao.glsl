@@ -2,7 +2,7 @@
 #define AO_GLSL
 
 #include "/lib/pt/rand.glsl"
-#include "/lib/pt/ddaTrace.glsl"
+#include "/lib/pt/voxelTrace.glsl"
 
 void buildTBN(vec3 n, out vec3 t, out vec3 b) {
     vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
@@ -42,7 +42,7 @@ float computeAO(
         float r1  = randFloat(seed);
         float r2  = randFloat(seed);
         vec3  dir = cosHemisphereDir(normalWorld, r1, r2);
-        if (!traceVoxelRay(atlas, origin, dir, float(AO_RADIUS), camPos, depthtex0, gbufferProj, gbufferMV, false)) {
+        if (!traceVoxelOccluded(origin, dir, float(AO_RADIUS), true)) {
             unoccluded += 1.0;
         }
     }
