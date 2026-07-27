@@ -178,6 +178,19 @@ bool scTagValid(vec3 worldPos, vec3 n) {
     float a = texelFetch(faceRadianceSampler, scImageCoord(wv, scFaceFromNormal(n)), 0).a;
     return abs(a - scTag(wv)) < 0.5;
 }
+
+// The tag actually STORED in the slot, and the tag the reader EXPECTS there.
+// Displaying both settles what a red coverage map means: a stored tag of 0 with
+// a non-zero expected tag says the slot was never written, whereas two differing
+// non-zero values would say writer and reader disagree about addressing.
+float scStoredTag(vec3 worldPos, vec3 n) {
+    ivec3 wv = scVoxelForHit(worldPos, n);
+    return texelFetch(faceRadianceSampler, scImageCoord(wv, scFaceFromNormal(n)), 0).a;
+}
+
+float scExpectedTag(vec3 worldPos, vec3 n) {
+    return scTag(scVoxelForHit(worldPos, n));
+}
 #endif
 
 #ifdef SC_IMAGE

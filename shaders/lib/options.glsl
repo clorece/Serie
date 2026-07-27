@@ -308,7 +308,21 @@ const float renderScale = RENDER_SCALE;
 // Fraction of the cache refreshed per frame: one slab in every N along Z, with
 // the phase rotating by frame. Higher = cheaper per frame but a full refresh
 // takes longer, so relit surfaces lag further behind a lighting change.
-#define SC_UPDATE_STRIDE 8 // [1 2 4 8 16] frames for a full refresh
+//
+// TEMPORARILY 1 (full volume every frame) while the cache is being brought up.
+// Any value above 1 makes coverage depend on the image genuinely persisting
+// between frames, which is one of the two things still unconfirmed here -- if
+// clear=false were not honoured, the 1 - 1/N of slabs not touched this frame
+// would read back tag-invalid and the cache would look empty. At 1 the result
+// cannot depend on that. Raise it back to 8 once GI_DEBUG_VIEW 5 reads green:
+// if it stays green, persistence works and the cheaper stride is free.
+#define SC_UPDATE_STRIDE 1 // [1 2 4 8 16] frames for a full refresh
+
+// Safety cap on the update pass's grid-stride loop. With a dispatch of the
+// requested size this is one iteration and the cap is inert; it exists so that a
+// dispatch far smaller than requested degrades into partial coverage instead of
+// one invocation walking millions of voxels and hanging the GPU.
+#define SC_MAX_ITERS 64 // [1 4 16 64 256 1024]
 
 // Extra gain on VOXEL_EMISSIVE blocks (lava, magma) when injected into the
 // cache. VOXEL_LIGHT emitters take their colour from the blocklight palette and
@@ -363,6 +377,8 @@ const float renderScale = RENDER_SCALE;
 //   3 = the surface cache down the primary ray -- is the CACHE populated?
 //   4 = same as 3 but IGNORING the validity tag
 //   5 = cache coverage: green = tag valid, red = tag rejected, black = ray miss
+//   6 = tag actually STORED in the slot (grey ramp; pure black = never written)
+//   7 = tag the reader EXPECTS (same ramp) -- compare with 6
 // If 3 is lit but 1 is black, the gather is at fault. If 3 is black, the surface
 // cache update (sc1_surface_direct) is -- then compare 4 and 5: lit in 4 but
 // black in 3 means the tag is wrongly rejecting entries; black in both means

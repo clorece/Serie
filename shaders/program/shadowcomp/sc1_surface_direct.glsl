@@ -51,18 +51,20 @@
 #include "/lib/fragment/sky.glsl"
 #include "/lib/blocklightColors.glsl"
 
-// ONE-DIMENSIONAL dispatch, deliberately.
+// GRID-STRIDE dispatch, deliberately.
 //
-// This started as a 3D dispatch, ivec3(SC_XZ/8, SC_Y/8, SC_XZ/SC_UPDATE_STRIDE)
-// over an 8x8x1 group, and only the X dimension actually materialised: Y and Z
-// collapsed to a single group each. The cache filled a 256 x 8 x 8 bar -- a long
-// thin strip pinned to one world coordinate (slot 0 maps to the nearest multiple
-// of SC_XZ, which does not move as the camera walks), with the entire rest of the
-// volume never written at all.
+// Coverage here does NOT depend on the dispatch being the size this file asks
+// for, because twice now it has not been. A 3D dispatch of
+// ivec3(SC_XZ/8, SC_Y/8, SC_XZ/SC_UPDATE_STRIDE) over an 8x8x1 group produced a
+// long thin bar instead of a volume, and replacing it with a flat 1D dispatch of
+// 4096 groups x 256 still left most of the cache unwritten (GI_DEBUG_VIEW 5 came
+// back red -- tag rejected -- across the whole cascade).
 //
-// So the volume is walked as a flat index on X alone, which is the pattern
-// sc0_entity_bvh already uses successfully in this pack. Same thread count, same
-// coverage, no dependence on how the Y and Z dispatch dimensions are handled.
+// So the number of threads that actually launch is treated as a performance
+// detail, not a correctness input. gl_NumWorkGroups and gl_WorkGroupSize report
+// the REAL dispatch, so striding by their product covers the volume exactly once
+// whatever that dispatch turns out to be: one iteration per thread if the full
+// request was honoured, more if it was not.
 layout(local_size_x = 256) in;
 const ivec3 workGroups = ivec3((SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE) / 256, 1, 1);
 
@@ -74,13 +76,10 @@ uint fetchLocal(ivec3 local) {
     return texelFetch(voxelSampler, cascadeAtlasCoord(local, 0), 0).r;
 }
 
-void main() {
+void updateVoxel(uint idx) {
     // --- flat index -> slot -> world voxel ----------------------------------
     // idx enumerates one Z slab set: SC_XZ * SC_Y voxels per slab, and
     // SC_XZ / SC_UPDATE_STRIDE slabs.
-    uint idx = gl_GlobalInvocationID.x;
-    if (idx >= uint(SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE)) return;
-
     int slabArea = SC_XZ * SC_Y;
     int zIdx = int(idx) / slabArea;
     int rem  = int(idx) % slabArea;
@@ -221,5 +220,23 @@ void main() {
         vec3  outR  = valid ? mix(prev.rgb, total, SC_BLEND) : total;
 
         scImageStore(wv, f, outR);
+    }
+}
+
+void main() {
+    uint total  = uint(SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE);
+    // The REAL dispatch, whatever it turned out to be -- not what workGroups
+    // asked for. Guarded against a degenerate report so this can never spin.
+    uint stride = max(gl_NumWorkGroups.x * gl_WorkGroupSize.x, 1u);
+
+    // Hard iteration cap. If the dispatch is honoured this is one pass and the
+    // cap never binds. If it is far smaller than requested, this bounds the work
+    // per thread instead of letting a single invocation walk millions of voxels
+    // and hang the GPU -- coverage then comes up short, which GI_DEBUG_VIEW 5
+    // will show, rather than taking the driver down.
+    for (uint i = 0u; i < uint(SC_MAX_ITERS); ++i) {
+        uint idx = gl_GlobalInvocationID.x + i * stride;
+        if (idx >= total) break;
+        updateVoxel(idx);
     }
 }

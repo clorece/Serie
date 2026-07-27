@@ -447,7 +447,7 @@ void main() {
                 vec3 rd = normalize(getWorldPosition().xyz);
                 VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
                 dbg = dh.hit ? scLookupRaw(dh.pos, dh.normal) : vec3(0.0);
-            #else
+            #elif GI_DEBUG_VIEW == 5
                 // Cache coverage: green where the slot's tag matches, red where
                 // it does not, black where the primary ray hit nothing. Shows
                 // directly which parts of the volume the update pass reaches.
@@ -456,6 +456,20 @@ void main() {
                 dbg = !dh.hit ? vec3(0.0)
                     : scTagValid(dh.pos, dh.normal) ? vec3(0.0, 1.0, 0.0)
                                                     : vec3(1.0, 0.0, 0.0);
+            #elif GI_DEBUG_VIEW == 6
+                // The tag actually STORED in the slot, as a 0..63 grey ramp.
+                // Pure black = the slot holds alpha 0, i.e. it was never written.
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
+                dbg = dh.hit ? vec3(scStoredTag(dh.pos, dh.normal) / 63.0) : vec3(0.0);
+            #else
+                // The tag the reader EXPECTS, same ramp. Compare against view 6:
+                // 6 black while 7 is grey means nothing was written there; both
+                // grey but different means writer and reader disagree on
+                // addressing; identical means the slot is valid.
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
+                dbg = dh.hit ? vec3(scExpectedTag(dh.pos, dh.normal) / 63.0) : vec3(0.0);
             #endif
             /* RENDERTARGETS: 0,6 */
             gl_FragData[0] = vec4(dbg, 1.0);
