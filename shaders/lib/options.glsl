@@ -250,11 +250,15 @@ const float renderScale = RENDER_SCALE;
 // VOXEL_CASCADE_SIZE * 8 blocks for the same memory a single uniform grid of
 // VOXEL_CASCADE_SIZE * 2 would have cost. See lib/pt/voxelCascade.glsl.
 //
-//   size   cascade 0 reach   total reach   voxel memory
-//    128       128 blocks     1024 blocks     33 MB
-//    192       192            1536            75 MB   (default)
-//    256       256            2048           178 MB
-#define VOXEL_CASCADE_SIZE 192 // [128 192 256] voxels per axis in EACH cascade
+//   size   cascade 0 reach   total reach   voxel memory   surface cache
+//    128       128 blocks     1024 blocks     33 MB          100 MB
+//    256       256            2048           134 MB          402 MB   (default)
+//
+// MUST be a power of two. The surface cache indexes itself by world voxel
+// coordinate wrapped with a bitmask (see lib/pt/surfaceCache.glsl); 192 has no
+// mask, so the old 192 default is gone. 256 is the recommended size -- it keeps
+// cascade 0, the only cascade the surface cache covers, a full 256 blocks wide.
+#define VOXEL_CASCADE_SIZE 256 // [128 256] voxels per axis in EACH cascade
 
 // How far the shadow pass rasterises geometry, which is what actually fills the
 // grid. Cascades beyond this radius stay empty until chunks load, so raising it
@@ -293,6 +297,39 @@ const float renderScale = RENDER_SCALE;
 #define EMISSIVE_THRESHOLD_HI 0.72 // [0.55 0.62 0.66 0.72 0.78 0.85 0.92] albedo value at/above which a texel is fully emissive (the flame). Raise to confine the glow to only the brightest texels.
 #define EMISSIVE_BRIGHTNESS 6.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0] HDR strength of the self-emission added to emissive texels. The texel's own albedo supplies the color.
 #define VOXEL_EMISSIVE_SHAPES // gate the gi.glsl emissive sub-box logic; off = whole-voxel emission (legacy)
+
+// --- Surface cache (Phase 3.1) -----------------------------------------------
+// Persistent per-voxel-face outgoing radiance over cascade 0. Rays look their
+// hit radiance up here instead of shading it, which is what decouples lighting
+// cost from ray count. See lib/pt/surfaceCache.glsl for the toroidal addressing
+// that lets it survive camera motion.
+#define SURFACE_CACHE
+
+// Fraction of the cache refreshed per frame: one slab in every N along Z, with
+// the phase rotating by frame. Higher = cheaper per frame but a full refresh
+// takes longer, so relit surfaces lag further behind a lighting change.
+#define SC_UPDATE_STRIDE 8 // [1 2 4 8 16] frames for a full refresh
+
+// Extra gain on VOXEL_EMISSIVE blocks (lava, magma) when injected into the
+// cache. VOXEL_LIGHT emitters take their colour from the blocklight palette and
+// are already calibrated, so this does not apply to them.
+#define SC_EMISSIVE_BOOST 2.0 // [0.5 1.0 1.5 2.0 3.0 4.0 6.0]
+
+// Bounce rays cast per voxel face per refresh. Each one resolves its hit through
+// the cache rather than shading it, so this buys angular accuracy, NOT bounce
+// count -- bounces come free from the feedback loop, one more per refresh.
+#define SC_BOUNCE_RAYS 2 // [1 2 3 4 6 8]
+
+// How far a bounce ray travels before giving up and taking the sky. Short is
+// fine: anything past this is the far field, which the world radiance cache
+// covers rather than the surface cache.
+#define SC_BOUNCE_DIST 32 // [8 16 24 32 48 64 96]
+
+// Temporal blend weight for a cache slot: how much of each refresh is the new
+// estimate. Low values denoise a sparse ray budget hard but make relighting lag;
+// note a slot only refreshes every SC_UPDATE_STRIDE frames, so the effective
+// time constant is SC_UPDATE_STRIDE / SC_BLEND frames.
+#define SC_BLEND 0.25 // [0.05 0.1 0.15 0.25 0.4 0.6 1.0]
 
 // --- Lumen GI ----------------------------------------------------------------
 // The ReSTIR reservoirs, the SVGF a-trous denoiser, GTAO and the voxel-AO path
