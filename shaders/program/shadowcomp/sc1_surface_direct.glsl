@@ -65,8 +65,22 @@
 // the REAL dispatch, so striding by their product covers the volume exactly once
 // whatever that dispatch turns out to be: one iteration per thread if the full
 // request was honoured, more if it was not.
+// workGroups MUST be literal integers.
+//
+// Iris reads this declaration out of the source text rather than evaluating
+// GLSL, so an expression it cannot fold -- as
+// ivec3((SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE) / 256, 1, 1) was -- silently
+// falls back to a single work group. That is the whole story behind the strip:
+// one group of 256 threads ran, so with the grid-stride cap the pass reached
+// 256 * SC_MAX_ITERS voxels, i.e. one Z slab, and GI_DEBUG_VIEW 5 showed a green
+// band on red. Both compute passes that already worked in this pack
+// (s0_shape_table, sc0_entity_bvh) use plain literals here; this one did not.
+//
+// 4096 x 256 = 1,048,576 threads. The grid-stride loop below turns that into
+// full coverage for any cascade size or update stride: 8 iterations per thread
+// at SC_XZ 256 with SC_UPDATE_STRIDE 1, one iteration at stride 8.
 layout(local_size_x = 256) in;
-const ivec3 workGroups = ivec3((SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE) / 256, 1, 1);
+const ivec3 workGroups = ivec3(4096, 1, 1);
 
 // Voxel word at a cascade-0 LOCAL coordinate, or air outside the volume.
 uint fetchLocal(ivec3 local) {

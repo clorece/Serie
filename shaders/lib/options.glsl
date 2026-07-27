@@ -383,7 +383,7 @@ const float renderScale = RENDER_SCALE;
 // cache update (sc1_surface_direct) is -- then compare 4 and 5: lit in 4 but
 // black in 3 means the tag is wrongly rejecting entries; black in both means
 // those slots are simply never written (a dispatch-coverage problem).
-#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5]
+#define GI_DEBUG_VIEW 5 // [0 1 2 3 4 5]
 
 // Temporal accumulation. The surface cache is already converged, so this is a
 // light denoise rather than the old SVGF-scale machinery.
