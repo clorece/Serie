@@ -176,6 +176,7 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
                         hasShape = lightOccluderAabb(voxelLightMat(w), dummyMin, dummyMax);
                         if (!hasShape) realHit = !first; // area emitter fills the voxel
                     } else {
+                        #ifdef VOXEL_BLAS
                         uint shapeId = voxelShape(w);
                         if (shapeId != 0u) {
                             hasShape = true;
@@ -183,7 +184,11 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
                             realHit = intersectShape(shapeId, localRo, rayDir, first, tS, nS);
                             occT = tS;
                             if (realHit) { tHitLocal = tS; nHit = nS; }
-                        } else if (first) {
+                        } else
+                        #endif
+                        // BLAS off: every non-emitter traces as a full cube, so the
+                        // hit keeps the DDA's own tLocal and lastMask face normal.
+                        if (first) {
                             realHit = false; // do not self-shadow on the origin block
                         }
                     }
@@ -315,10 +320,14 @@ bool traceVoxelOccluded(vec3 worldPos, vec3 rayDir, float maxDist, bool skipOrig
 
             uint w = texelFetch(voxelSampler, cascadeAtlasCoord(vox, k), 0).r;
             if (!voxelIsAir(w)) {
+                #ifdef VOXEL_BLAS
                 uint shapeId = (k == 0) ? voxelShape(w) : 0u;
                 if (shapeId != 0u) {
                     if (occludeShape(shapeId, localPos - vec3(vox), rayDir, first, tLimit)) return true;
-                } else if (!first) {
+                } else
+                #endif
+                // BLAS off: any occupied voxel blocks as a full cube.
+                if (!first) {
                     return true;
                 }
             }

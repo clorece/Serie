@@ -273,7 +273,20 @@ const float renderScale = RENDER_SCALE;
 #define GI_SKY_BRIGHTNESS 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
+// Write the 10-bit model-derived shape id into the voxel word. Leave this ON.
+// Its #else branch in gbuffers/shadow.glsl maps shaped blocks to VOXEL_AIR,
+// which deletes every stair, slab, fence and wall from the grid rather than
+// cubing them. The bits already exist in the word, so writing the id is free.
 #define VOXEL_SHAPES
+
+// Sub-block intersection: trace rays against the generated block BLAS (761
+// shapes / 3080 boxes) instead of treating each occupied voxel as a full cube.
+// OFF for the Lumen bring-up -- everything traces as a unit cube. The table and
+// the traversal code stay in the tree and the setup pass still uploads the SSBO
+// (24 KB, once at load), so re-enabling is exactly this one line. Emitter
+// silhouettes (lib/pt/lightShapes.glsl) are independent of this and stay live,
+// which is why a torch still reads as a stick rather than a solid block.
+//#define VOXEL_BLAS
 
 #define SPECIAL_BLOCKLIGHT // master toggle for the per-texel self-emission path (d7_composite)
 #define EMISSIVE_THRESHOLD_LO 0.42 // [0.20 0.28 0.35 0.42 0.50 0.58 0.66] albedo value below which a texel is treated as non-emissive (the stick). Lower = more of the block glows.
