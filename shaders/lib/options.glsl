@@ -171,7 +171,7 @@ const float renderScale = RENDER_SCALE;
 //#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
-#define LIGHTING_INDIRECT 25  // [25 40 55 70 85 100 125 150]
+#define LIGHTING_INDIRECT 5  // [25 40 55 70 85 100 125 150]
 
 //#define WIND_MOVEMENT // WIP
 
@@ -425,6 +425,22 @@ const float renderScale = RENDER_SCALE;
 // sooner (cheaper, but noisier just after a disocclusion); at GI_GATHER_RAYS 1
 // the whole mechanism compiles out and the loop bound stays constant.
 #define GI_ADAPTIVE_FRAMES 8 // [2 4 6 8 12 16 24 32] history length at which the budget bottoms out
+
+// Let fully converged, near-static pixels skip the gather entirely on most
+// frames. At GI_ACCUM_FRAMES a pixel blends each new estimate at alpha = 1/33,
+// so it is already 97% resampled history and re-tracing it barely moves it.
+//
+// Only pixels that are BOTH fully converged and nearly stationary qualify, so
+// disocclusions, newly visible surfaces and anything on moving geometry always
+// trace at full rate. Which pixels skip is hashed per pixel, so the skipped set
+// is scattered rather than a pattern that could read as structure.
+//
+// This is where the gather's remaining cost goes in a mostly-static view. Turn
+// it off if GI is visibly slow to respond to a light changing while standing
+// still -- that is the one thing it trades away.
+#define GI_CONVERGED_SKIP
+#define GI_SKIP_PERIOD 3 // [2 3 4 6 8] a qualifying pixel traces 1 frame in N
+#define GI_SKIP_MOTION 1.5 // [0.5 1.0 1.5 3.0 8.0] max screen motion in pixels to still qualify
 
 // Answer diffuse ray misses from a per-frame spherical-harmonic projection of
 // the sky instead of sampling the atmosphere LUT per ray.

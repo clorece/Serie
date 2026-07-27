@@ -560,6 +560,36 @@ per ray rather than per frame.
      skySHRadiance is load-bearing: negative radiance would be fed back through
      the surface cache and keep subtracting.
 
+OPTIMISATION PASS 4 -- finishing the hot-loop cleanup, and skipping the gather
+
+ 12. EMITTER AABBs BAKED TOO. lightOccluderAabb and lightEmissiveAabb were the
+     same problem as the colour lookup: branch trees over material ids returning
+     constants, inside the DDA loop. They now come from the same SSBO (five vec4
+     arrays, 10240 bytes). The authoring data is renamed ...Ref() and fenced
+     behind EMITTER_PALETTE_BAKE so only s0_shape_table compiles it -- leaving it
+     reachable-but-uncalled would rely on the driver dead-stripping it, and the
+     register allocation this change is about is exactly what should not depend
+     on that. Material-id compares reachable in the gather: 11 -> 0.
+
+ 13. CONVERGED PIXELS SKIP THE GATHER. At GI_ACCUM_FRAMES a pixel blends each new
+     estimate at alpha = 1/33, so it is already 97% resampled history and tracing
+     it again moves it almost not at all. Fully converged AND near-static pixels
+     now trace one frame in GI_SKIP_PERIOD.
+
+     Chosen over a checkerboard gather deliberately: it needs no spatial
+     reconstruction, it cannot touch a disoccluded or moving pixel (those never
+     qualify), and the set that skips is hashed per pixel rather than following a
+     pattern. The motion guard is belt-and-braces -- converged pixels resample
+     every frame regardless, so the blur it guards against is inherent to
+     temporal accumulation, not to skipping.
+
+MEASUREMENT NOTE, learned here: measure PREPROCESSED source, not flattened
+source. `glslangValidator -E -S <stage> <flattened>` shows what the compiler
+actually sees. The flattener does not resolve #ifdefs, so it counts text the
+preprocessor discards -- which made pass 4's change first appear to make the
+tracers BIGGER, and made pass 3's palette win read as -276 lines when the real
+figure is -223.
+
 NOTE: traceVoxelOccluded now has ZERO callers -- removing the per-face sky probe
 orphaned it. It is kept as the natural any-hit primitive for Phase 3.4, but it
 still carries both the teleport bug and the torch asymmetry. Fix them before

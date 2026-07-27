@@ -121,8 +121,9 @@ void main() {
     vec4 prevClip   = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
     vec2 prevUV     = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
 
-    float histLen = 0.0;
-    vec3  history = vec3(0.0);
+    float histLen  = 0.0;
+    float histKeep = 0.0;   // the stored length, un-incremented, for the skip path
+    vec3  history  = vec3(0.0);
 
     if (prevClip.w > 0.0 && all(greaterThanEqual(prevUV, vec2(0.0))) && all(lessThan(prevUV, vec2(1.0)))) {
         vec4 h8  = texture(colortex8,  prevUV * renderScale);
@@ -136,13 +137,50 @@ void main() {
         bool normalOk = dot(prevNormal, worldNormal) > GI_REJECT_NORMAL;
 
         if (depthOk && normalOk) {
-            histLen = min(h8.a + 1.0, float(GI_ACCUM_FRAMES));
-            history = h8.rgb;
+            histKeep = min(h8.a, float(GI_ACCUM_FRAMES));
+            histLen  = min(h8.a + 1.0, float(GI_ACCUM_FRAMES));
+            history  = h8.rgb;
         }
     }
 
+    ivec2 pix = ivec2(gl_FragCoord.xy);
+
+    // --- skip fully converged, near-static pixels ---------------------------
+    // A pixel at GI_ACCUM_FRAMES is blending each new estimate at alpha = 1/33,
+    // so it is already 97% resampled history -- tracing it again this frame
+    // moves it by almost nothing. Letting such pixels trace only one frame in
+    // GI_SKIP_PERIOD is close to free and takes a large bite out of the gather
+    // in any scene that is not entirely in motion.
+    //
+    // Two guards make this safe:
+    //   - only FULLY converged pixels qualify, so anything disoccluded, newly
+    //     visible, or on moving geometry always traces;
+    //   - only near-static ones, because a pixel that skips writes back
+    //     bilinearly resampled history, and under sustained motion resampling
+    //     without ever refreshing would slowly smear. (Converged pixels already
+    //     resample every frame regardless, so this guard is belt-and-braces --
+    //     the blur is inherent to temporal accumulation, not to skipping.)
+    //
+    // Which pixels skip is hashed per pixel so the skipped set is scattered
+    // rather than a coherent pattern that could read as structure.
+    #ifdef GI_CONVERGED_SKIP
+    if (histLen >= float(GI_ACCUM_FRAMES)) {
+        vec2 motionPx = (prevUV - logicalUV) * vec2(viewWidth, viewHeight) * renderScale;
+        if (dot(motionPx, motionPx) < float(GI_SKIP_MOTION * GI_SKIP_MOTION)) {
+            uint phase = pixelSeed(pix, 0);
+            if (((phase + uint(frameCounter)) % uint(GI_SKIP_PERIOD)) != 0u) {
+                // Write the history straight back, and do NOT advance the length:
+                // no sample was added, so the pixel is exactly as converged as it
+                // was. colortex15 still has to carry THIS frame's key.
+                gl_FragData[0] = vec4(history, histKeep);
+                gl_FragData[1] = vec4(octEncodeNormal(worldNormal), linDepth, 0.0);
+                return;
+            }
+        }
+    }
+    #endif
+
     // --- gather -------------------------------------------------------------
-    ivec2 pix    = ivec2(gl_FragCoord.xy);
     float eyeAlt = ptEyeAltitude();
     uint  seed   = pixelSeed(pix, frameCounter);
 
