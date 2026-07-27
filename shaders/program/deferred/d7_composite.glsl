@@ -167,6 +167,10 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
 #include "/lib/util/positions.glsl"
 #include "/lib/pt/voxelTrace.glsl"
 
+// Read-only access to the surface cache, for GI_DEBUG_VIEW 3.
+#define SC_READ
+#include "/lib/pt/surfaceCache.glsl"
+
 #ifdef DISTANT_HORIZONS
 // dhLighting.glsl provides dhSunShadow (the shadow-map term used below).
 #include "/lib/fragment/dhLighting.glsl"
@@ -413,6 +417,34 @@ void main() {
     #else
         // Analytic lightmap ambient: the pre-path-tracer fallback.
         indirect = getLightmap(lightmap) + vec3(ambientStrength);
+    #endif
+
+    #if GI_DEBUG_VIEW > 0
+        if (depth0 < 1.0) {
+            vec3 dbg;
+            #if GI_DEBUG_VIEW == 1
+                // The indirect buffer itself, no albedo. Black here means the
+                // gather produced nothing.
+                dbg = indirect;
+            #elif GI_DEBUG_VIEW == 2
+                // Temporal history length: blue = fresh, red = converged. Broad
+                // blue areas mean history is being rejected every frame.
+                float hl = clamp(texture(colortex8, unjitteredTexCoord * renderScale).a
+                                 / float(GI_ACCUM_FRAMES), 0.0, 1.0);
+                dbg = vec3(hl, 0.15, 1.0 - hl);
+            #else
+                // The surface cache sampled straight down the primary ray. This
+                // isolates the cache from the gather: if the world is lit but
+                // this is black, sc1_surface_direct is at fault, not dg0.
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
+                dbg = dh.hit ? scLookup(dh.pos, dh.normal) : vec3(0.0);
+            #endif
+            /* RENDERTARGETS: 0,6 */
+            gl_FragData[0] = vec4(dbg, 1.0);
+            gl_FragData[1] = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
     #endif
 
     direct   *= float(LIGHTING_DIRECT)   / 100.0;

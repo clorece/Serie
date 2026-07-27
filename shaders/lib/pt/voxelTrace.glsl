@@ -29,6 +29,15 @@ struct VoxelHit {
     vec3  albedo;
     uint  lightMat;  // valid when category == VOXEL_LIGHT
     vec3  emission;  // gathered from emitters the ray passed through without being blocked
+    // Why the ray missed, which is NOT the same question as whether it missed.
+    // true  -> it left the cascades entirely: nothing else can occlude it, so the
+    //          sky is the correct answer.
+    // false -> it ran out of maxDist while still inside the grid. The sky is NOT
+    //          the answer; the far field is simply unknown from here. Treating
+    //          this as sky is what floods a cave with skylight, because in a
+    //          large cave almost every ray exhausts its budget without ever
+    //          touching geometry.
+    bool  escaped;
 };
 
 VoxelHit voxelHitMiss(vec3 worldPos, vec3 rayDir) {
@@ -36,6 +45,7 @@ VoxelHit voxelHitMiss(vec3 worldPos, vec3 rayDir) {
     h.hit = false; h.pos = worldPos; h.normal = -rayDir;
     h.category = VOXEL_AIR; h.shapeId = 0u; h.albedo = vec3(0.0); h.lightMat = 0u;
     h.emission = vec3(0.0);
+    h.escaped = false;
     return h;
 }
 
@@ -77,6 +87,10 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
             miss.normal = entityN;
             miss.category = VOXEL_OPAQUE;
             miss.albedo = vec3(0.5); // entity albedo is not captured; neutral grey
+        } else {
+            // The origin is outside every cascade, so there is no voxel data that
+            // could ever occlude this ray: the sky is the right answer.
+            miss.escaped = true;
         }
         return miss;
     }
@@ -215,6 +229,7 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
                     h.albedo   = voxelAlbedo(w);
                     h.lightMat = voxelLightMat(w);
                     h.emission = accumEmission;
+                    h.escaped  = false; // it hit something; nothing escaped
                     return h;
                 }
             }
@@ -243,6 +258,18 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
         miss.emission = accumEmission;
         return miss;
     }
+    // Distinguish the two ways to miss. Falling out of the cascade loop means the
+    // ray walked past the coarsest cascade with budget to spare -- it is out in
+    // the open and the sky is correct. Stopping because tWorld caught maxDist
+    // means the ray died inside the grid and knows nothing about what lies
+    // beyond, so the caller must NOT substitute the sky.
+    //
+    // (Caveat, inherited: a ray that exhausts CASCADE_MAX_STEPS inside a dense
+    // cascade also advances tWorld to that cascade's far side, so it can report
+    // escaped. That is the step-budget teleport listed under the known defects,
+    // and it makes this flag optimistic rather than wrong in the leaky direction
+    // only in very dense geometry.)
+    miss.escaped = tWorld < maxDist;
     miss.pos = worldPos + rayDir * min(tWorld, maxDist);
     miss.emission = accumEmission;
     return miss;

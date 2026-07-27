@@ -325,6 +325,11 @@ const float renderScale = RENDER_SCALE;
 // covers rather than the surface cache.
 #define SC_BOUNCE_DIST 32 // [8 16 24 32 48 64 96]
 
+// Reach of the per-face sky-visibility probe. A face is counted as seeing sky
+// when one occlusion ray angled skyward gets this far unobstructed. Long enough
+// to clear a cave roof; longer costs a little and mainly affects overhangs.
+#define SC_SKY_PROBE_DIST 64 // [16 24 32 48 64 96 128]
+
 // Temporal blend weight for a cache slot: how much of each refresh is the new
 // estimate. Low values denoise a sparse ray budget hard but make relighting lag;
 // note a slot only refreshes every SC_UPDATE_STRIDE frames, so the effective
@@ -343,6 +348,22 @@ const float renderScale = RENDER_SCALE;
 // shading at the hit: a DDA walk plus one texel fetch.
 #define GI_GATHER_RAYS 4  // [1 2 3 4 6 8 12 16] rays per pixel per frame
 #define GI_GATHER_DIST 48 // [16 24 32 48 64 96 128] ray reach in blocks
+
+// How sharply the sky term falls off with the surface's skylight lightmap.
+// THIS IS THE CAVE-LEAK CONTROL. A ray that dies on GI_GATHER_DIST without
+// leaving the grid knows nothing about the far field, so it receives sky scaled
+// by pow(skylight, this) instead of the full sky it used to get. 1.0 is linear;
+// raise it to darken tunnels and cave mouths further, lower it if shaded outdoor
+// spots (under trees, north-facing walls) lose too much ambient.
+#define GI_SKY_LEAK_FALLOFF 2.0 // [1.0 1.5 2.0 3.0 4.0 6.0]
+
+// Isolate one stage of the GI pipeline. 0 = off (normal render).
+//   1 = the indirect buffer, no albedo -- is the gather producing anything?
+//   2 = temporal history length (blue = fresh, red = converged)
+//   3 = the surface cache down the primary ray -- is the CACHE populated?
+// If 3 is lit but 1 is black the gather is at fault; if 3 is black the surface
+// cache update (sc1_surface_direct) is.
+#define GI_DEBUG_VIEW 0 // [0 1 2 3]
 
 // Temporal accumulation. The surface cache is already converged, so this is a
 // light denoise rather than the old SVGF-scale machinery.
@@ -367,7 +388,7 @@ const float renderScale = RENDER_SCALE;
 // smears it into a glowing blob. Formerly GID_FIREFLY_MAX. Currently read only
 // by the Distant Horizons raster-ambient fallback in d7_composite, which Phase
 // 3.2 replaces with a far-field radiance-cache probe lookup.
-#define GI_FIREFLY_MAX 8.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] 1000 = off
+#define GI_FIREFLY_MAX 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] 1000 = off
 
 // --- Disocclusion fill (history reconstruction) ------------------------------
 // Pixels that never build temporal history -- silhouette edges, convex corners,

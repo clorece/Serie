@@ -133,6 +133,22 @@ void main() {
             }
         }
 
+        // --- sky visibility ---------------------------------------------------
+        // There is no lightmap in a world-space pass, so this face has to work
+        // out its own sky access: one occlusion probe angled toward the sky but
+        // kept inside the face's hemisphere. A downward-facing (ceiling) face
+        // ends up probing along its own normal and is correctly found blind to
+        // the sky.
+        //
+        // Without this the cache itself leaks: a cave wall's bounce rays nearly
+        // all die on SC_BOUNCE_DIST in open air, and charging them full sky bakes
+        // daylight into cave geometry, which the gather then faithfully reads
+        // back out. Fixing only the gather would not have removed the leak.
+        vec3 skyDir = normalize(n + vec3(0.0, 1.5, 0.0));
+        if (dot(skyDir, n) < 0.1) skyDir = n;
+        float faceSkyVis = traceVoxelOccluded(origin, skyDir, float(SC_SKY_PROBE_DIST), true)
+                         ? 0.0 : 1.0;
+
         // --- indirect -------------------------------------------------------
         // Cosine-weighted, so the estimator is a plain mean: no 1/pdf, no NdotL.
         vec3 incoming = vec3(0.0);
@@ -145,6 +161,11 @@ void main() {
                 // shading it. Emitters passed through on the way are additive.
                 incoming += scImageLookup(h.pos, h.normal) + h.emission;
             } else {
+                // A ray that left the cascades outright sees sky unconditionally.
+                // One that merely ran out of SC_BOUNCE_DIST is still inside the
+                // grid and knows nothing about the far field, so it only gets sky
+                // in proportion to this face's measured sky access.
+                //
                 // Never sampleSky(): it carries the sun and moon discs (x1000 and
                 // x100) and a single ray clipping one is a guaranteed firefly.
                 //
@@ -153,7 +174,8 @@ void main() {
                 // colour here is one frame stale. Harmless: the LUT changes over
                 // minutes of world time, and the cache's own temporal blend has a
                 // far longer time constant than a frame.
-                incoming += sampleSky_fast(dir, eyeAlt) * float(GI_SKY_BRIGHTNESS)
+                float skyWeight = h.escaped ? 1.0 : faceSkyVis;
+                incoming += sampleSky_fast(dir, eyeAlt) * float(GI_SKY_BRIGHTNESS) * skyWeight
                           + h.emission;
             }
         }

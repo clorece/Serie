@@ -86,6 +86,17 @@ void main() {
     vec3 viewNormal  = normalize(texture(colortex1, gbufUV).rgb * 2.0 - 1.0);
     vec3 worldNormal = normalize(mat3(gbufferModelViewInverse) * viewNormal);
 
+    // How much sky this surface can actually see. Vanilla's skylight lightmap is
+    // the cheapest sound answer available and it is exactly zero deep in a cave.
+    // Rays that die on GI_GATHER_DIST without escaping the grid know nothing
+    // about the far field; charging them full sky is what floods a large cave,
+    // because in a big enough room almost every ray exhausts its budget in open
+    // air. Gating by real sky access is what makes the surface-cache bounce
+    // visible at all -- unclamped sky is several times brighter than it, and
+    // GI_STRENGTH scales both together so it can never be tuned out.
+    float skyVis = texture(colortex2, gbufUV).g;
+    skyVis = pow(clamp(skyVis, 0.0, 1.0), GI_SKY_LEAK_FALLOFF);
+
     // --- gather -------------------------------------------------------------
     ivec2 pix    = ivec2(gl_FragCoord.xy);
     float eyeAlt = ptEyeAltitude();
@@ -108,10 +119,17 @@ void main() {
         if (h.hit) {
             incoming += scLookup(h.pos, h.normal) + h.emission;
         } else {
+            // A ray that genuinely left the cascades can see the sky and nothing
+            // can occlude it. One that merely ran out of budget is still inside
+            // the grid, so it gets the sky only in proportion to how much sky
+            // this surface actually has access to.
+            //
             // sampleSky_fast, never sampleSky: the latter carries the sun and
             // moon discs (x1000 and x100) and one ray clipping a disc is a
             // guaranteed firefly.
-            incoming += sampleSky_fast(dir, eyeAlt) * float(GI_SKY_BRIGHTNESS) + h.emission;
+            float skyWeight = h.escaped ? 1.0 : skyVis;
+            incoming += sampleSky_fast(dir, eyeAlt) * float(GI_SKY_BRIGHTNESS) * skyWeight
+                      + h.emission;
         }
     }
 
