@@ -343,50 +343,140 @@ light leaks. 96 steps across a 192-voxel cascade is short in dense foliage.
 traceVoxelOccluded it has shapeId == 0 and falls through to else if (!first) return true,
 so it blocks as a solid 1 m³ cube. Shadow rays and GI rays disagree about the same torch.
 
-  6 tasks (5 done, 1 open)
-  ☑ Phase 0: commit foundation to lumen-experimental      a1728d1
-  ☑ Phase 1a: harvest reusable primitives                 5f97821
-  ☑ Phase 1b: delete lighting layers                      a295af5
-  ☑ Phase 1c: rewire pipeline config and options          a295af5
-  ☑ Phase 2: gate sub-block BLAS behind VOXEL_BLAS        6462309
-  ◻ Phase 3: build the Lumen stack
+===========================================================================
+HANDOFF — branch lumen-experimental (pushed to origin)
+Last updated after commit affafad.
+===========================================================================
 
----
-Progress notes (branch: lumen-experimental)
+STATUS
 
-Phase 1a harvested into lib/pt/sampling.glsl (luma, buildTBN, cosHemisphereDir,
-stbnCosineHemisphere + the blueNoise decl, and the BRDF core: fresnelSchlick,
-smithGGX_v1/v2, sampleGGXVNDF, tbnFromNormal) and lib/pt/reproject.glsl
-(RGBtoYCoCg/YCoCgtoRGB, clipHistoryMoments, varFromMoments, svgfVarianceFloor,
-getJitterRotation, HF_DISK, historyFixGI).
+  8 tasks (7 done, 1 open, 1 blocked on verification)
+  [x] Phase 0   commit foundation to lumen-experimental      a1728d1
+  [x] Phase 1a  harvest reusable primitives                  5f97821
+  [x] Phase 1b  delete lighting layers                       a295af5
+  [x] Phase 1c  rewire pipeline config and options           a295af5
+  [x] Phase 2   gate sub-block BLAS behind VOXEL_BLAS        6462309
+  [x] Phase 3.1 surface cache                                40440b9
+  [x] Phase 3.3 final gather  +  Phase 4 d7 seam             1860503
+  [ ] Phase 3.2 world radiance cache          NOT STARTED (deliberately deferred)
+  [ ] Phase 3.4 reflections                   NOT STARTED
 
-Two deviations from the plan as written, both deliberate:
+WHERE IT STANDS RIGHT NOW — READ THIS FIRST
 
-1. historyFixGI takes its GI-history and normal/depth samplers as PARAMETERS
-   rather than reading colortex8/colortex15 directly. The plan called it
-   "reusable verbatim", but Phase 1 frees ct8, so the hardcoded binding could
-   not have survived the buffer relayout.
-2. lib/fragment/reflections.glsl was DELETED rather than stripped. Once its BRDF
-   core moved to lib/pt/sampling.glsl and its screen-space march was removed,
-   nothing was left in the file and nothing included it.
+The pipeline is fully wired end to end: voxel grid -> surface cache -> screen
+gather -> d7_composite. Everything compiles and the pack loads.
 
-Deferred chain is now contiguous: deferred = d7_composite, deferred1 =
-d8_fog_sky, deferred2 = d9_vl. All other deferred slots are free.
+It is NOT yet confirmed working in-engine. The last change (affafad) fixed the
+surface cache dispatch and has not been visually verified. The immediate next
+action is not to write code, it is to run these three checks:
 
-options.glsl went 268 -> 195 defines with zero legacy path-tracing macros left.
-Three macros survived under new names because live code still reads them:
-RESTIR_BLUE_NOISE -> GI_BLUE_NOISE, SVGF_MIN_LUMA_SIGMA -> GI_MIN_LUMA_SIGMA,
-GID_FIREFLY_MAX -> GI_FIREFLY_MAX. The HISTORYFIX_* group kept its name.
+  1. GI_DEBUG_VIEW 5 -> expect GREEN everywhere within ~128 blocks of the camera.
+     Any red means the cache still is not being written there.
+  2. GI_DEBUG_VIEW 3 -> expect the world lit, not one band.
+  3. GI_DEBUG_VIEW 0 -> real render; sunlight bounce should be visible and
+     GI_STRENGTH should respond.
 
-CURRENT VISUAL STATE: direct lighting only. d7_composite's `indirect` is the
-analytic lightmap ambient (the pre-path-tracer fallback) and there are no
-reflections. This is expected between Phase 1 and Phase 3 — the 7-point contract
-the Phase 3 GI buffer must satisfy is written into d7_composite at the seam.
+THEN: SC_UPDATE_STRIDE is temporarily 1, which refreshes all 8.4M voxels every
+frame and will run badly. Put it back to 8. If view 5 stays green at 8, image
+persistence works and the cheap stride is free. If it goes red, clear=false is
+not being honoured for image.faceRadianceImg and the cache cannot be amortised
+at all — that would need a rethink (double buffer, or full refresh every frame).
 
-Still open from "Known defects in the inherited code": both #1 (step-budget
-teleport) and #2 (torch occlusion asymmetry) are unfixed. #2 survives the BLAS
-gating — traceVoxelCascaded still resolves a torch through its light shape while
-traceVoxelOccluded blocks on the whole voxel.
+WHAT WAS BUILT
 
-Pre-existing, unrelated to this work: shaders.properties lists SHADOW_BIAS and
-SHADOW_DISTORT_FACTOR in screen.Light but neither has a #define.
+  lib/pt/surfaceCache.glsl    toroidal addressing, validity tag, read/write
+  lib/pt/directLight.glsl     world-space sun vector + light colour (compute-safe)
+  lib/pt/sampling.glsl        harvested sampling + BRDF primitives
+  lib/pt/reproject.glsl       harvested history clamp, variance floor, historyFixGI
+  program/shadowcomp/sc1_surface_direct.glsl   the cache update pass
+  program/deferred/dg0_gather.glsl             the final gather
+  world0/shadowcomp1.csh, world0/deferred.{fsh,vsh}
+
+Pass order now: shadowcomp = entity BVH, shadowcomp1 = surface cache,
+deferred = dg0_gather, deferred1 = d7_composite, deferred2 = d8_fog_sky,
+deferred3 = d9_vl.
+
+Buffers: colortex8 = GI (.rgb indirect, .a history length), colortex15 = the
+reprojection key (.xy oct WORLD normal, .z linear depth). Both written by
+dg0_gather. faceRadianceImg = the surface cache, 256 x 768 x 256 RGBA16F
+(~402 MB), .a carries the validity tag, clear MUST stay false.
+
+IRIS GOTCHAS PAID FOR IN BLOOD — do not relearn these
+
+  1. NO trailing comments on #include lines. Iris takes the entire rest of the
+     line as the path. `#include "/lib/x.glsl" // why` fails to resolve at load.
+  2. `const ivec3 workGroups` MUST be literal integers. Iris parses it out of the
+     source text and does NOT evaluate GLSL; an expression it cannot fold falls
+     back silently to ONE work group. This cost four wrong diagnoses. Use a
+     literal and absorb the remainder with a grid-stride loop.
+  3. NO implicit-LOD sampling in compute. texture() needs derivatives, which do
+     not exist there; drivers return 0. Use textureLod(..., 0.0). This silently
+     zeroed the shadow lookup and killed all direct light in the cache.
+  4. shadowcomp runs BEFORE prepare, so colortex12 (atmosphere LUT) is one frame
+     stale in the cache pass. Harmless, but know it.
+  5. VOXEL_CASCADE_SIZE must stay a power of two (128 or 256). The cache indexes
+     itself by worldVoxel & (N-1); 192 has no mask and the old default is gone.
+
+DEBUG VIEWS (GI_DEBUG_VIEW in options.glsl)
+  1 indirect buffer, no albedo     is the gather producing anything?
+  2 temporal history length        blue = fresh, red = converged
+  3 surface cache down primary ray is the CACHE populated?
+  4 same as 3 but ignoring the tag distinguishes "unwritten" from "tag rejected"
+  5 coverage: green = tag valid, red = tag rejected, black = ray miss
+  6 tag STORED in the slot         grey ramp; pure black = never written
+  7 tag the reader EXPECTS         compare against 6
+
+Views 5/6/7 are the ones that actually find dispatch and addressing bugs. Reach
+for them before reasoning about screenshots — three of the four bugs in this
+phase were misdiagnosed by inference first.
+
+DEVIATIONS FROM THE PLAN AS WRITTEN (all deliberate)
+
+  1. historyFixGI takes its samplers as PARAMETERS, not hardcoded ct8/ct15.
+     Phase 1 frees ct8, so the original binding could not survive.
+  2. lib/fragment/reflections.glsl was DELETED, not stripped. Its BRDF core moved
+     to lib/pt/sampling.glsl and its SSR march was removed; nothing was left.
+  3. Surface cache direct + radiosity are ONE dispatch, not the planned
+     shadowcomp1 + shadowcomp2 split. With only 1/STRIDE of the volume refreshed
+     per frame a separate radiosity pass would still read mostly-previous-frame
+     direct light, buying a second dispatch and a RAW hazard for no accuracy.
+  4. Phase 3.2 (world radiance cache) was REORDERED after 3.3/4. With d7 on the
+     analytic fallback the surface cache was invisible and untestable.
+
+NEXT WORK, IN ORDER
+
+  1. Verify the three debug views above; restore SC_UPDATE_STRIDE to 8.
+  2. Tune. GI_SKY_LEAK_FALLOFF (cave leak), SC_BLEND / SC_UPDATE_STRIDE
+     (convergence vs latency), GI_GATHER_RAYS (noise vs cost), GI_STRENGTH.
+  3. Phase 3.2 world radiance cache. Two jobs: give rays that exhaust
+     GI_GATHER_DIST / SC_BOUNCE_DIST a real far-field answer instead of the
+     current lightmap-gated sky approximation, and replace the hardcoded DH
+     ambient in d7_composite (the GI_FIREFLY_MAX block inside shadeDhTerrain,
+     ~line 262) with a single far-field probe lookup.
+  4. Phase 3.4 reflections on the same stack: sampleGGXVNDF -> voxel trace ->
+     surface cache lookup. colortex7 (PBR material) and the pbrSunVis output on
+     colortex6 were both kept live for this. Free slots: ct4, ct9, ct10, ct11,
+     ct14, and deferred4+.
+  5. Optional: screen probes (16x16 grid) as a cost optimisation over the current
+     per-pixel gather. Only worth it if the gather shows up in profiling.
+
+KNOWN DEFECTS STILL OPEN
+
+  - Step-budget teleport (voxelTrace.glsl): a ray exhausting CASCADE_MAX_STEPS
+    still advances to the far side of the cascade, silently skipping geometry.
+    This also makes VoxelHit.escaped optimistic in dense foliage.
+  - Torch occlusion asymmetry: traceVoxelCascaded resolves a torch through its
+    light shape, traceVoxelOccluded blocks on the whole voxel.
+  - Pre-existing, unrelated: shaders.properties lists SHADOW_BIAS and
+    SHADOW_DISTORT_FACTOR in screen.Light but neither has a #define.
+
+VERIFICATION HARNESS
+
+There is no in-repo test. Offline checking was done by flattening each world0
+entry point and running glslangValidator. Two things that harness must do, both
+learned the hard way: reject #include lines with trailing content exactly as
+Iris does, and dedupe includes by CYCLE rather than globally (a global dedupe
+suppresses a file pulled in under #ifdef VERTEX when the FRAGMENT branch asks
+for it, which hid d7_composite from validation entirely). 41 of 55 programs
+compile clean; the 14 gbuffers/dh failures are a harness artifact — the pack
+declares `uniform sampler2D texture`, which shadows the GLSL built-in.
