@@ -8,7 +8,7 @@
 //
 // Two tables:
 //   binding 0  block-shape BLAS (lookup + packed AABBs)
-//   binding 2  special-blocklight emitter palette
+//   binding 2  emitter palette: colour + occluder/emissive AABBs
 //
 // Both are pure constants, so "once at load" is the correct cadence -- and a
 // pack reload is also the only way their source can change.
@@ -16,6 +16,10 @@
 #include "/lib/pt/blas.glsl"
 #include "/lib/pt/shapeTable.glsl"
 #include "/lib/pt/emitterPalette.glsl"
+
+// Compile the emitter AABB branch trees here and nowhere else.
+#define EMITTER_PALETTE_BAKE
+#include "/lib/pt/lightShapes.glsl"
 #include "/lib/blocklightColors.glsl"
 
 layout(local_size_x = 64) in;
@@ -24,10 +28,20 @@ const ivec3 workGroups = ivec3(128, 1, 1); // 8192 invocations >= lookup + box w
 void main() {
     uint i = gl_GlobalInvocationID.x;
 
-    // Flatten the emitter branch tree into a flat indexed table. This is the
-    // only place GetSpecialBlocklightColor is evaluated for the tracer.
+    // Flatten the emitter branch trees into indexed tables. This is the only
+    // place GetSpecialBlocklightColor and the lightShapes Ref functions are ever
+    // evaluated for the tracer.
     if (i < uint(EMITTER_PALETTE_SIZE)) {
         emitterPalette.color[i] = GetSpecialBlocklightColor(int(i));
+
+        vec3 bmin, bmax;
+        bool hasOcc = lightOccluderAabbRef(i, bmin, bmax);
+        emitterPalette.occMin[i] = vec4(bmin, hasOcc ? 1.0 : 0.0);
+        emitterPalette.occMax[i] = vec4(bmax, 0.0);
+
+        lightEmissiveAabbRef(i, bmin, bmax);
+        emitterPalette.emisMin[i] = vec4(bmin, 0.0);
+        emitterPalette.emisMax[i] = vec4(bmax, 0.0);
     }
 
     // Lookup table: one entry per shape, plus index 0 for the full cube.

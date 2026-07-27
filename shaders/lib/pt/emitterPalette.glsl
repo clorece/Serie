@@ -28,8 +28,19 @@
 // covers the whole range the grid can encode. Highest id currently used is 97.
 #define EMITTER_PALETTE_SIZE 128
 
+// Flat vec4 arrays rather than an array of structs: std430 gives a vec4 array a
+// stride of exactly 16 with no padding, which removes any chance of the writer
+// and the readers disagreeing about layout.
+//
+// The AABBs come from the same reasoning as the colour. lightOccluderAabb and
+// lightEmissiveAabb were also branch trees over material ids returning nothing
+// but constants, and they sat in the same trace loop. See lightShapes.glsl.
 layout(std430, binding = 2) buffer EmitterPaletteBuffer {
     vec4 color[EMITTER_PALETTE_SIZE];
+    vec4 occMin[EMITTER_PALETTE_SIZE];   // .w = 1.0 when a real occluder box exists
+    vec4 occMax[EMITTER_PALETTE_SIZE];
+    vec4 emisMin[EMITTER_PALETTE_SIZE];
+    vec4 emisMax[EMITTER_PALETTE_SIZE];
 } emitterPalette;
 
 // Masked rather than clamped: voxelLightMat already yields 0..127, and a mask

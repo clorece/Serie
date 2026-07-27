@@ -18,10 +18,21 @@
 // ---------------------------------------------------------------------------
 
 #include "/lib/pt/blas.glsl"
+#include "/lib/pt/emitterPalette.glsl"
 
-// Occluder box for an emitter material. Returns false for area emitters
-// (lava, glowstone, froglight) that fill their whole voxel.
-bool lightOccluderAabb(uint mat, out vec3 bmin, out vec3 bmax) {
+// The authoring reference for the emitter AABBs compiles ONLY in the pass that
+// bakes them (s0_shape_table defines EMITTER_PALETTE_BAKE). Every tracing
+// program gets the table lookups below and never sees these branch trees at all,
+// so the loop's register allocation cannot be affected by them whatever the
+// driver does or does not dead-strip.
+#ifdef EMITTER_PALETTE_BAKE
+
+// AUTHORING REFERENCE for the occluder box. This is the source of truth for
+// the data, but it is NOT what the tracer calls -- s0_shape_table bakes it into
+// the emitter palette SSBO at load and lightOccluderAabb below reads that.
+// Returns false for area emitters (lava, glowstone, froglight) that fill their
+// whole voxel.
+bool lightOccluderAabbRef(uint mat, out vec3 bmin, out vec3 bmax) {
     if (mat == 2u || mat == 28u || mat == 35u) {          // torch / soul / redstone torch
         bmin = vec3(7.0 / 16.0, 0.0, 7.0 / 16.0);
         bmax = vec3(9.0 / 16.0, 10.0 / 16.0, 9.0 / 16.0);
@@ -67,7 +78,7 @@ bool lightOccluderAabb(uint mat, out vec3 bmin, out vec3 bmax) {
 // inside the block is what makes the occluder cast a real shadow: a torch emits
 // only from the flame box above its post, so surfaces low and behind the stick
 // fall into the post's shadow. Defaults to the full cube for area emitters.
-void lightEmissiveAabb(uint mat, out vec3 bmin, out vec3 bmax) {
+void lightEmissiveAabbRef(uint mat, out vec3 bmin, out vec3 bmax) {
     bmin = vec3(0.0); bmax = vec3(1.0);
     if (mat == 2u || mat == 28u || mat == 35u) {                  // torch flame cap
         bmin = vec3(5.0 / 16.0, 7.0 / 16.0, 5.0 / 16.0);
@@ -80,6 +91,30 @@ void lightEmissiveAabb(uint mat, out vec3 bmin, out vec3 bmax) {
         bmin = vec3(5.0 / 16.0, 1.0 / 16.0, 5.0 / 16.0);
         bmax = vec3(11.0 / 16.0, 9.0 / 16.0, 11.0 / 16.0);
     }
+}
+
+#endif
+
+// ---- Baked lookups, used by the tracer -------------------------------------
+// Same values as the Ref functions above, read as two indexed fetches from a
+// 10 KB buffer instead of walking a chain of material-id compares inside the
+// DDA loop. The cost being avoided is not really the compares: it is that the
+// constants and branches inflate the loop's register allocation, which lowers
+// occupancy for every ray, including the vast majority that never pass an
+// emitter at all.
+
+bool lightOccluderAabb(uint mat, out vec3 bmin, out vec3 bmax) {
+    uint i = mat & uint(EMITTER_PALETTE_SIZE - 1);
+    vec4 lo = emitterPalette.occMin[i];
+    bmin = lo.xyz;
+    bmax = emitterPalette.occMax[i].xyz;
+    return lo.w > 0.5;
+}
+
+void lightEmissiveAabb(uint mat, out vec3 bmin, out vec3 bmax) {
+    uint i = mat & uint(EMITTER_PALETTE_SIZE - 1);
+    bmin = emitterPalette.emisMin[i].xyz;
+    bmax = emitterPalette.emisMax[i].xyz;
 }
 
 // Ray/AABB entry-exit test that disturbs no running best-hit state.
