@@ -204,7 +204,9 @@ void main() {
         rays = max(int(mix(float(GI_GATHER_RAYS), 1.0, conv) + 0.5), 1);
     #endif
 
-    vec3 incoming = vec3(0.0);
+    vec3  incoming = vec3(0.0);
+    float occlusion = 0.0;   // short-range AO, accumulated from these same rays
+
     for (int r = 0; r < rays; ++r) {
         #ifdef GI_BLUE_NOISE
             vec3 dir = stbnCosineHemisphere(worldNormal, pix, frameCounter * GI_GATHER_RAYS + r);
@@ -216,6 +218,28 @@ void main() {
 
         if (h.hit) {
             incoming += scLookup(h.pos, h.normal) + h.emission;
+
+            // Short-range ambient occlusion, from the ray we already cast.
+            //
+            // WHY THIS IS NEEDED. Ray occlusion alone barely darkens anything in
+            // daylight: a ray that hits a nearby block resolves it through the
+            // surface cache, and that cache holds direct + albedo*indirect -- so
+            // a SUNLIT occluder returns a value comparable to the sky it just
+            // replaced. Geometry blocks the ray without meaningfully lowering
+            // what the ray returns, so creases, corners and block seams come back
+            // nearly as bright as open ground and the result reads as flat.
+            //
+            // Lumen has exactly this problem and solves it the same way, with a
+            // separate Short-Range AO term applied on top of the probe gather --
+            // traced GI at probe density cannot resolve contact-scale occlusion,
+            // so it is reintroduced explicitly. This pack lost its equivalent
+            // when GTAO was deleted in Phase 1 and nothing replaced it.
+            //
+            // Free here: no extra rays, just the hit distance we already have.
+            #ifdef GI_CONTACT_AO
+                float hitDist = distance(h.pos, origin);
+                occlusion += 1.0 - smoothstep(0.0, float(GI_AO_RADIUS), hitDist);
+            #endif
         } else {
             // A ray that genuinely left the cascades can see the sky and nothing
             // can occlude it. One that merely ran out of budget is still inside
@@ -241,6 +265,19 @@ void main() {
     // albedo/PI * indirect). No 1/pdf, no NdotL, no extra 1/PI.
     // Divide by the rays actually cast, not the configured maximum.
     vec3 gi = incoming / float(rays);
+
+    // Apply the short-range AO. The rays are cosine-distributed, so the mean of
+    // the per-ray weights above is already a properly cosine-weighted occluded
+    // fraction rather than something that needs re-normalising.
+    //
+    // It goes on BEFORE the temporal accumulation deliberately: a one- or
+    // two-ray occlusion estimate is far too noisy to use raw, and folding it in
+    // here means the existing history does the denoising instead of needing a
+    // filter of its own.
+    #ifdef GI_CONTACT_AO
+        float ao = 1.0 - (occlusion / float(rays)) * float(GI_AO_STRENGTH);
+        gi *= max(ao, 0.0);
+    #endif
 
     // GI_STRENGTH is the producer's responsibility; LIGHTING_INDIRECT is d7's.
     gi *= float(GI_STRENGTH) / 100.0;

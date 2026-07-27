@@ -490,6 +490,26 @@ const float renderScale = RENDER_SCALE;
 // by pow(skylight, this) instead of the full sky it used to get. 1.0 is linear;
 // raise it to darken tunnels and cave mouths further, lower it if shaded outdoor
 // spots (under trees, north-facing walls) lose too much ambient.
+// --- Contact ambient occlusion ----------------------------------------------
+// THIS IS THE FLAT-SHADING CONTROL.
+//
+// Ray occlusion by itself barely darkens anything in daylight. A gather ray that
+// hits a nearby block resolves it through the surface cache, which stores
+// direct + albedo*indirect -- so a SUNLIT occluder hands back roughly what the
+// sky would have. The geometry blocks the ray without lowering what the ray
+// returns, so corners, creases and block seams come back nearly as bright as
+// open ground and shaded areas read as a flat wash.
+//
+// Lumen hits the same wall and answers it the same way: a separate Short-Range
+// AO applied on top of the screen-probe gather, because traced GI at probe
+// density cannot resolve contact-scale occlusion. This pack lost its equivalent
+// when GTAO was deleted in Phase 1 and nothing took its place.
+//
+// Costs no extra rays -- it reuses the hit distance the gather already has.
+#define GI_CONTACT_AO
+#define GI_AO_RADIUS 4.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0] blocks; hits nearer than this darken, further ones do not
+#define GI_AO_STRENGTH 0.7 // [0.0 0.25 0.4 0.55 0.7 0.85 1.0] 0 = off, 1 = fully dark in a sealed corner
+
 #define GI_SKY_LEAK_FALLOFF 2.0 // [1.0 1.5 2.0 3.0 4.0 6.0]
 
 // Isolate one stage of the GI pipeline. 0 = off (normal render).
