@@ -171,7 +171,7 @@ const float renderScale = RENDER_SCALE;
 //#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
-#define LIGHTING_INDIRECT 25  // [25 40 55 70 85 100 125 150]
+#define LIGHTING_INDIRECT 50  // [25 40 55 70 85 100 125 150]
 
 //#define WIND_MOVEMENT // WIP
 

@@ -529,6 +529,37 @@ OPTIMISATION PASS 2 -- feedback, tracer, and gather
      -- it does not depend on the gather's result, and when histLen is 0 the
      blend weight is exactly 1 so the history value is unused.
 
+OPTIMISATION PASS 3 -- getting large code out of the hot loops
+
+Passes 1 and 2 were confirmed in-engine: a large performance gain. These two are
+both the same shape of problem -- expensive code sitting where it is executed
+per ray rather than per frame.
+
+ 10. EMITTER PALETTE BAKED TO AN SSBO. GetSpecialBlocklightColor is a ~160-line
+     binary search over ~98 materials, and voxelEmitterColor was calling it from
+     inside the DDA loop. The branching is not the main cost: pulling that tree
+     into the trace loop inflates its register allocation and lowers occupancy
+     for EVERY ray, including the majority that never touch an emitter. The
+     palette is pure constants, so the setup pass (which already uploads the BLAS
+     table and runs once at load) now flattens it into bufferObject.2.
+
+     Flattened translation units shrank by ~276 lines each for the gather, the
+     cache update and d7_composite; setup grew 374, and runs once.
+
+ 11. SKY SH. sampleSky_fast is four texelFetches into the atmosphere LUT plus
+     transcendentals, per MISSED RAY, in both the gather and the cache bounce
+     loop. shadowcomp2 now projects the sky onto nine SH coefficients once per
+     frame (bufferObject.3) and each miss becomes ~20 FMAs.
+
+     It also cuts noise: the sky term is a Monte Carlo estimate over few rays,
+     and LUT sampling hands each ray high-frequency detail that is pure variance
+     for a diffuse gather. Verified numerically -- see scripts/verify_sky_sh.py,
+     which mirrors the shader's own basis and sampling. Against a worst-case hard
+     step the cosine-weighted error is +0.0% on floors, -0.7% on walls and +4.3%
+     on ceilings, with 0.000% shift in mean radiance. The clamp to zero in
+     skySHRadiance is load-bearing: negative radiance would be fed back through
+     the surface cache and keep subtracting.
+
 NOTE: traceVoxelOccluded now has ZERO callers -- removing the per-face sky probe
 orphaned it. It is kept as the natural any-hit primitive for Phase 3.4, but it
 still carries both the teleport bug and the torch asymmetry. Fix them before
