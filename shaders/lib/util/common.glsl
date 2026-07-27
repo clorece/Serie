@@ -67,7 +67,17 @@ bool isInShadow(vec3 worldPosCamRel) {
     }
 
     float bias = 0.0015 * (4096.0 / float(SHADOW_RESOLUTION));
-    float depth = texture(shadowtex1, sp.xy).r;
+    // textureLod, NOT texture: this is called from a compute shader
+    // (sc1_surface_direct). Implicit-LOD sampling needs derivatives, which only
+    // exist in a fragment shader; in compute the result is undefined and real
+    // drivers hand back 0. A zero here reads as "something is closer to the
+    // light" for essentially every voxel, so the whole surface cache loses its
+    // direct term and only a thin slab near the shadow projection's near plane
+    // stays lit.
+    //
+    // Behaviour in fragment shaders is unchanged: shadowtex1 has no mipmaps
+    // (shadowtex1Mipmap = false), so LOD 0 is the only level there is.
+    float depth = textureLod(shadowtex1, sp.xy, 0.0).r;
     return depth < (sp.z - bias);
 }
 

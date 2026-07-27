@@ -405,7 +405,7 @@ const float renderScale = RENDER_SCALE;
 #define HISTORYFIX_SIGMA_N 8.0    // [2.0 4.0 8.0 16.0 32.0] normal edge-stopping for taps (higher = tighter to surface)
 #define HISTORYFIX_DEPTH_TOL 0.1  // [0.03 0.05 0.1 0.2 0.5] relative depth tolerance for taps
 
-//#define PT_DEBUG_VOXELS  // voxel debug view
+#define PT_DEBUG_VOXELS  // voxel debug view
 
 #define WATER_DEBUG 0 // [0 1 2]
 
