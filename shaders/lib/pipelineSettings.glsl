@@ -22,14 +22,14 @@ const int colortex6Format = RGBA16F; // pbrSunVis from d7_composite; also reboun
 //   .a   = perceptual smoothness (0 = non-reflective; metal pixels > 0)
 // RGBA8 is enough; cleared to 0 so any pixel that doesn't write it is non-metal.
 const int colortex7Format = RGBA8;
-const int colortex8Format = RGBA16F; // FREE (was the temporally-accumulated per-pixel GI from d0_accum)
+const int colortex8Format = RGBA16F; // GI: .rgb accumulated indirect (albedo-demodulated), .a history length; written by dg0_gather, read by d7_composite
 const int colortex9Format = RGBA16F; // FREE (was the SVGF reproject key: linear depth, luma moments, GTAO)
 const int colortex10Format = RGBA16F; // FREE (was a ReSTIR reservoir)
 const int colortex11Format = RGBA16F; // FREE (was a ReSTIR reservoir)
 const int colortex12Format = RGBA16F;
 const int colortex13Format = RGBA16F;
 const int colortex14Format = RGBA16F; // FREE (was a ReSTIR reservoir)
-const int colortex15Format = RGBA16F; // packed G-buffer history (.xy oct world normal, .z linear depth) -- kept for the Lumen resolve
+const int colortex15Format = RGBA16F; // GI reprojection key: .xy oct WORLD normal, .z linear depth; written by dg0_gather
 
 const bool colortex3Clear = true;
 const bool colortex5Clear = false;

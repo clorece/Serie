@@ -337,6 +337,19 @@ const float renderScale = RENDER_SCALE;
 // still reads; Phase 3 adds the surface-cache / radiance-cache / screen-probe
 // knobs as those passes land.
 
+// --- Final gather (Phase 3.3) ------------------------------------------------
+// Per-pixel cosine rays that resolve through the surface cache rather than
+// shading their hit. Cheap enough to do per pixel precisely because there is no
+// shading at the hit: a DDA walk plus one texel fetch.
+#define GI_GATHER_RAYS 4  // [1 2 3 4 6 8 12 16] rays per pixel per frame
+#define GI_GATHER_DIST 48 // [16 24 32 48 64 96 128] ray reach in blocks
+
+// Temporal accumulation. The surface cache is already converged, so this is a
+// light denoise rather than the old SVGF-scale machinery.
+#define GI_ACCUM_FRAMES 32 // [8 16 24 32 48 64 128] max frames blended
+#define GI_REJECT_DEPTH 0.1 // [0.02 0.05 0.1 0.15 0.25] relative depth jump that counts as disocclusion
+#define GI_REJECT_NORMAL 0.85 // [0.5 0.7 0.8 0.85 0.92 0.97] min dot(prevNormal, normal) to reuse history
+
 // Blue-noise ray directions. Formerly RESTIR_BLUE_NOISE -- the name outlived
 // ReSTIR because the STBN texture is still how every hemisphere ray is drawn.
 // Cosine hemisphere, noise/stbn_cosine.dat via customTexture.blueNoise; much

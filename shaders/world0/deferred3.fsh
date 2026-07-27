@@ -2,4 +2,4 @@
 #define FRAGMENT
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/dg0_gather.glsl"
+#include "/program/deferred/d9_vl.glsl"

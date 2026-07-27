@@ -394,9 +394,8 @@ void main() {
     }
 
     // ---- Indirect ----------------------------------------------------------
-    // THE integration seam for the Lumen stack. Phase 3 lands a screen-probe
-    // final gather in a dedicated GI buffer and Phase 4 swaps the analytic
-    // fallback below for a single read of it. The contract that read must honour:
+    // THE integration seam for the Lumen stack: one read of the GI buffer that
+    // dg0_gather produced. The contract it honours:
     //   1. albedo-demodulated  -- incident light only; the composite below
     //      multiplies by albedoRaw.
     //   2. irradiance / PI     -- the composite does albedo * indirect, not
@@ -405,14 +404,16 @@ void main() {
     //   4. GI_STRENGTH and firefly clamps pre-applied by the producer;
     //      LIGHTING_INDIRECT is applied here, just below.
     //   5. AO is NOT pre-applied.
-    //   6. linear HDR, unbounded; sampled at the logical, un-jittered uv:
-    //      texture(buf, unjitteredTexCoord * renderScale).
+    //   6. linear HDR, unbounded; sampled at the logical, un-jittered uv.
     //   7. diffuse only -- no emission (added separately below), no specular.
-    //
-    // Until then: the analytic lightmap ambient, i.e. the pre-path-tracer
-    // fallback. The ReSTIR GI, GTAO and voxel-AO branches that used to select
-    // between colortex3 / colortex8 / colortex9 here died with those passes.
-    vec3 indirect = getLightmap(lightmap) + vec3(ambientStrength);
+    vec3 indirect;
+    #ifdef VOXEL_GI
+        // Jitter-free buffer, so this samples at the surface's LOGICAL uv.
+        indirect = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
+    #else
+        // Analytic lightmap ambient: the pre-path-tracer fallback.
+        indirect = getLightmap(lightmap) + vec3(ambientStrength);
+    #endif
 
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
