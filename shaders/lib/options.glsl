@@ -361,9 +361,13 @@ const float renderScale = RENDER_SCALE;
 //   1 = the indirect buffer, no albedo -- is the gather producing anything?
 //   2 = temporal history length (blue = fresh, red = converged)
 //   3 = the surface cache down the primary ray -- is the CACHE populated?
-// If 3 is lit but 1 is black the gather is at fault; if 3 is black the surface
-// cache update (sc1_surface_direct) is.
-#define GI_DEBUG_VIEW 0 // [0 1 2 3]
+//   4 = same as 3 but IGNORING the validity tag
+//   5 = cache coverage: green = tag valid, red = tag rejected, black = ray miss
+// If 3 is lit but 1 is black, the gather is at fault. If 3 is black, the surface
+// cache update (sc1_surface_direct) is -- then compare 4 and 5: lit in 4 but
+// black in 3 means the tag is wrongly rejecting entries; black in both means
+// those slots are simply never written (a dispatch-coverage problem).
+#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5]
 
 // Temporal accumulation. The surface cache is already converged, so this is a
 // light denoise rather than the old SVGF-scale machinery.
@@ -405,7 +409,7 @@ const float renderScale = RENDER_SCALE;
 #define HISTORYFIX_SIGMA_N 8.0    // [2.0 4.0 8.0 16.0 32.0] normal edge-stopping for taps (higher = tighter to surface)
 #define HISTORYFIX_DEPTH_TOL 0.1  // [0.03 0.05 0.1 0.2 0.5] relative depth tolerance for taps
 
-#define PT_DEBUG_VOXELS  // voxel debug view
+//#define PT_DEBUG_VOXELS  // voxel debug view
 
 #define WATER_DEBUG 0 // [0 1 2]
 

@@ -164,6 +164,20 @@ vec3 scFetch(ivec3 wv, int f) {
 vec3 scLookup(vec3 worldPos, vec3 n) {
     return scFetch(scVoxelForHit(worldPos, n), scFaceFromNormal(n));
 }
+
+// Diagnostics. scLookupRaw ignores the validity tag, so comparing it against
+// scLookup separates "the slot was never written" from "the slot holds another
+// block's radiance and the tag correctly rejected it".
+vec3 scLookupRaw(vec3 worldPos, vec3 n) {
+    ivec3 wv = scVoxelForHit(worldPos, n);
+    return texelFetch(faceRadianceSampler, scImageCoord(wv, scFaceFromNormal(n)), 0).rgb;
+}
+
+bool scTagValid(vec3 worldPos, vec3 n) {
+    ivec3 wv = scVoxelForHit(worldPos, n);
+    float a = texelFetch(faceRadianceSampler, scImageCoord(wv, scFaceFromNormal(n)), 0).a;
+    return abs(a - scTag(wv)) < 0.5;
+}
 #endif
 
 #ifdef SC_IMAGE

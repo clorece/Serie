@@ -432,13 +432,30 @@ void main() {
                 float hl = clamp(texture(colortex8, unjitteredTexCoord * renderScale).a
                                  / float(GI_ACCUM_FRAMES), 0.0, 1.0);
                 dbg = vec3(hl, 0.15, 1.0 - hl);
-            #else
+            #elif GI_DEBUG_VIEW == 3
                 // The surface cache sampled straight down the primary ray. This
                 // isolates the cache from the gather: if the world is lit but
                 // this is black, sc1_surface_direct is at fault, not dg0.
                 vec3 rd = normalize(getWorldPosition().xyz);
                 VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
                 dbg = dh.hit ? scLookup(dh.pos, dh.normal) : vec3(0.0);
+            #elif GI_DEBUG_VIEW == 4
+                // Same, but IGNORING the validity tag. Compare against view 3:
+                // lit here and black there means the tag is rejecting entries
+                // (an addressing bug); black in both means the slot was never
+                // written (a coverage or lighting bug in the update pass).
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
+                dbg = dh.hit ? scLookupRaw(dh.pos, dh.normal) : vec3(0.0);
+            #else
+                // Cache coverage: green where the slot's tag matches, red where
+                // it does not, black where the primary ray hit nothing. Shows
+                // directly which parts of the volume the update pass reaches.
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
+                dbg = !dh.hit ? vec3(0.0)
+                    : scTagValid(dh.pos, dh.normal) ? vec3(0.0, 1.0, 0.0)
+                                                    : vec3(1.0, 0.0, 0.0);
             #endif
             /* RENDERTARGETS: 0,6 */
             gl_FragData[0] = vec4(dbg, 1.0);

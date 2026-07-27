@@ -51,8 +51,20 @@
 #include "/lib/fragment/sky.glsl"
 #include "/lib/blocklightColors.glsl"
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-const ivec3 workGroups = ivec3(SC_XZ / 8, SC_Y / 8, SC_XZ / SC_UPDATE_STRIDE);
+// ONE-DIMENSIONAL dispatch, deliberately.
+//
+// This started as a 3D dispatch, ivec3(SC_XZ/8, SC_Y/8, SC_XZ/SC_UPDATE_STRIDE)
+// over an 8x8x1 group, and only the X dimension actually materialised: Y and Z
+// collapsed to a single group each. The cache filled a 256 x 8 x 8 bar -- a long
+// thin strip pinned to one world coordinate (slot 0 maps to the nearest multiple
+// of SC_XZ, which does not move as the camera walks), with the entire rest of the
+// volume never written at all.
+//
+// So the volume is walked as a flat index on X alone, which is the pattern
+// sc0_entity_bvh already uses successfully in this pack. Same thread count, same
+// coverage, no dependence on how the Y and Z dispatch dimensions are handled.
+layout(local_size_x = 256) in;
+const ivec3 workGroups = ivec3((SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE) / 256, 1, 1);
 
 // Voxel word at a cascade-0 LOCAL coordinate, or air outside the volume.
 uint fetchLocal(ivec3 local) {
@@ -63,13 +75,21 @@ uint fetchLocal(ivec3 local) {
 }
 
 void main() {
-    // --- slot -> world voxel ------------------------------------------------
+    // --- flat index -> slot -> world voxel ----------------------------------
+    // idx enumerates one Z slab set: SC_XZ * SC_Y voxels per slab, and
+    // SC_XZ / SC_UPDATE_STRIDE slabs.
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(SC_XZ * SC_Y * SC_XZ / SC_UPDATE_STRIDE)) return;
+
+    int slabArea = SC_XZ * SC_Y;
+    int zIdx = int(idx) / slabArea;
+    int rem  = int(idx) % slabArea;
+
     ivec3 slot;
-    slot.x = int(gl_GlobalInvocationID.x);
-    slot.y = int(gl_GlobalInvocationID.y);
+    slot.x = rem % SC_XZ;
+    slot.y = rem / SC_XZ;
     // Frame-rotating Z phase: each frame covers every SC_UPDATE_STRIDE'th slab.
-    slot.z = int(gl_GlobalInvocationID.z) * SC_UPDATE_STRIDE
-           + (frameCounter % SC_UPDATE_STRIDE);
+    slot.z = zIdx * SC_UPDATE_STRIDE + (frameCounter % SC_UPDATE_STRIDE);
 
     if (any(greaterThanEqual(slot, ivec3(SC_XZ, SC_Y, SC_XZ)))) return;
 
