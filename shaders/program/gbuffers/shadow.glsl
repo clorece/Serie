@@ -225,7 +225,16 @@ void main() {
     uint payload = (finalCategory == VOXEL_LIGHT)
                  ? (voxelLightMatId & 127u)
                  : packAlbedo565(albedo);
-    uint voxelWord = packVoxel(finalCategory, voxelShapeId, payload);
+
+    // Bank the vanilla skylight lightmap into the voxel word. Minecraft has
+    // already solved "how much sky does this block see" and hands the answer to
+    // this shader for free in gl_MultiTexCoord1.y; the surface cache would
+    // otherwise have to rediscover it with a 64-block occlusion probe per face
+    // on every refresh. Three bits sit in what used to be spare, so this costs
+    // no extra memory and no extra bandwidth anywhere.
+    uint skyBits = packSkylight(skyLight);
+
+    uint voxelWord = packVoxel(finalCategory, voxelShapeId, skyBits, payload);
 
     bool isTopFace = voxelNormal.y > 0.5;
 
@@ -241,7 +250,7 @@ void main() {
             ivec3 coord;
             if (!worldToCascade(voxelCenter, k, coord)) continue;
             // Shapes are meaningless once a voxel spans several blocks.
-            uint w = (k == 0) ? voxelWord : packVoxel(finalCategory, 0u, payload);
+            uint w = (k == 0) ? voxelWord : packVoxel(finalCategory, 0u, skyBits, payload);
             imageStore(voxelImg,      cascadeAtlasCoord(coord, k), uvec4(w));
             imageStore(brickImg,      cascadeBrickCoord(coord, k), uvec4(1u));
             imageStore(superBrickImg, cascadeSuperCoord(coord, k), uvec4(1u));

@@ -273,10 +273,10 @@ const float renderScale = RENDER_SCALE;
 // Shadows are box-shaped: an entity's silhouette is not resolved.
 #define ENTITY_SHADOWS
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
-#define GI_STRENGTH 200 // [25 50 75 100 150 200]
-#define GI_SKY_BRIGHTNESS 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
+#define GI_STRENGTH 50 // [25 50 75 100 150 200]
+#define GI_SKY_BRIGHTNESS 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
-#define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
+#define GI_EMISSION 0.5   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
 // Write the 10-bit model-derived shape id into the voxel word. Leave this ON.
 // Its #else branch in gbuffers/shadow.glsl maps shaped blocks to VOXEL_AIR,
 // which deletes every stair, slab, fence and wall from the grid rather than
@@ -305,18 +305,34 @@ const float renderScale = RENDER_SCALE;
 // that lets it survive camera motion.
 #define SURFACE_CACHE
 
-// Fraction of the cache refreshed per frame: one slab in every N along Z, with
-// the phase rotating by frame. Higher = cheaper per frame but a full refresh
-// takes longer, so relit surfaces lag further behind a lighting change.
+// Refresh period for the FAR field, in frames. Voxels closer than SC_NEAR_DIST
+// refresh every frame regardless; the two bands between there and SC_FAR_DIST
+// interpolate (period/4, period/2). Higher = cheaper, at the cost of distant
+// geometry lagging further behind a lighting change.
 //
-// TEMPORARILY 1 (full volume every frame) while the cache is being brought up.
-// Any value above 1 makes coverage depend on the image genuinely persisting
-// between frames, which is one of the two things still unconfirmed here -- if
-// clear=false were not honoured, the 1 - 1/N of slabs not touched this frame
-// would read back tag-invalid and the cache would look empty. At 1 the result
-// cannot depend on that. Raise it back to 8 once GI_DEBUG_VIEW 5 reads green:
-// if it stays green, persistence works and the cheaper stride is free.
-#define SC_UPDATE_STRIDE 1 // [1 2 4 8 16] frames for a full refresh
+// This used to be a flat stride over Z slabs, which spent as much work on the
+// far corner of the cascade as on the block underfoot and relit the world in
+// visible planar sweeps. Distance-banding is Lumen's per-frame card-capture
+// budget in miniature: prioritise by what the camera can actually resolve.
+#define SC_UPDATE_STRIDE 8 // [1 2 4 8 16] far-field frames per refresh
+
+// Distance bands for the above, in blocks. Inside NEAR every voxel refreshes
+// every frame; past FAR everything runs at the full SC_UPDATE_STRIDE period.
+#define SC_NEAR_DIST 32 // [16 24 32 48 64 96] always-refresh radius
+#define SC_MID_DIST  64 // [32 48 64 96 128]   quarter-period radius
+#define SC_FAR_DIST  96 // [48 64 96 128 192]  half-period radius
+
+// Faces refreshed per voxel per frame, as one in every N of the six. A face's
+// lighting changes slowly and SC_BLEND is a much longer time constant than this,
+// so 2 is close to free; 3 is still hard to catch. Slots with no valid history
+// ignore this and fill immediately, so it never leaves visible holes.
+#define SC_FACE_STRIDE 2 // [1 2 3 6] one face in every N per frame
+
+// How much of a block's sky access a DOWNWARD-facing face receives -- ceilings
+// and the undersides of overhangs. 0 makes them fully blind to the sky (the old
+// probe's behaviour), which is too dark for an outdoor overhang; a little bounce
+// is more truthful. Upward faces always get the full amount.
+#define SC_SKY_DOWN_FACE 0.15 // [0.0 0.05 0.1 0.15 0.25 0.4 0.6]
 
 // Safety cap on the update pass's grid-stride loop. With a dispatch of the
 // requested size this is one iteration and the cap is inert; it exists so that a
@@ -339,15 +355,19 @@ const float renderScale = RENDER_SCALE;
 // covers rather than the surface cache.
 #define SC_BOUNCE_DIST 32 // [8 16 24 32 48 64 96]
 
-// Reach of the per-face sky-visibility probe. A face is counted as seeing sky
-// when one occlusion ray angled skyward gets this far unobstructed. Long enough
-// to clear a cave roof; longer costs a little and mainly affects overhangs.
-#define SC_SKY_PROBE_DIST 64 // [16 24 32 48 64 96 128]
+// (SC_SKY_PROBE_DIST is gone. Per-face sky visibility used to be an occlusion
+// ray of that length cast six times per voxel per refresh -- the longest and
+// most numerous ray in the renderer. It now comes from the vanilla skylight
+// lightmap, which the voxeliser banks into three previously spare bits of the
+// voxel word. See lib/pt/voxelFormat.glsl. Shape it with SC_SKY_DOWN_FACE and
+// GI_SKY_LEAK_FALLOFF.)
 
 // Temporal blend weight for a cache slot: how much of each refresh is the new
 // estimate. Low values denoise a sparse ray budget hard but make relighting lag;
-// note a slot only refreshes every SC_UPDATE_STRIDE frames, so the effective
-// time constant is SC_UPDATE_STRIDE / SC_BLEND frames.
+// note a slot only refreshes every SC_UPDATE_STRIDE frames at distance (every
+// frame within SC_NEAR_DIST), and only one face in SC_FACE_STRIDE per turn, so
+// the effective far-field time constant is
+// SC_UPDATE_STRIDE * SC_FACE_STRIDE / SC_BLEND frames.
 #define SC_BLEND 0.25 // [0.05 0.1 0.15 0.25 0.4 0.6 1.0]
 
 // --- Lumen GI ----------------------------------------------------------------
@@ -360,7 +380,7 @@ const float renderScale = RENDER_SCALE;
 // Per-pixel cosine rays that resolve through the surface cache rather than
 // shading their hit. Cheap enough to do per pixel precisely because there is no
 // shading at the hit: a DDA walk plus one texel fetch.
-#define GI_GATHER_RAYS 4  // [1 2 3 4 6 8 12 16] rays per pixel per frame
+#define GI_GATHER_RAYS 1  // [1 2 3 4 6 8 12 16] rays per pixel per frame
 #define GI_GATHER_DIST 48 // [16 24 32 48 64 96 128] ray reach in blocks
 
 // How sharply the sky term falls off with the surface's skylight lightmap.
@@ -383,7 +403,7 @@ const float renderScale = RENDER_SCALE;
 // cache update (sc1_surface_direct) is -- then compare 4 and 5: lit in 4 but
 // black in 3 means the tag is wrongly rejecting entries; black in both means
 // those slots are simply never written (a dispatch-coverage problem).
-#define GI_DEBUG_VIEW 5 // [0 1 2 3 4 5]
+#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5]
 
 // Temporal accumulation. The surface cache is already converged, so this is a
 // light denoise rather than the old SVGF-scale machinery.
@@ -408,7 +428,7 @@ const float renderScale = RENDER_SCALE;
 // smears it into a glowing blob. Formerly GID_FIREFLY_MAX. Currently read only
 // by the Distant Horizons raster-ambient fallback in d7_composite, which Phase
 // 3.2 replaces with a far-field radiance-cache probe lookup.
-#define GI_FIREFLY_MAX 1.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] 1000 = off
+#define GI_FIREFLY_MAX 0.5 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] 1000 = off
 
 // --- Disocclusion fill (history reconstruction) ------------------------------
 // Pixels that never build temporal history -- silhouette edges, convex corners,

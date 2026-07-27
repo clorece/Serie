@@ -12,10 +12,19 @@
 //
 //   [ 2: 0]  category   VOXEL_AIR .. VOXEL_LIGHT
 //   [12: 3]  shapeId    index into the BLAS shape table (0 = full cube)
-//   [15:13]  spare
+//   [15:13]  skylight   vanilla sky lightmap, quantised to 3 bits (0..7)
 //   [31:16]  payload    albedo RGB565, or the light material for VOXEL_LIGHT
 //              (emitters take their colour from GetSpecialBlocklightColor(mat),
 //               so they have no albedo to store and reuse the field)
+//
+// The skylight field used to be spare. It exists so the surface cache can answer
+// "how much sky does this block see?" from the voxel word it has already fetched,
+// instead of casting an occlusion probe per face. That probe was the single most
+// expensive ray in the renderer -- SC_SKY_PROBE_DIST was 64 blocks, twice the
+// bounce range, and it was recast for all six faces on every refresh purely to
+// recover information Minecraft had already computed and handed to the voxeliser
+// in gl_MultiTexCoord1.y. Three bits is ample: the value only gates a broad
+// ambient term, and GI_SKY_LEAK_FALLOFF reshapes it non-linearly afterwards.
 // ---------------------------------------------------------------------------
 
 #define VOXEL_AIR      0u
@@ -27,10 +36,12 @@
 #define VOX_CAT_BITS     3u
 #define VOX_SHAPE_BITS  10u
 #define VOX_SHAPE_SHIFT  3u
+#define VOX_SKY_SHIFT   13u
 #define VOX_PAYLOAD_SHIFT 16u
 
 #define VOX_CAT_MASK     7u
 #define VOX_SHAPE_MASK   1023u
+#define VOX_SKY_MASK     7u
 #define VOX_PAYLOAD_MASK 65535u
 
 // Largest shape id the 10-bit field can hold; the generator asserts against this.
@@ -43,6 +54,14 @@
 uint voxelCategory(uint w) { return w & VOX_CAT_MASK; }
 uint voxelShape(uint w)    { return (w >> VOX_SHAPE_SHIFT) & VOX_SHAPE_MASK; }
 uint voxelPayload(uint w)  { return (w >> VOX_PAYLOAD_SHIFT) & VOX_PAYLOAD_MASK; }
+
+// Sky access of this block, 0 (fully enclosed) .. 1 (open sky), from the vanilla
+// skylight lightmap captured at voxelisation time.
+float voxelSkylight(uint w) { return float((w >> VOX_SKY_SHIFT) & VOX_SKY_MASK) * (1.0 / 7.0); }
+
+uint packSkylight(float skyLight01) {
+    return uint(clamp(skyLight01, 0.0, 1.0) * 7.0 + 0.5) & VOX_SKY_MASK;
+}
 
 bool voxelIsAir(uint w)      { return (w & VOX_CAT_MASK) == VOXEL_AIR; }
 bool voxelIsEmissive(uint w) { uint c = w & VOX_CAT_MASK; return c == VOXEL_EMISSIVE || c == VOXEL_LIGHT; }
@@ -64,9 +83,10 @@ uint packAlbedo565(vec3 c) {
 
 vec3 voxelAlbedo(uint w) { return unpackAlbedo565(voxelPayload(w)); }
 
-uint packVoxel(uint category, uint shapeId, uint payload) {
+uint packVoxel(uint category, uint shapeId, uint skyBits, uint payload) {
     return (category & VOX_CAT_MASK)
          | ((shapeId & VOX_SHAPE_MASK) << VOX_SHAPE_SHIFT)
+         | ((skyBits & VOX_SKY_MASK)   << VOX_SKY_SHIFT)
          | ((payload & VOX_PAYLOAD_MASK) << VOX_PAYLOAD_SHIFT);
 }
 
