@@ -343,9 +343,50 @@ light leaks. 96 steps across a 192-voxel cascade is short in dense foliage.
 traceVoxelOccluded it has shapeId == 0 and falls through to else if (!first) return true,
 so it blocks as a solid 1 m³ cube. Shadow rays and GI rays disagree about the same torch.
 
-  6 tasks (0 done, 6 open)
-  ◻ Phase 0: commit foundation to lumen-experimental
-  ◻ Phase 1a: harvest reusable primitives
-  ◻ Phase 1b: delete lighting layers
-  ◻ Phase 1c: rewire pipeline config and options
-  ◻ Phase 2: gate sub-block BLAS behind VOXEL_BLAS
+  6 tasks (5 done, 1 open)
+  ☑ Phase 0: commit foundation to lumen-experimental      a1728d1
+  ☑ Phase 1a: harvest reusable primitives                 5f97821
+  ☑ Phase 1b: delete lighting layers                      a295af5
+  ☑ Phase 1c: rewire pipeline config and options          a295af5
+  ☑ Phase 2: gate sub-block BLAS behind VOXEL_BLAS        6462309
+  ◻ Phase 3: build the Lumen stack
+
+---
+Progress notes (branch: lumen-experimental)
+
+Phase 1a harvested into lib/pt/sampling.glsl (luma, buildTBN, cosHemisphereDir,
+stbnCosineHemisphere + the blueNoise decl, and the BRDF core: fresnelSchlick,
+smithGGX_v1/v2, sampleGGXVNDF, tbnFromNormal) and lib/pt/reproject.glsl
+(RGBtoYCoCg/YCoCgtoRGB, clipHistoryMoments, varFromMoments, svgfVarianceFloor,
+getJitterRotation, HF_DISK, historyFixGI).
+
+Two deviations from the plan as written, both deliberate:
+
+1. historyFixGI takes its GI-history and normal/depth samplers as PARAMETERS
+   rather than reading colortex8/colortex15 directly. The plan called it
+   "reusable verbatim", but Phase 1 frees ct8, so the hardcoded binding could
+   not have survived the buffer relayout.
+2. lib/fragment/reflections.glsl was DELETED rather than stripped. Once its BRDF
+   core moved to lib/pt/sampling.glsl and its screen-space march was removed,
+   nothing was left in the file and nothing included it.
+
+Deferred chain is now contiguous: deferred = d7_composite, deferred1 =
+d8_fog_sky, deferred2 = d9_vl. All other deferred slots are free.
+
+options.glsl went 268 -> 195 defines with zero legacy path-tracing macros left.
+Three macros survived under new names because live code still reads them:
+RESTIR_BLUE_NOISE -> GI_BLUE_NOISE, SVGF_MIN_LUMA_SIGMA -> GI_MIN_LUMA_SIGMA,
+GID_FIREFLY_MAX -> GI_FIREFLY_MAX. The HISTORYFIX_* group kept its name.
+
+CURRENT VISUAL STATE: direct lighting only. d7_composite's `indirect` is the
+analytic lightmap ambient (the pre-path-tracer fallback) and there are no
+reflections. This is expected between Phase 1 and Phase 3 — the 7-point contract
+the Phase 3 GI buffer must satisfy is written into d7_composite at the seam.
+
+Still open from "Known defects in the inherited code": both #1 (step-budget
+teleport) and #2 (torch occlusion asymmetry) are unfixed. #2 survives the BLAS
+gating — traceVoxelCascaded still resolves a torch through its light shape while
+traceVoxelOccluded blocks on the whole voxel.
+
+Pre-existing, unrelated to this work: shaders.properties lists SHADOW_BIAS and
+SHADOW_DISTORT_FACTOR in screen.Light but neither has a #define.
