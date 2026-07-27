@@ -284,6 +284,14 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
     vec3 indirect = ambient + torch;
 
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
+    // LIGHTING_INDIRECT DOES apply here, and this is the path it is really for.
+    // Everything in `indirect` above is a rasterised fill: `ambient` is a pure
+    // hemisphere term (hemi = 0.14 + 0.86 * pow(n.y, 1.35)) with no occlusion of
+    // any kind, and `torch` is the vanilla blocklight lightmap. Both are scaled
+    // by GI_STRENGTH and GI_SKY_BRIGHTNESS just above so DH LOD matches the
+    // near-field GI's brightness -- but having no occlusion term, it goes flat
+    // as those are raised, which is exactly what LIGHTING_INDIRECT is for
+    // trimming. Phase 3.2 replaces this block with a far-field probe lookup.
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
 
     // Small DH-only exposure trim. The LOD albedo is a spatially averaged block
@@ -414,18 +422,28 @@ void main() {
     //   2. irradiance / PI     -- the composite does albedo * indirect, not
     //      albedo/PI * indirect, so the Lambert 1/PI is folded into the buffer.
     //   3. no NdotL applied here; the cosine lives in the sampling distribution.
-    //   4. GI_STRENGTH and firefly clamps pre-applied by the producer;
-    //      LIGHTING_INDIRECT is applied here, just below.
+    //   4. GI_STRENGTH and firefly clamps pre-applied by the producer.
+    //      LIGHTING_INDIRECT is NOT applied to it -- see below.
     //   5. AO is NOT pre-applied.
     //   6. linear HDR, unbounded; sampled at the logical, un-jittered uv.
     //   7. diffuse only -- no emission (added separately below), no specular.
     vec3 indirect;
     #ifdef VOXEL_GI
         // Jitter-free buffer, so this samples at the surface's LOGICAL uv.
+        //
+        // Deliberately NOT scaled by LIGHTING_INDIRECT. That control exists to
+        // trim RASTERISED ambient -- the analytic lightmap wash below, and the
+        // hemisphere ambient shadeDhTerrain uses for Distant Horizons LOD, both
+        // of which are flat fills with no occlusion term. Applying it here too
+        // meant the only way to tame that flat fill was to attenuate the
+        // path-traced GI by the same factor, which is backwards: the traced
+        // result is the thing that should survive. Use GI_STRENGTH to scale GI.
         indirect = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
     #else
-        // Analytic lightmap ambient: the pre-path-tracer fallback.
-        indirect = getLightmap(lightmap) + vec3(ambientStrength);
+        // Analytic lightmap ambient: the pre-path-tracer fallback, and genuinely
+        // rasterised, so LIGHTING_INDIRECT applies to it here.
+        indirect = (getLightmap(lightmap) + vec3(ambientStrength))
+                 * (float(LIGHTING_INDIRECT) / 100.0);
     #endif
 
     #if GI_DEBUG_VIEW > 0
@@ -509,8 +527,10 @@ void main() {
         }
     #endif
 
-    direct   *= float(LIGHTING_DIRECT)   / 100.0;
-    indirect *= float(LIGHTING_INDIRECT) / 100.0;
+    // LIGHTING_INDIRECT is applied at the point `indirect` is BUILT, not here:
+    // only the rasterised branch above takes it, so the path-traced buffer is
+    // passed through untouched.
+    direct *= float(LIGHTING_DIRECT) / 100.0;
 
     vec3 albedoRaw = color; // colortex0 is untouched albedo here
 

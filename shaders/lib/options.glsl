@@ -171,7 +171,21 @@ const float renderScale = RENDER_SCALE;
 //#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
-#define LIGHTING_INDIRECT 5  // [25 40 55 70 85 100 125 150]
+
+// RASTERISED ambient only. This scales the two flat, occlusion-free ambient
+// fills in the pack -- the analytic lightmap wash used when VOXEL_GI is off, and
+// the hemisphere ambient shadeDhTerrain applies to Distant Horizons LOD terrain.
+// It does NOT touch the path-traced GI buffer; scale that with GI_STRENGTH.
+//
+// Those DH fills are deliberately scaled by GI_STRENGTH and GI_SKY_BRIGHTNESS so
+// distant terrain matches the near field's brightness, but they carry no
+// occlusion term at all, so raising either makes distant shaded areas go flat.
+// Lowering this is the correct response to that, and it no longer costs you any
+// path-traced lighting to do it.
+//
+// The range now goes below 25: values that low used to be a way of fighting the
+// GI itself, and are legitimate for trimming a flat fill.
+#define LIGHTING_INDIRECT 0  // [0 5 10 15 25 40 55 70 85 100 125 150]
 
 //#define WIND_MOVEMENT // WIP
 
@@ -285,7 +299,18 @@ const float renderScale = RENDER_SCALE;
 // For reference a ray takes up to ~1.73 steps per block, so covering
 // GI_GATHER_DIST 48 needs ~83 steps.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] steps per cascade before a ray gives up
-#define GI_STRENGTH 200 // [25 50 75 100 150 200]
+// Scales the PATH-TRACED GI and nothing else. Applied by the producer
+// (dg0_gather) before the buffer ever reaches d7_composite.
+//
+// This is now the ONLY control over traced GI brightness. LIGHTING_INDIRECT used
+// to attenuate the traced buffer as well, which is why this needed absurd
+// out-of-range values to compensate; with that decoupled, 100 means "the
+// tracer's own answer, unscaled" and the slider range is meaningful again.
+//
+// Note it also scales shadeDhTerrain's raster ambient, deliberately, so Distant
+// Horizons LOD tracks the near field's brightness. LIGHTING_INDIRECT trims that
+// DH fill independently.
+#define GI_STRENGTH 100 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
