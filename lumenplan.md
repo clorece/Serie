@@ -335,6 +335,10 @@ Known defects in the inherited code
 
 Worth fixing while in the area — several will otherwise be inherited silently.
 
+(HISTORICAL — this list is as originally written. Item 1 has since been FIXED in
+traceVoxelCascaded, though traceVoxelOccluded still carries it. See the HANDOFF
+at the end of this file for the current state; it supersedes everything above.)
+
 1. Step-budget teleport (voxelTrace.glsl:119, 226). If the inner DDA exhausts
 CASCADE_MAX_STEPS (96) before reaching tLimit, it still advances tWorld to the far side
 of the cascade and resumes in the next. Geometry in the skipped span is silently missed →
@@ -345,410 +349,348 @@ so it blocks as a solid 1 m³ cube. Shadow rays and GI rays disagree about the s
 
 ===========================================================================
 HANDOFF — branch lumen-experimental (pushed to origin)
-Last updated after commit affafad.
+Rewritten after the optimisation work. Supersedes the older handoff.
 ===========================================================================
 
 STATUS
 
-  8 tasks (7 done, 1 open, 1 blocked on verification)
-  [x] Phase 0   commit foundation to lumen-experimental      a1728d1
-  [x] Phase 1a  harvest reusable primitives                  5f97821
-  [x] Phase 1b  delete lighting layers                       a295af5
-  [x] Phase 1c  rewire pipeline config and options           a295af5
-  [x] Phase 2   gate sub-block BLAS behind VOXEL_BLAS        6462309
-  [x] Phase 3.1 surface cache                                40440b9
-  [x] Phase 3.3 final gather  +  Phase 4 d7 seam             1860503
-  [ ] Phase 3.2 world radiance cache          NOT STARTED (deliberately deferred)
-  [ ] Phase 3.4 reflections                   NOT STARTED
+  Phases
+    [x] Phase 0   commit foundation                        a1728d1
+    [x] Phase 1   harvest / delete / rewire                5f97821 a295af5
+    [x] Phase 2   gate sub-block BLAS behind VOXEL_BLAS    6462309
+    [x] Phase 3.1 surface cache                            40440b9
+    [x] Phase 3.3 final gather + Phase 4 d7 seam           1860503
+    [ ] Phase 3.2 world radiance cache      NOT STARTED (deliberately deferred)
+    [ ] Phase 3.4 reflections               NOT STARTED
 
-WHERE IT STANDS RIGHT NOW — READ THIS FIRST
+  Five optimisation passes then landed on top. The pipeline runs and is fast.
 
-The pipeline is fully wired end to end: voxel grid -> surface cache -> screen
-gather -> d7_composite. Everything compiles and the pack loads.
+WHAT IS AND IS NOT CONFIRMED IN-ENGINE — READ THIS FIRST
 
-It is NOT yet confirmed working in-engine. The last change (affafad) fixed the
-surface cache dispatch and has not been visually verified. The immediate next
-action is not to write code, it is to run these three checks:
+  CONFIRMED by the author, reported as a large performance gain:
+    604a0ce  surface cache update cost
+    2062fea  surface cache feedback
+    aa71d79  step-budget teleport fix + adaptive gather rays
 
-  1. GI_DEBUG_VIEW 5 -> expect GREEN everywhere within ~128 blocks of the camera.
-     Any red means the cache still is not being written there.
-  2. GI_DEBUG_VIEW 3 -> expect the world lit, not one band.
-  3. GI_DEBUG_VIEW 0 -> real render; sunlight bounce should be visible and
-     GI_STRENGTH should respond.
+  NOT YET SEEN RUNNING. Compile-validated only:
+    aeab753  emitter palette baked to SSBO
+    ae89987  sky SH
+    a786d87  emitter AABBs baked
+    31b91bb  converged-pixel gather skip
+    ff0b0d7  LIGHTING_INDIRECT decoupled from traced GI
+    9abbabf  short-range contact AO
+    5096165  a-trous denoiser
 
-THEN: SC_UPDATE_STRIDE is temporarily 1, which refreshes all 8.4M voxels every
-frame and will run badly. Put it back to 8. If view 5 stays green at 8, image
-persistence works and the cheap stride is free. If it goes red, clear=false is
-not being honoured for image.faceRadianceImg and the cache cannot be amortised
-at all — that would need a rethink (double buffer, or full refresh every frame).
+  The last four change APPEARANCE, not just cost. Verify those first.
 
-WHAT WAS BUILT
+ARCHITECTURE AS BUILT
 
-  lib/pt/surfaceCache.glsl    toroidal addressing, validity tag, read/write
-  lib/pt/directLight.glsl     world-space sun vector + light colour (compute-safe)
-  lib/pt/sampling.glsl        harvested sampling + BRDF primitives
-  lib/pt/reproject.glsl       harvested history clamp, variance floor, historyFixGI
-  program/shadowcomp/sc1_surface_direct.glsl   the cache update pass
-  program/deferred/dg0_gather.glsl             the final gather
-  world0/shadowcomp1.csh, world0/deferred.{fsh,vsh}
+  Pass order (world0/):
+    setup        s0_shape_table      BLAS table + emitter palette, once at load
+    shadow       gbuffers/shadow     shadow map + voxelisation (+ skylight bits)
+    shadowcomp   sc0_entity_bvh
+    shadowcomp1  sc1_surface_direct  surface cache update
+    shadowcomp2  sc2_sky_sh          sky -> 9 SH coefficients
+    prepare      p0_atmosphere_lut
+    prepare1     p1_cloud_shadow
+    deferred     dg0_gather          final gather -> ct8, ct15
+    deferred1-4  dg1_denoise1..4     a-trous strides 1/2/4/8
+    deferred5    d7_composite        lighting hub
+    deferred6    d8_fog_sky
+    deferred7    d9_vl
+    composite..  unchanged
 
-Pass order now: shadowcomp = entity BVH, shadowcomp1 = surface cache,
-deferred = dg0_gather, deferred1 = d7_composite, deferred2 = d8_fog_sky,
-deferred3 = d9_vl.
+  NOTE the renumbering: d7/d8/d9 used to be deferred1/2/3.
 
-Buffers: colortex8 = GI (.rgb indirect, .a history length), colortex15 = the
-reprojection key (.xy oct WORLD normal, .z linear depth). Both written by
-dg0_gather. faceRadianceImg = the surface cache, 256 x 768 x 256 RGBA16F
-(~402 MB), .a carries the validity tag, clear MUST stay false.
+  Images
+    voxelImg         256x512x256 R32UI   cascaded grid, clear=true
+    brickImg/super   hierarchical occupancy, clear=true
+    faceRadianceImg  256x768x256 RGBA16F surface cache, ~402 MB, clear MUST be false
+    scRequestImg     32x16x32 R8UI       feedback stamps, 16 KB, clear MUST be false
 
-IRIS GOTCHAS PAID FOR IN BLOOD — do not relearn these
+  Buffers
+    ct8   GI: .rgb indirect, .a history length. dg0_gather's temporal history.
+    ct9   denoise ping-pong
+    ct10  denoise ping-pong
+    ct15  reprojection key: .xy oct WORLD normal, .z linear depth
 
-  1. NO trailing comments on #include lines. Iris takes the entire rest of the
-     line as the path. `#include "/lib/x.glsl" // why` fails to resolve at load.
-  2. `const ivec3 workGroups` MUST be literal integers. Iris parses it out of the
-     source text and does NOT evaluate GLSL; an expression it cannot fold falls
-     back silently to ONE work group. This cost four wrong diagnoses. Use a
-     literal and absorb the remainder with a grid-stride loop.
-  3. NO implicit-LOD sampling in compute. texture() needs derivatives, which do
-     not exist there; drivers return 0. Use textureLod(..., 0.0). This silently
-     zeroed the shadow lookup and killed all direct light in the cache.
-  4. shadowcomp runs BEFORE prepare, so colortex12 (atmosphere LUT) is one frame
-     stale in the cache pass. Harmless, but know it.
-  5. VOXEL_CASCADE_SIZE must stay a power of two (128 or 256). The cache indexes
-     itself by worldVoxel & (N-1); 192 has no mask and the old default is gone.
+  SSBOs
+    0  block-shape BLAS table          65536
+    1  entity BVH                     262144
+    2  emitter palette: colour + occluder/emissive AABBs   16384
+    3  sky SH, 9 coefficients            256
 
-DEBUG VIEWS (GI_DEBUG_VIEW in options.glsl)
-  1 indirect buffer, no albedo     is the gather producing anything?
-  2 temporal history length        blue = fresh, red = converged
-  3 surface cache down primary ray is the CACHE populated?
-  4 same as 3 but ignoring the tag distinguishes "unwritten" from "tag rejected"
-  5 coverage: green = tag valid, red = tag rejected, black = ray miss
-  6 tag STORED in the slot         grey ramp; pure black = never written
-  7 tag the reader EXPECTS         compare against 6
+WHAT THE OPTIMISATION PASSES DID, AND THE TRAPS IN THEM
 
-Views 5/6/7 are the ones that actually find dispatch and addressing bugs. Reach
-for them before reasoning about screenshots — three of the four bugs in this
-phase were misdiagnosed by inference first.
+  The through-line: the surface cache update, not the gather, was the expensive
+  half; and large constant tables were sitting inside the hottest loop.
 
-DEVIATIONS FROM THE PLAN AS WRITTEN (all deliberate)
+  1. Sky visibility is READ, not traced. The voxeliser banks Minecraft's own
+     skylight lightmap into three formerly spare bits of the voxel word. This
+     removed a 64-block occlusion probe cast per face per refresh -- the longest
+     and most numerous ray in the renderer -- and is more accurate than the
+     probe, which thresholded one fixed-direction ray to 0 or 1.
 
-  1. historyFixGI takes its samplers as PARAMETERS, not hardcoded ct8/ct15.
-     Phase 1 frees ct8, so the original binding could not survive.
-  2. lib/fragment/reflections.glsl was DELETED, not stripped. Its BRDF core moved
-     to lib/pt/sampling.glsl and its SSR march was removed; nothing was left.
-  3. Surface cache direct + radiosity are ONE dispatch, not the planned
-     shadowcomp1 + shadowcomp2 split. With only 1/STRIDE of the volume refreshed
-     per frame a separate radiosity pass would still read mostly-previous-frame
-     direct light, buying a second dispatch and a RAW hazard for no accuracy.
-  4. Phase 3.2 (world radiance cache) was REORDERED after 3.3/4. With d7 on the
-     analytic fallback the surface cache was invisible and untestable.
+  2. Air voxels are not cleared. The cache is only read at a ray HIT and
+     scVoxelForHit pulls half a voxel inward, so every read lands on an OCCUPIED
+     voxel; stale radiance in an air slot is unreachable.
+     Consequence: GI_DEBUG_VIEW 4 and 6 ignore the tag and now show leftovers in
+     empty space. Views 3 and 5 respect it and remain the ones to trust.
 
-===========================================================================
-OPTIMISATION PASS 1 -- surface cache update cost
-===========================================================================
+  3. Brick/super-brick occupancy gates the update in two L1-resident fetches.
+     The flat index is BRICK-MAJOR over LOCAL space so a work group lands inside
+     one brick and that test is group-uniform. Local space is required: the
+     toroidal wrap plus a non-8-aligned cascade origin means an aligned run of
+     SLOTS straddles two bricks and the group-uniform test would be a lie.
 
-Profile-by-inspection finding: the cache update pass, not the gather, was the
-expensive half of the pipeline. At SC_UPDATE_STRIDE 1 it launched one thread per
-cascade-0 voxel every frame -- 256 x 128 x 256 = 8.39M -- against roughly 932k
-gather rays at 1080p x 0.67. Three specific wastes dominated:
+  4. Refresh rate is distance-banded with a per-voxel hashed phase. The old flat
+     Z-slab stride spent as much on the far cascade corner as on the block
+     underfoot and relit in visible planar sweeps.
 
-  * ~90% of those threads were AIR, and each still wrote six RGBA16F texels of
-    black, about 400 MB/frame spent writing zeroes over zeroes.
-  * solid-interior voxels (all of underground) paid 7 atlas fetches and 6 stores
-    to rediscover that every face is buried.
-  * exposed voxels cast a 64-block occlusion probe PER FACE, purely to estimate
-    sky visibility -- the longest and most numerous ray in the renderer.
+  5. SURFACE CACHE FEEDBACK (Lumen's LumenSurfaceCacheFeedback). Gather rays
+     stamp the brick they resolve through; the update pass skips unstamped
+     bricks outside SC_NEAR_DIST.
+     ** THE TRAP: bounce-ray stamping MUST stay confined to the near field. If
+     every updated voxel stamped, the requested set would grow by SC_BOUNCE_DIST
+     per frame and saturate the cascade in ~8 frames, silently making the whole
+     scheme worthless. GI_DEBUG_VIEW 8 catches it: mostly green everywhere means
+     saturation. **
 
-What changed
+  6. Step-budget teleport FIXED. A ray exhausting CASCADE_MAX_STEPS used to jump
+     to the cascade's far side, skip everything between, and report `escaped` --
+     so the caller substituted full sky for a ray stopped inside a canopy. It now
+     stops in place and reports a non-escaped miss. This is what makes
+     GI_MAX_STEPS a knob you can turn down: it now costs reach, not correctness.
 
-  1. Sky visibility is no longer traced. gbuffers/shadow banks Minecraft's own
-     skylight lightmap into three previously spare bits of the voxel word
-     (voxelFormat.glsl, [15:13]); the cache reads it out of the word it has
-     already fetched. Removes SC_SKY_PROBE_DIST entirely. This is also MORE
-     accurate than the probe: the probe thresholded one fixed-direction ray to
-     0 or 1, so a partly-covered face read as fully open or fully blind.
-     New knob SC_SKY_DOWN_FACE shapes how much sky a downward face receives.
+  7. Adaptive gather rays + converged-pixel skipping. GI_GATHER_RAYS is what a
+     pixel with NO history gets; converged pixels drop to one ray, and fully
+     converged NEAR-STATIC ones skip entirely one frame in GI_SKIP_PERIOD.
+     Chosen over a checkerboard: no spatial reconstruction, cannot touch a
+     disoccluded or moving pixel, and the skipped set is hashed not patterned.
 
-  2. Air voxels are no longer cleared. The cache is only ever read at a ray HIT,
-     and scVoxelForHit pulls the hit point half a voxel inward, so every read
-     lands on an OCCUPIED voxel -- stale radiance in an air slot is unreachable.
-     Debug note: views 4 and 6 ignore the tag and will now show leftovers in
-     empty space; views 3 and 5 respect it and remain the ones to trust.
+  8. Emitter palette AND emitter AABBs baked into SSBO 2. Both were branch trees
+     over material ids returning constants, inside the DDA loop. The authoring
+     data is renamed ...Ref() and fenced behind EMITTER_PALETTE_BAKE so only the
+     setup pass compiles it -- leaving it reachable-but-uncalled would rely on
+     driver DCE, and register allocation is exactly what should not depend on
+     that. Material-id compares reachable in the gather: 11 -> 0.
 
-  3. Hierarchical occupancy gates the pass. The 8^3 brick and 64^3 super-brick
-     maps the DDA already builds reject empty space in two L1-resident fetches,
-     before anything touches the 134 MB voxel atlas.
+  9. SKY SH. Diffuse ray misses read nine coefficients instead of four LUT
+     texelFetches. Also a noise reduction: LUT sampling hands each ray
+     high-frequency detail that is pure variance for a diffuse gather.
+     Verified numerically -- scripts/verify_sky_sh.py mirrors the shader's own
+     basis and sampling. Cosine-weighted error against a worst-case hard step:
+     floor +0.0%, wall -0.7%, ceiling +4.3%, mean radiance 0.000%.
+     The clamp to zero in skySHRadiance is LOAD-BEARING: negative radiance would
+     feed back through the surface cache and keep subtracting.
 
-  4. The flat index is now BRICK-MAJOR and enumerates LOCAL space rather than
-     slot space, so a 256-thread work group lands inside one brick and the
-     occupancy test above is group-uniform. Local space matters: the toroidal
-     wrap plus a non-8-aligned cascade origin means an aligned run of slots
-     straddles two bricks, which would make the group-uniform test a lie.
-
-  5. Refresh rate is distance-banded instead of a flat Z-slab stride, with the
-     phase hashed per voxel. This is Lumen's per-frame card-capture budget in
-     miniature: SC_NEAR_DIST refreshes every frame, SC_UPDATE_STRIDE governs
-     the far field. The old slab stride spent as much work on the far corner of
-     the cascade as on the block underfoot, and relit in planar sweeps that
-     crossed the world as a visible wavefront; hashing turns that into dither.
-
-  6. Face round-robin (SC_FACE_STRIDE): one face in N per voxel per frame.
-     Slots with no valid history ignore it and fill immediately, so it never
-     leaves holes.
-
-OPTIMISATION PASS 2 -- feedback, tracer, and gather
-
-  7. SURFACE CACHE FEEDBACK (was headroom item 1). Lumen's
-     LumenSurfaceCacheFeedback at brick granularity. Every gather ray stamps the
-     low 8 bits of the frame onto the 8^3 brick it resolved through, into a new
-     16 KB R8UI image (scRequestImg); sc1 refuses to spend work on any brick
-     outside SC_NEAR_DIST with no stamp inside SC_REQUEST_TTL frames. Cache cost
-     now tracks what the camera can see rather than the size of the cascade.
-
-     THE TRAP, if this is ever revisited: bounce-ray stamping must stay confined
-     to the near field. If every updated voxel stamped, the requested set would
-     grow by SC_BOUNCE_DIST per frame -- requested bricks cast rays, those hits
-     get stamped, next frame THEY cast rays -- and saturate the cascade in about
-     eight frames, silently making the whole scheme worthless. GI_DEBUG_VIEW 8
-     is how you would catch that: mostly green everywhere means saturation.
-
-  8. STEP-BUDGET TELEPORT FIXED (was a known defect). A ray exhausting
-     CASCADE_MAX_STEPS used to advance to the far side of the cascade and resume
-     in the next, skipping everything in between AND reporting escaped, so the
-     caller substituted full sky for a ray that had actually stopped inside a
-     forest canopy. It now stops where it is and reports a non-escaped miss.
-
-     The point is as much performance as correctness: GI_MAX_STEPS was
-     previously a knob you could not turn down, because lowering it leaked
-     light. It now trades reach for speed and nothing else.
-
-  9. ADAPTIVE GATHER RAY BUDGET. GI_GATHER_RAYS is now what a pixel with NO
-     history gets; a pixel converged to GI_ADAPTIVE_FRAMES drops to one ray.
-     The full budget is paid only at disocclusions, silhouettes and on moving
-     geometry. Reprojection had to move ABOVE the gather to make this possible
-     -- it does not depend on the gather's result, and when histLen is 0 the
-     blend weight is exactly 1 so the history value is unused.
-
-OPTIMISATION PASS 3 -- getting large code out of the hot loops
-
-Passes 1 and 2 were confirmed in-engine: a large performance gain. These two are
-both the same shape of problem -- expensive code sitting where it is executed
-per ray rather than per frame.
-
- 10. EMITTER PALETTE BAKED TO AN SSBO. GetSpecialBlocklightColor is a ~160-line
-     binary search over ~98 materials, and voxelEmitterColor was calling it from
-     inside the DDA loop. The branching is not the main cost: pulling that tree
-     into the trace loop inflates its register allocation and lowers occupancy
-     for EVERY ray, including the majority that never touch an emitter. The
-     palette is pure constants, so the setup pass (which already uploads the BLAS
-     table and runs once at load) now flattens it into bufferObject.2.
-
-     Flattened translation units shrank by ~276 lines each for the gather, the
-     cache update and d7_composite; setup grew 374, and runs once.
-
- 11. SKY SH. sampleSky_fast is four texelFetches into the atmosphere LUT plus
-     transcendentals, per MISSED RAY, in both the gather and the cache bounce
-     loop. shadowcomp2 now projects the sky onto nine SH coefficients once per
-     frame (bufferObject.3) and each miss becomes ~20 FMAs.
-
-     It also cuts noise: the sky term is a Monte Carlo estimate over few rays,
-     and LUT sampling hands each ray high-frequency detail that is pure variance
-     for a diffuse gather. Verified numerically -- see scripts/verify_sky_sh.py,
-     which mirrors the shader's own basis and sampling. Against a worst-case hard
-     step the cosine-weighted error is +0.0% on floors, -0.7% on walls and +4.3%
-     on ceilings, with 0.000% shift in mean radiance. The clamp to zero in
-     skySHRadiance is load-bearing: negative radiance would be fed back through
-     the surface cache and keep subtracting.
-
-OPTIMISATION PASS 4 -- finishing the hot-loop cleanup, and skipping the gather
-
- 12. EMITTER AABBs BAKED TOO. lightOccluderAabb and lightEmissiveAabb were the
-     same problem as the colour lookup: branch trees over material ids returning
-     constants, inside the DDA loop. They now come from the same SSBO (five vec4
-     arrays, 10240 bytes). The authoring data is renamed ...Ref() and fenced
-     behind EMITTER_PALETTE_BAKE so only s0_shape_table compiles it -- leaving it
-     reachable-but-uncalled would rely on the driver dead-stripping it, and the
-     register allocation this change is about is exactly what should not depend
-     on that. Material-id compares reachable in the gather: 11 -> 0.
-
- 13. CONVERGED PIXELS SKIP THE GATHER. At GI_ACCUM_FRAMES a pixel blends each new
-     estimate at alpha = 1/33, so it is already 97% resampled history and tracing
-     it again moves it almost not at all. Fully converged AND near-static pixels
-     now trace one frame in GI_SKIP_PERIOD.
-
-     Chosen over a checkerboard gather deliberately: it needs no spatial
-     reconstruction, it cannot touch a disoccluded or moving pixel (those never
-     qualify), and the set that skips is hashed per pixel rather than following a
-     pattern. The motion guard is belt-and-braces -- converged pixels resample
-     every frame regardless, so the blur it guards against is inherent to
-     temporal accumulation, not to skipping.
-
-MEASUREMENT NOTE, learned here: measure PREPROCESSED source, not flattened
-source. `glslangValidator -E -S <stage> <flattened>` shows what the compiler
-actually sees. The flattener does not resolve #ifdefs, so it counts text the
-preprocessor discards -- which made pass 4's change first appear to make the
-tracers BIGGER, and made pass 3's palette win read as -276 lines when the real
-figure is -223.
-
-OPTIMISATION PASS 5 -- contact AO, and a small a-trous denoiser
-
- 14. SHORT-RANGE CONTACT AO. Ray occlusion alone barely darkens anything in
-     daylight: a gather ray that hits a nearby block resolves it through the
-     surface cache, which holds direct + albedo*indirect, so a SUNLIT occluder
-     returns roughly what the sky it replaced would have. Geometry blocks the ray
-     without lowering what the ray returns, and corners/creases/seams come back
-     as bright as open ground. Nothing else supplied contact shading either --
+ 10. SHORT-RANGE CONTACT AO. Ray occlusion alone barely darkens anything in
+     daylight -- a ray hitting a nearby block resolves it through the cache,
+     which holds direct + albedo*indirect, so a SUNLIT occluder returns roughly
+     what the sky it replaced would have. Geometry blocks the ray without
+     lowering what the ray returns. Nothing else supplied contact shading either:
      GTAO went in Phase 1 and the d7 seam contract says "AO is NOT pre-applied".
+     Derived from hit distances the gather already has, so no extra rays, and
+     applied BEFORE temporal accumulation so the history denoises it.
+     NOT a normals bug -- that was ruled out first, see below.
 
-     Lumen has the same problem and answers it the same way, with a Short-Range
-     AO on top of the probe gather. This derives it from the hit distances the
-     gather already has (no extra rays) and applies it BEFORE the temporal
-     accumulation, so the existing history denoises it.
+ 11. A-TROUS DENOISER, deliberately small, because the surface cache converges
+     before the gather runs. 3x3 taps per pass, not SVGF's 5x5; no variance
+     buffer, no moment accumulation (history length stands in for variance).
+       GI_DENOISE_QUALITY 0 off / 1 (1,2) / 2 (1,2,4) / 3 (1,2,4,8)
+     ** TRAP A: colortex8 is NEVER written by the denoiser. It is dg0_gather's
+     temporal history; feeding a filtered result back compounds blur every frame
+     with nothing new to anchor it. SVGF does feed its first pass back, but its
+     history is a 1-spp estimate that needs the help. **
+     ** TRAP B: the ladder ping-pongs 8->9->10->9->10 and ENDS on a different
+     buffer for an odd vs even pass count. d7 resolves which at compile time from
+     the same option that gates the passes. Verified at every level:
+     0->ct8, 1->ct10, 2->ct9, 3->ct10. **
 
-     NOT a normals bug -- that was checked end to end first. gbuffers/terrain
-     writes normalize(gl_NormalMatrix * gl_Normal), i.e. view space, encoded
-     *0.5+0.5 into colortex1 via DRAWBUFFERS:0127; dg0_gather decodes *2-1 and
-     applies gbufferModelViewInverse. Correct.
+ 12. LIGHTING_INDIRECT no longer attenuates the traced GI. It scales only the
+     rasterised fills: the analytic lightmap fallback, and shadeDhTerrain's
+     hemisphere ambient. Previously the only way to trim the flat raster ambient
+     was to attenuate the traced result by the same factor.
 
- 15. A-TROUS DENOISER, deliberately small. The undenoised image is already good
-     because the surface cache converges before the gather runs, so this is a
-     short stride ladder rather than the five-pass SVGF chain Phase 1 deleted --
-     no variance buffer, no moment accumulation. 3x3 taps per pass (9), not
-     SVGF's 5x5 (25); four passes at strides 1/2/4/8 reach a 31x31 footprint for
-     36 taps where one 31x31 gather would be 961.
+THINGS RULED OUT BY INSPECTION — do not re-investigate
 
-       GI_DENOISE_QUALITY  0 off / 1 low (1,2) / 2 balanced (1,2,4) / 3 (1,2,4,8)
+  - The gather's NORMALS are correct. gbuffers/terrain writes
+    normalize(gl_NormalMatrix * gl_Normal), i.e. VIEW space, encoded *0.5+0.5
+    into colortex1 via DRAWBUFFERS:0127; dg0_gather decodes *2-1 and applies
+    gbufferModelViewInverse. Checked end to end while chasing "terrain looks
+    flat"; the cause was missing contact occlusion, item 10.
 
-     Edge stopping is normal + depth from colortex15 plus a luma term whose
-     tolerance widens where history is short -- history length standing in for
-     SVGF's variance estimate, using a value the pack already carries rather than
-     another buffer.
+  - historyFixGI already early-outs for converged pixels, and entityBvhClosest
+    already early-outs on an empty tree. Neither is worth optimising.
 
-     THE PASS ORDER MOVED. deferred1/2/3 were d7_composite / d8_fog_sky / d9_vl;
-     they are now deferred5/6/7, with deferred1-4 holding the stride ladder.
-     program.deferred7.enabled carries VOLUMETRIC_LIGHT accordingly.
+REVERTED, BUT THE FINDING STANDS
 
-     Two things to keep right if this is ever touched:
-       - colortex8 is NEVER written by the denoiser. It is dg0_gather's temporal
-         history, and feeding a filtered result back would compound blur every
-         frame with no new information to anchor it. SVGF does feed its first
-         pass back, but its history is a 1-spp estimate that needs the help.
-       - the ladder ping-pongs 8->9->10->9->10, so it ENDS on a different buffer
-         for an odd or even pass count. d7 resolves which at compile time from
-         the same option that gates the passes. Verified mechanically across all
-         four levels: 0->ct8, 1->ct10, 2->ct9, 3->ct10.
-       - RENDERTARGETS is a literal in each of the four wrapper files, never
-         behind an #if. Iris reads it out of the source text exactly as it reads
-         `const ivec3 workGroups`.
+  An emissive-shadow-contrast change was written and then reverted at the
+  author's request. The underlying observation is real and may be wanted later:
 
-NOTE: traceVoxelOccluded now has ZERO callers -- removing the per-face sky probe
-orphaned it. It is kept as the natural any-hit primitive for Phase 3.4, but it
-still carries both the teleport bug and the torch asymmetry. Fix them before
-reusing it.
+    accumEmission in voxelTrace.glsl has NO distance term. A ray that TERMINATES
+    on an emitter is a solid-angle correct sample and needs none -- a far torch
+    subtends a smaller angle and catches fewer rays. But a ray that merely passes
+    through an emitter's flame box picks up its full glow whether the emitter is
+    one block along the ray or forty, and gather rays run to GI_GATHER_DIST.
 
-NEXT WORK, IN ORDER
+    So shaped emitters (torches, lanterns, candles) wash a room evenly, which
+    fills in shadows that the DDA had occluded exactly. Area emitters (glowstone,
+    lava) TERMINATE rays and are unaffected.
 
-  1. Verify in-engine. Nothing in either optimisation pass has been seen
-     running -- the checks below are compile-level only. Debug views to use:
-       5  cache coverage (unchanged meaning)
-       8  feedback coverage: green = brick stamped and refreshing, red = frozen,
-          blue = SURFACE_CACHE_FEEDBACK compiled out
-     Watch for: cave leak (the sky term changed source), a visible warm-up when
-     spinning the camera (raise SC_REQUEST_TTL or SC_NEAR_DIST), and whether
-     SC_FACE_STRIDE 2 is catchable on a fast lighting change.
-  2. Tune. GI_SKY_LEAK_FALLOFF (cave leak), SC_BLEND / SC_UPDATE_STRIDE
-     (convergence vs latency), GI_GATHER_RAYS with GI_ADAPTIVE_FRAMES,
-     GI_STRENGTH. GI_MAX_STEPS is now safe to lower.
-  3. Phase 3.2 world radiance cache. Two jobs: give rays that exhaust
-     GI_GATHER_DIST / SC_BOUNCE_DIST a real far-field answer instead of the
-     current lightmap-gated sky approximation, and replace the hardcoded DH
-     ambient in d7_composite (the GI_FIREFLY_MAX block inside shadeDhTerrain,
-     ~line 262) with a single far-field probe lookup.
-  4. Phase 3.4 reflections on the same stack: sampleGGXVNDF -> voxel trace ->
-     surface cache lookup. colortex7 (PBR material) and the pbrSunVis output on
-     colortex6 were both kept live for this. Free slots: ct4, ct9, ct10, ct11,
-     ct14, and deferred4+.
+    Care if revisiting: a torch lights a room almost entirely via flame
+    pass-through, so scaling that term to 0 removes nearly all torch GI rather
+    than merely hardening its shadows.
 
 KNOWN DEFECTS STILL OPEN
 
   - Torch occlusion asymmetry: traceVoxelCascaded resolves a torch through its
     light shape, traceVoxelOccluded blocks on the whole voxel. Currently moot --
-    traceVoxelOccluded has no callers -- but it will bite Phase 3.4.
+    traceVoxelOccluded has ZERO callers since the per-face sky probe was removed
+    -- but it will bite Phase 3.4. It also still carries the teleport bug, which
+    was only fixed in traceVoxelCascaded.
   - Pre-existing, unrelated: shaders.properties lists SHADOW_BIAS and
     SHADOW_DISTORT_FACTOR in screen.Light but neither has a #define.
 
-REMAINING OPTIMISATION HEADROOM
+IRIS GOTCHAS PAID FOR IN BLOOD — do not relearn these
 
-Everything below is DELIBERATELY NOT DONE. Two of them were dropped after
-reconsidering, and the reasons matter more than the items.
+  1. NO trailing comments on #include lines. Iris takes the rest of the line as
+     the path.
+  2. `const ivec3 workGroups` MUST be literal integers. Iris parses it out of
+     source text and does NOT evaluate GLSL; an expression it cannot fold falls
+     back silently to ONE work group. This cost four wrong diagnoses.
+  3. RENDERTARGETS is read the same way. Keep it a literal, never behind an #if.
+     That is why the denoiser has four one-line wrapper files.
+  4. NO implicit-LOD sampling in compute. texture() needs derivatives; drivers
+     return 0. Use textureLod / texelFetch. This silently zeroed the shadow
+     lookup once. (The atmosphere LUT path is safe -- _bilinearLUT uses
+     texelFetch -- which is why sc2_sky_sh can call sampleSky_fast.)
+  5. shadowcomp runs BEFORE prepare, so colortex12 is one frame stale in both
+     sc1 and sc2. Harmless; the sky changes over minutes.
+  6. VOXEL_CASCADE_SIZE must stay a power of two (128 or 256): the cache indexes
+     itself by worldVoxel & (N-1).
 
-  DROPPED -- slim the hot VoxelHit. category, shapeId, albedo and lightMat are
-  dead at both consumers, so a narrower struct looked like free register
-  pressure. But GLSL drivers inline traceVoxelCascaded unconditionally and then
-  dead-code-eliminate unread struct fields, so the gain is very likely already
-  being had. Duplicating a 100-line DDA to chase an unmeasurable win is a bad
-  trade. Revisit only with a profile that shows occupancy limited in that loop.
+DEBUG VIEWS (GI_DEBUG_VIEW in options.glsl)
+  1 indirect buffer, no albedo     is the gather producing anything?
+  2 temporal history length        blue = fresh, red = converged
+  3 surface cache down primary ray is the CACHE populated?
+  4 same as 3, ignoring the tag    (now shows leftovers in air -- see item 2)
+  5 coverage: green = tag valid, red = tag rejected, black = ray miss
+  6 tag STORED in the slot
+  7 tag the reader EXPECTS         compare against 6
+  8 feedback coverage: green = stamped and refreshing, red = frozen,
+    blue = SURFACE_CACHE_FEEDBACK compiled out
 
-  DROPPED -- R11F_G11F_B10F for the cache. Would take faceRadianceImg from
-  402 MB to ~251 MB and cut its bandwidth 37%. But the feedback gate shrank the
-  update set by more than an order of magnitude, which took cache bandwidth off
-  the list of things that matter; 402 MB is well inside the stated 8 GB budget;
-  and Iris support for that internal format on a custom image is unverified.
-  Cost and risk both now exceed the benefit.
-
-  STILL OPEN, needs profiling first:
-
-  a. Split direct and indirect storage. Lumen keeps separate Direct Lighting,
-     Radiosity and Final Lighting atlases precisely so the cheap high-frequency
-     term and the expensive low-frequency one can run at different rates and
-     resolutions (r.Lumen.Radiosity.DownsampleFactor defaults to 4). Here direct
-     is one shadow-map lookup and indirect is SC_BOUNCE_RAYS DDA walks, but they
-     are summed into one slot so neither can be scheduled independently.
-     SC_FACE_STRIDE is the poor-man's version and needs no extra storage.
-
-  b. Occupancy-only volume for traversal. The DDA's hottest fetch is the full
-     R32UI word, yet the loop only needs one bit; the fat word is only needed AT
-     the hit. R8UI would be 33.5 MB, a packed bitmask 4.2 MB and L2-resident.
-     Estimate revised DOWN since first writing this: the brick/super-brick
-     skipping already handles the long walks through open air, so the remaining
-     steps are near geometry and about to hit anyway. It also costs an image
-     uniform in the shadow fragment stage, which is near its budget of 16.
-
-  c. Gather at half resolution with a bilateral upsample -- 4x fewer rays, and
-     the gather's output is inherently low-frequency because the cache is smooth
-     at voxel granularity. Not done because it touches the renderScale and
-     jitter conventions that this pack has repeatedly broken silently on, and
-     the adaptive budget (item 9) already bought most of the headroom.
-
-  d. Screen probes on a 16x16 grid -- Lumen's actual final gather, and the
-     structural fix that (c) approximates. A whole new pass; only worth it once
-     a profile shows the gather dominating.
-
-  e. voxelImg is clear=true, so 134 MB is cleared and fully re-rasterised every
-     frame -- roughly 0.33 ms on a 400 GB/s part. Avoiding it needs toroidal
-     addressing for the GRID plus explicit invalidation on block changes, which
-     is the same trick the cache uses but with much worse failure modes.
+Views 5 and 8 are the ones that find dispatch and addressing bugs. Reach for
+them before reasoning about screenshots -- three of the four bugs in Phase 3.1
+were misdiagnosed by inference first.
 
 VERIFICATION HARNESS
 
-scripts/validate_shaders.py. Flattens every world0 entry point and runs
-glslangValidator over it; exits non-zero on anything failing outside its
-known-failures list. 50 of 55 programs compile clean; the 5 known failures are
-Distant Horizons programs referencing uniforms Iris injects that have no source
-declaration.
+  scripts/validate_shaders.py   flattens every world0 entry point and runs
+    glslangValidator. Exits non-zero on anything failing outside its known list.
+    59/64 clean; the 5 known failures are Distant Horizons programs referencing
+    Iris-injected uniforms with no source declaration.
 
-Three things it has to emulate, all learned the hard way — do not "simplify"
-them away:
+  scripts/verify_sky_sh.py      numerically checks the SH projection against the
+    shader's own basis and sampling.
 
-  1. Reject #include lines with trailing content exactly as Iris does. Iris
-     takes the rest of the line as part of the path.
-  2. Resolve #ifdef VERTEX / #ifdef FRAGMENT for the target cycle BEFORE
-     deduping includes. Iris compiles each stage separately, so a header pulled
-     in under #ifdef VERTEX must still reach the fragment cycle. A global dedupe
-     without this drops /lib/options.glsl from the fragment cycle of every
-     program whose vertex branch included it first, which surfaces as undeclared
-     identifiers nowhere near the cause. (The first version of this harness had
-     exactly that bug and reported 41/55 as a result.)
-  3. Rename the pack's `uniform sampler2D texture`, which shadows the GLSL
-     built-in. Iris renames it at load; glslang aborts at the first sample and
-     hides the entire rest of the program behind one error.
+  Three things the shader harness must keep doing:
+    1. reject #include lines with trailing content, exactly as Iris does;
+    2. resolve #ifdef VERTEX / FRAGMENT for the target cycle BEFORE deduping
+       includes -- a global dedupe drops /lib/options.glsl from the fragment
+       cycle of every program whose vertex branch included it first, and reports
+       it as undeclared identifiers nowhere near the cause (this bug made the
+       harness report 41/55 before it was found);
+    3. rename the pack's `uniform sampler2D texture`, which shadows the GLSL
+       built-in and makes glslang abort at the first sample.
+
+  MEASURE PREPROCESSED SOURCE, not flattened source:
+    glslangValidator -E -S <stage> <flattened>
+  The flattener does not resolve #ifdefs, so it counts text the compiler
+  discards. That made the emitter-AABB change first appear to make the tracers
+  BIGGER, and made the palette win read as -276 lines when the real figure is
+  -223.
+
+NEXT WORK, IN ORDER
+
+  1. Verify the seven unconfirmed commits in-engine, appearance ones first:
+     contact AO, denoiser, sky SH, LIGHTING_INDIRECT. Debug views 1, 5 and 8.
+  2. Tune: GI_AO_STRENGTH / GI_AO_RADIUS (contact shading),
+     GI_DN_SIGMA_* (denoiser edge stopping), GI_SKY_BRIGHTNESS vs GI_STRENGTH
+     (sky wash vs coloured bounce), GI_SKIP_PERIOD, GI_MAX_STEPS.
+  3. Phase 3.2 world radiance cache. Two jobs: give rays that exhaust
+     GI_GATHER_DIST / SC_BOUNCE_DIST a real far-field answer, and replace the
+     hardcoded DH ambient in shadeDhTerrain with a far-field probe lookup.
+     ** Consider extending faceRadianceImg to coarser cascades INSTEAD of a
+     separate probe grid. Old Lumen used exactly this: a 4-cascade voxel
+     clipmap storing radiance in 6 directions, which is the structure already
+     here. It would also unblock cone-stepping (below). Cost: cascade 0 is
+     402 MB, so 2 cascades ~804 MB. R11F_G11F_B10F becomes worth revisiting at
+     that size -- it was dropped earlier only because bandwidth stopped
+     mattering at one cascade. **
+  4. Phase 3.4 reflections on the same stack: sampleGGXVNDF -> voxel trace ->
+     surface cache lookup. colortex7 and the pbrSunVis output on colortex6 were
+     both kept live for this. Free slots: ct4, ct11, ct14.
+
+REMAINING OPTIMISATION HEADROOM
+
+  Ranked, all needing a profile rather than more guessing.
+
+  a. CONE-STEPPING ACROSS CASCADES. The biggest single ray-cost win left. Lumen's
+     software tracer widens the cone with distance and samples coarser SDF mips;
+     the voxel analogue is to promote k by distance travelled, not only on
+     leaving a cascade. A 48-block gather ray currently walks cascade 0 at one
+     block per step for up to 83 steps; promoting to cascade 1 after ~16 blocks
+     and cascade 2 after ~48 gets it to roughly 32.
+     BLOCKED on the surface cache covering coarser cascades -- see item 3 above.
+     (This already bites today: a ray starting near the cascade-0 edge can cross
+     out and scLookup silently returns black.)
+
+  b. IMPORTANCE SAMPLING from the cache. Lumen builds a per-probe PDF from the
+     previous frame's radiance and inverse-CDF samples it. A coarse luminance
+     volume over cascade 0, MIS-weighted against the cosine lobe, would be a
+     large variance win in torch- and lava-lit interiors, which is where a
+     two-ray gather looks worst.
+
+  c. NRD-STYLE FAST HISTORY (anti-lag). Keep a short-window history alongside the
+     long one and snap toward it when they diverge. GI_ACCUM_FRAMES is 32, so a
+     light turning on takes ~32 frames to appear. Quality, not speed.
+
+  d. SPLIT DIRECT AND INDIRECT CACHE STORAGE. Lumen keeps separate Direct,
+     Radiosity and Final Lighting atlases so the cheap high-frequency term and
+     the expensive low-frequency one can run at different rates and resolutions.
+     Here direct is one shadow lookup and indirect is SC_BOUNCE_RAYS DDA walks,
+     but they are summed into one slot so neither can be scheduled independently.
+     SC_FACE_STRIDE is the poor-man's version and needs no extra storage.
+
+  e. OCCUPANCY-ONLY VOLUME FOR TRAVERSAL. The DDA's hottest fetch is the full
+     R32UI word; the loop needs one bit and the fat word only AT the hit. R8UI
+     would be 33.5 MB, a packed bitmask 4.2 MB and L2-resident. Estimate revised
+     DOWN: brick skipping already handles the long walks through open air, so the
+     remaining steps are near geometry and about to hit anyway. Also costs an
+     image uniform in the shadow fragment stage, which is near its budget of 16.
+
+  f. HALF-RESOLUTION GATHER with bilateral upsample. Not done because it touches
+     the renderScale and jitter conventions this pack has repeatedly broken
+     silently on, and the adaptive budget already bought most of the headroom.
+
+  g. SCREEN PROBES on a 16x16 grid -- Lumen's actual final gather, and the
+     structural fix that (f) approximates. Only once a profile shows the gather
+     dominating.
+
+  h. voxelImg is clear=true, so 134 MB is cleared and re-rasterised every frame,
+     roughly 0.33 ms on a 400 GB/s part. Avoiding it needs toroidal addressing
+     for the GRID plus explicit invalidation on block changes -- the same trick
+     the cache uses, but with much worse failure modes.
+
+  DROPPED after reconsidering, with reasons:
+    - Slimming the hot VoxelHit. category/shapeId/albedo/lightMat are dead at
+      both consumers, but drivers inline traceVoxelCascaded and DCE unread struct
+      fields, so the gain is very likely already had. Duplicating a 100-line DDA
+      to chase an unmeasurable win is a bad trade.
+    - R11F_G11F_B10F for a ONE-cascade cache. The feedback gate shrank the update
+      set by more than an order of magnitude, taking cache bandwidth off the
+      critical path; 402 MB is inside the stated budget; and Iris support for the
+      format on a custom image is unverified. Revisit only for a multi-cascade
+      cache (item 3).
