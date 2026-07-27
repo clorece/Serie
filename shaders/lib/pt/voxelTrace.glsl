@@ -17,7 +17,7 @@
 #include "/lib/pt/voxelCascade.glsl"
 #include "/lib/pt/blas.glsl"
 #include "/lib/pt/lightShapes.glsl"
-#include "/lib/blocklightColors.glsl"
+#include "/lib/pt/emitterPalette.glsl"
 #include "/lib/pt/entityBvh.glsl"
 
 struct VoxelHit {
@@ -50,10 +50,13 @@ VoxelHit voxelHitMiss(vec3 worldPos, vec3 rayDir) {
 }
 
 // Radiance an emitter voxel contributes. Emitters store their material rather
-// than an albedo, and take their colour from the blocklight palette.
+// than an albedo, and take their colour from the blocklight palette -- read here
+// as a flat table lookup rather than by re-walking the ~160-line branch tree
+// that builds it. See lib/pt/emitterPalette.glsl for why that matters inside
+// this loop specifically.
 vec3 voxelEmitterColor(uint w) {
     return (voxelCategory(w) == VOXEL_LIGHT)
-         ? GetSpecialBlocklightColor(int(voxelLightMat(w))).rgb
+         ? emitterColor(voxelLightMat(w))
          : voxelAlbedo(w);
 }
 

@@ -1,19 +1,34 @@
-// Uploads the generated block-shape table into the BLAS SSBO.
+// Uploads the static lookup tables the tracer needs into their SSBOs.
 //
 // Runs once, when the pack loads: Iris setup programs execute a single time at
-// pipeline creation and the buffer object persists until the next reload. That
-// keeps the bulky const arrays out of every hot trace shader -- only this
-// throwaway compute pass ever sees shapeTable.glsl; the tracing passes just
-// read the SSBO.
+// pipeline creation and the buffer objects persist until the next reload. That
+// keeps bulky constant data out of every hot trace shader -- only this
+// throwaway compute pass ever sees shapeTable.glsl or the blocklight palette;
+// the tracing passes just read the SSBOs.
+//
+// Two tables:
+//   binding 0  block-shape BLAS (lookup + packed AABBs)
+//   binding 2  special-blocklight emitter palette
+//
+// Both are pure constants, so "once at load" is the correct cadence -- and a
+// pack reload is also the only way their source can change.
 
 #include "/lib/pt/blas.glsl"
 #include "/lib/pt/shapeTable.glsl"
+#include "/lib/pt/emitterPalette.glsl"
+#include "/lib/blocklightColors.glsl"
 
 layout(local_size_x = 64) in;
 const ivec3 workGroups = ivec3(128, 1, 1); // 8192 invocations >= lookup + box words
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
+
+    // Flatten the emitter branch tree into a flat indexed table. This is the
+    // only place GetSpecialBlocklightColor is evaluated for the tracer.
+    if (i < uint(EMITTER_PALETTE_SIZE)) {
+        emitterPalette.color[i] = GetSpecialBlocklightColor(int(i));
+    }
 
     // Lookup table: one entry per shape, plus index 0 for the full cube.
     if (i < uint(SHAPE_LOOKUP.length())) {

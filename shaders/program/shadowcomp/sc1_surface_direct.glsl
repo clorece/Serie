@@ -46,7 +46,7 @@
 //   util/common      isInShadow
 //   pt/sampling      buildTBN, cosHemisphereDir
 //   fragment/sky     sampleSky_fast
-//   blocklightColors GetSpecialBlocklightColor
+//   pt/emitterPalette  emitterColor (via voxelTrace)
 #include "/lib/options.glsl"
 
 // Feedback: this pass READS the request volume as its main gate, and stamps it
@@ -68,7 +68,6 @@
 #include "/lib/pt/sampling.glsl"
 #include "/lib/pt/voxelTrace.glsl"
 #include "/lib/fragment/sky.glsl"
-#include "/lib/blocklightColors.glsl"
 
 // GRID-STRIDE dispatch, deliberately.
 //
@@ -217,7 +216,7 @@ void updateVoxel(uint idx) {
     // Self-emission is a property of the block, not of any one face.
     vec3 emission = vec3(0.0);
     if (cat == VOXEL_LIGHT) {
-        emission = GetSpecialBlocklightColor(int(voxelLightMat(w))).rgb * float(GI_EMISSION);
+        emission = emitterColor(voxelLightMat(w)) * float(GI_EMISSION);
     } else if (cat == VOXEL_EMISSIVE) {
         emission = albedo * float(GI_EMISSION) * SC_EMISSIVE_BOOST;
     }

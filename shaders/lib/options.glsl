@@ -171,7 +171,7 @@ const float renderScale = RENDER_SCALE;
 //#define VIGNETTE
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
-#define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150]
+#define LIGHTING_INDIRECT 50  // [25 40 55 70 85 100 125 150]
 
 //#define WIND_MOVEMENT // WIP
 
@@ -285,8 +285,8 @@ const float renderScale = RENDER_SCALE;
 // For reference a ray takes up to ~1.73 steps per block, so covering
 // GI_GATHER_DIST 48 needs ~83 steps.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] steps per cascade before a ray gives up
-#define GI_STRENGTH 50 // [25 50 75 100 150 200]
-#define GI_SKY_BRIGHTNESS 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
+#define GI_STRENGTH 100 // [25 50 75 100 150 200]
+#define GI_SKY_BRIGHTNESS 0.2 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_EMISSION 0.5   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
 // Write the 10-bit model-derived shape id into the voxel word. Leave this ON.
