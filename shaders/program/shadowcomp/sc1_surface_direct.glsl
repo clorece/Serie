@@ -30,18 +30,26 @@
 // second full dispatch and a read-after-write hazard between passes for no
 // accuracy gain.
 
-#define SC_IMAGE   // this pass reads AND writes the cache; see surfaceCache.glsl
+// This pass reads AND writes the cache; see surfaceCache.glsl.
+#define SC_IMAGE
 
+// NOTE: no trailing comments on #include lines anywhere in this pack. Iris takes
+// the entire rest of the line as the path, so "#include "/x.glsl" // why" fails
+// to resolve at pack load. What each include is for:
+//   util/common      isInShadow
+//   pt/sampling      buildTBN, cosHemisphereDir
+//   fragment/sky     sampleSky_fast
+//   blocklightColors GetSpecialBlocklightColor
 #include "/lib/options.glsl"
-#include "/lib/util/common.glsl"        // isInShadow
+#include "/lib/util/common.glsl"
 #include "/lib/pt/surfaceCache.glsl"
 #include "/lib/pt/voxelFormat.glsl"
 #include "/lib/pt/directLight.glsl"
 #include "/lib/pt/rand.glsl"
-#include "/lib/pt/sampling.glsl"        // buildTBN, cosHemisphereDir
+#include "/lib/pt/sampling.glsl"
 #include "/lib/pt/voxelTrace.glsl"
-#include "/lib/fragment/sky.glsl"       // sampleSky_fast
-#include "/lib/blocklightColors.glsl"   // GetSpecialBlocklightColor
+#include "/lib/fragment/sky.glsl"
+#include "/lib/blocklightColors.glsl"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 const ivec3 workGroups = ivec3(SC_XZ / 8, SC_Y / 8, SC_XZ / SC_UPDATE_STRIDE);

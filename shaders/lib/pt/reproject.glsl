@@ -14,9 +14,11 @@
 #define FRAME_COUNTER_DECLARE
 #endif
 
-#include "/lib/util/common.glsl"   // texelSize, octDecodeNormal, far
+// texelSize, octDecodeNormal, far
+#include "/lib/util/common.glsl"
 #include "/lib/options.glsl"
-#include "/lib/pt/sampling.glsl"   // luma
+// luma
+#include "/lib/pt/sampling.glsl"
 
 // ---- History colour clamp --------------------------------------------------
 

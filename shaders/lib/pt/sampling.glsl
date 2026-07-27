@@ -7,7 +7,8 @@
 // survive the deletion of those passes. Geometry-agnostic: nothing here knows
 // about screen space, the voxel cascade, or any particular colortex.
 
-#include "/lib/options.glsl"   // PI
+// PI
+#include "/lib/options.glsl"
 
 #ifndef LUMA_FN
 #define LUMA_FN
