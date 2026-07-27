@@ -3,7 +3,7 @@
 // Runs once, when the pack loads: Iris setup programs execute a single time at
 // pipeline creation and the buffer object persists until the next reload. That
 // keeps the bulky const arrays out of every hot trace shader -- only this
-// throwaway compute pass ever sees shapeTable.glsl; d0_restir and friends just
+// throwaway compute pass ever sees shapeTable.glsl; the tracing passes just
 // read the SSBO.
 
 #include "/lib/pt/blas.glsl"

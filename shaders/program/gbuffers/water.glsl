@@ -8,7 +8,7 @@
 //
 // Water (block id 10006) stores its view-space wave normal in colortex1.rgb and a
 // water flag in colortex2.b (= 1.0). colortex2 is the lightmap buffer, but it is
-// only read by the deferred chain (d0_restir / d7), which runs BEFORE this pass, so
+// only read by the deferred chain (d7_composite), which runs BEFORE this pass, so
 // it is free to repurpose afterward. The flag is used instead of colortex1.a + a
 // depth test because (a) emissive blocks also carry colortex1.a=1.0 and (b) this
 // pack's depthtex1 doesn't separate translucents, so a depth test can't isolate

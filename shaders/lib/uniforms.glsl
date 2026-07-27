@@ -77,6 +77,6 @@ uniform usampler3D superBrickSampler; // 64³-block occupancy (8×2×8), written
 // include this file before the program pulls in options.glsl, so any #ifdef on an
 // options macro is evaluated before the macro exists, and the include guard then
 // blocks the re-include. The unconditional samplers above are fine; blueNoise
-// (RESTIR_BLUE_NOISE) is declared in lib/pt/restir.glsl, next to its use.
+// (GI_BLUE_NOISE) is declared in lib/pt/sampling.glsl, next to its use.
 
 #endif // UNIFORMS_GLSL_INCLUDED

@@ -1,7 +1,10 @@
 // d7_composite : final scene lighting
 // Combines raw albedo (colortex0, untouched since the gbuffers) with direct
-// sunlight (shadows + contact shadows) and the denoised indirect term
-// (colortex6, produced by d0_restir -> d1..d6 denoise). Writes colortex0.
+// sunlight (shadows + contact shadows) and an indirect term. The indirect term
+// is the integration seam for the Lumen stack -- see the "Indirect" block below
+// for the contract it must satisfy; until Phase 3 lands the GI buffer it falls
+// back to the analytic lightmap ambient.
+// Writes colortex0 (lit HDR scene) and colortex6 (pbrSunVis).
 // Sky pixels are left as-is here and replaced by d8_fog_sky.
 
 #ifdef VERTEX
@@ -252,8 +255,8 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
         ambient = mix(ambient, ambient * normLightCol, 0.10);
 
         float ambientLuma = dot(ambient, vec3(0.2126, 0.7152, 0.0722));
-        if (GID_FIREFLY_MAX < 1000.0 && ambientLuma > GID_FIREFLY_MAX) {
-            ambient *= GID_FIREFLY_MAX / ambientLuma;
+        if (GI_FIREFLY_MAX < 1000.0 && ambientLuma > GI_FIREFLY_MAX) {
+            ambient *= GI_FIREFLY_MAX / ambientLuma;
         }
     #endif
 
@@ -354,37 +357,6 @@ void main() {
     }
     #endif
 
-    #ifdef SSPT_DEBUG
-        if (depth0 < 1.0) {
-            vec3 viewPos = convertScreenSpaceToWorldSpace(unjitteredTexCoord, depth0); // view space
-            vec3 originV = viewPos + normal * 0.15;                 // colortex1 is view normals
-            vec2 cj      = texCoord - unjitteredTexCoord;           // TAA jitter (buffer = geom + cj)
-            uint seed    = pixelSeed(ivec2(gl_FragCoord.xy), frameCounter);
-
-            vec3  acc  = vec3(0.0);
-            float hits = 0.0;
-            for (int i = 0; i < SSPT_DEBUG_SAMPLES; i++) {
-                vec3 dir = sspt_dbgHemisphere(normal, randFloat(seed), randFloat(seed));
-                vec2 uvh; float rawh;
-                if (traceScreenSpace(depthtex0, gbufferProjection, originV, dir,
-                                     float(SSPT_DIST), SSPT_STEPS, SSPT_THICKNESS,
-                                     randFloat(seed), cj, uvh, rawh)) {
-                    acc += texture(colortex5, uvh + cj).rgb;
-                    hits += 1.0;
-                }
-            }
-            float frac = hits / float(SSPT_DEBUG_SAMPLES);
-            #if SSPT_DEBUG == 1
-                gl_FragData[0] = vec4(1.0 - frac, frac, 0.0, 1.0);     // red=miss, green=hit
-            #else
-                gl_FragData[0] = vec4(acc / float(SSPT_DEBUG_SAMPLES), 1.0);
-            #endif
-        } else {
-            gl_FragData[0] = vec4(0.0, 0.0, 0.0, 1.0);
-        }
-        return;
-    #endif
-
     float diffuse = getNdotL(normal, lightVector);
     float skyOcc = sqrt(lightmap.y);
     
@@ -421,79 +393,26 @@ void main() {
         direct += sssLight * lightmap.y * 2.5;
     }
 
-    float aoTerm = 1.0;
-    #ifdef AO_GTAO
-        if (depth0 < 1.0) {
-            aoTerm = texture(colortex9, unjitteredTexCoord * renderScale).a; // GI buffers are jitter-free: sample at this surface's logical uv
-        }
-    #endif
-
-    vec3 indirect;
-    #if defined(VOXEL_GI)
-        // Per-pixel ReSTIR GI. With the denoiser on, the a-trous chain lands the
-        // filtered result on colortex3; with it off, read the raw temporally-
-        // accumulated GI from colortex8 (d0_accum). Both buffers are jitter-free,
-        // so sample at the surface's logical uv.
-        #ifdef GI_DENOISE
-            vec3 gi = texture(colortex3, unjitteredTexCoord * renderScale).rgb;
-        #else
-            vec3 gi = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
-        #endif
-        #ifdef AO_GTAO
-            #ifdef LIGHTING_AO_FULL
-                gi *= aoTerm;
-            #else
-                gi *= mix(1.0, aoTerm, float(AO_GI_STRENGTH) / 100.0);
-            #endif
-        #endif
-
-        float rasterAmbientFloor = float(PT_RASTER_AMBIENT_FLOOR) * 0.001;
-        if (rasterAmbientFloor > 0.0) {
-            float giLuma = dot(gi, vec3(0.2126, 0.7152, 0.0722));
-            float floorMask = 1.0 - smoothstep(rasterAmbientFloor, rasterAmbientFloor * 4.0, giLuma);
-            gi = max(gi, vec3(rasterAmbientFloor * floorMask));
-        }
-
-        // prevent skylight illumination from the path tracer from illuminating sunlit terrain, but ensure that path-traced emissives (blocklight, warm bounces) ignore this restriction.
-        float skyRatio = 0.22 / 0.4;
-        float emissiveWeight = clamp((gi.r - gi.b * skyRatio) / max(gi.r, 1e-5), 0.0, 1.0);
-        emissiveWeight = max(emissiveWeight, clamp(lightmap.x * 4.0, 0.0, 1.0));
-
-        vec3 giSkyComponent = gi * (1.0 - emissiveWeight);
-        vec3 giEmissiveComponent = gi * emissiveWeight;
-
-        giSkyComponent *= vec3(1.0) - (directShadow * max(dot(normal, lightVector), 0.0));
-        gi = giSkyComponent + giEmissiveComponent;
-
-        indirect = gi;
-    #elif defined(AO_GTAO)
-        indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoTerm;
-    #elif defined(VOXEL_AO)
-        float ao = texture(colortex8, unjitteredTexCoord * renderScale).r; // voxel AO resolved into colortex8 (jitter-free)
-        float aoFactor = mix(1.0, ao, float(AO_STRENGTH) / 100.0);
-        indirect = (getLightmap(lightmap) + vec3(ambientStrength)) * aoFactor;
-    #else
-        indirect = getLightmap(lightmap) + vec3(ambientStrength);
-    #endif
-
-    #if defined(AO_GTAO) && (AO_DIRECT_STRENGTH > 0)
-        direct *= mix(1.0, aoTerm, float(AO_DIRECT_STRENGTH) / 100.0);
-    #endif
-
-    #if PT_LIGHT_DEBUG > 0
-        if (depth0 < 1.0) {
-            #if PT_LIGHT_DEBUG == 1
-                gl_FragData[0] = vec4(vec3(aoTerm), 1.0);
-            #elif PT_LIGHT_DEBUG == 2
-                gl_FragData[0] = vec4(indirect, 1.0);
-            #elif PT_LIGHT_DEBUG == 3
-                gl_FragData[0] = vec4(directShadow, 1.0);
-            #else
-                gl_FragData[0] = vec4(color, 1.0);
-            #endif
-            return;
-        }
-    #endif
+    // ---- Indirect ----------------------------------------------------------
+    // THE integration seam for the Lumen stack. Phase 3 lands a screen-probe
+    // final gather in a dedicated GI buffer and Phase 4 swaps the analytic
+    // fallback below for a single read of it. The contract that read must honour:
+    //   1. albedo-demodulated  -- incident light only; the composite below
+    //      multiplies by albedoRaw.
+    //   2. irradiance / PI     -- the composite does albedo * indirect, not
+    //      albedo/PI * indirect, so the Lambert 1/PI is folded into the buffer.
+    //   3. no NdotL applied here; the cosine lives in the sampling distribution.
+    //   4. GI_STRENGTH and firefly clamps pre-applied by the producer;
+    //      LIGHTING_INDIRECT is applied here, just below.
+    //   5. AO is NOT pre-applied.
+    //   6. linear HDR, unbounded; sampled at the logical, un-jittered uv:
+    //      texture(buf, unjitteredTexCoord * renderScale).
+    //   7. diffuse only -- no emission (added separately below), no specular.
+    //
+    // Until then: the analytic lightmap ambient, i.e. the pre-path-tracer
+    // fallback. The ReSTIR GI, GTAO and voxel-AO branches that used to select
+    // between colortex3 / colortex8 / colortex9 here died with those passes.
+    vec3 indirect = getLightmap(lightmap) + vec3(ambientStrength);
 
     direct   *= float(LIGHTING_DIRECT)   / 100.0;
     indirect *= float(LIGHTING_INDIRECT) / 100.0;
@@ -554,30 +473,19 @@ void main() {
     }
     #endif
 
-    // Sun visibility for the PBR reflection passes (d7b/d7c): the SAME filtered
-    // PCSS + screen-space contact + cloud shadow that gates the diffuse sun, times
-    // sky access (skyOcc). The reflection passes multiply the sun glint and dim the
-    // reflections by this, so PBR is shadowed/darkened exactly like the rest of the
-    // surface instead of revealing the raw shadow map or shining in caves.
+    // Sun visibility for the reflection passes: the SAME filtered PCSS +
+    // screen-space contact + cloud shadow that gates the diffuse sun, times sky
+    // access (skyOcc). A reflection pass multiplies the sun glint and dims the
+    // reflections by this, so PBR is shadowed/darkened exactly like the rest of
+    // the surface instead of revealing the raw shadow map or shining in caves.
+    // Kept live with no consumer: the screen-space reflection passes (d7b/d7c)
+    // are gone and Phase 3.4 rebuilds reflections on the Lumen tracing stack.
     float pbrSunVis = clamp(dot(directShadow, vec3(0.2126, 0.7152, 0.0722))
                           * cloudShadow * skyOcc * (1.0 - rainStrength * 0.75), 0.0, 1.0);
     gl_FragData[1] = vec4(pbrSunVis, 0.0, 0.0, 1.0);
 
-    #if defined(GI_DEBUG_VIEW)
-        // Raw resolved per-pixel GI buffer (no albedo): the denoised result on
-        // colortex3 when GI_DENOISE is on, otherwise the raw temporally-accumulated
-        // GI on colortex8. Jitter-free, so sample at the surface's logical uv.
-        #ifdef GI_DENOISE
-            vec3 debugIllum = texture(colortex3, unjitteredTexCoord * renderScale).rgb;
-        #else
-            vec3 debugIllum = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
-        #endif
-        /* RENDERTARGETS: 0,6 */
-        gl_FragData[0] = vec4(debugIllum, 1.0);
-    #else
-        /* RENDERTARGETS: 0,6 */
-        gl_FragData[0] = vec4(color, 1.0);
-    #endif
+    /* RENDERTARGETS: 0,6 */
+    gl_FragData[0] = vec4(color, 1.0);
 }
 
 #endif

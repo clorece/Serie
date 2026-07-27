@@ -59,7 +59,7 @@ float varFromMoments(float m1, float m2) {
 // most sensitive to residual/checker noise.
 float svgfVarianceFloor(float centerLuma) {
     float lowLightBoost = mix(3.0, 1.0, smoothstep(0.02, 0.18, abs(centerLuma)));
-    float sigma = max(abs(centerLuma) * SVGF_MIN_LUMA_SIGMA * lowLightBoost, 0.006);
+    float sigma = max(abs(centerLuma) * GI_MIN_LUMA_SIGMA * lowLightBoost, 0.006);
     return sigma * sigma;
 }
 

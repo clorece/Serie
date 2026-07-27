@@ -81,7 +81,7 @@ const float renderScale = RENDER_SCALE;
 // Ozone concentration peak (scaled by 1e-6, default: 8e-6)
 #define OZONE_PEAK 8.0 // [0.0 2.0 4.0 6.0 8.0 10.0 12.0 15.0 20.0] Peak ozone concentration
 
-#define CLOUDS
+//#define CLOUDS
 #define CLOUDS_COVERAGE 0.80          // [0.20 0.30 0.40 0.45 0.50 0.55 0.60 0.65 0.70 75 0.80 0.90] global cumulus coverage (0 = clear sky, 1 = overcast)
 #define CLOUDS_ALTITUDE_MULTIPLIER 0.75 // [0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00 2.50 3.00] Multiplier for how high in the air clouds render
 #define CLOUDS_HEIGHT_MULTIPLIER 0.35 // [0.1 0.15 0.2 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95 1.0 1.05 1.10 1.15 1.20 1.25 1.30 1.50 1.75 2.00] Multiplier for the cloud layer's vertical thickness
@@ -103,7 +103,7 @@ const float renderScale = RENDER_SCALE;
 #define CLOUDS_MIN_TRANSMITTANCE 0.01 // [0.001 0.005 0.01 0.02 0.05] early-out when accumulated transmittance falls below this
 #define CLOUDS_DEBUG 0
 
-#define CLOUDS_ALTO
+//#define CLOUDS_ALTO
 #define CLOUDS_ALTO_ALTITUDE 2000.0   // [2000.0 3000.0 4000.0 5000.0 6000.0 6200.0 7000.0 8000.0 9000.0] shell base altitude (m above surface). The cumulus layer always composites over (occludes) the altocumulus regardless of this.
 #define CLOUDS_ALTO_THICKNESS 200.0   // [200.0 300.0 400.0 500.0 700.0 1000.0] shell vertical thickness (m) — altocumulus is a thin layer
 #define CLOUDS_ALTO_MAP_COVERAGE 0.5 // [0.0 0.1 0.2 0.3 0.4 0.5 0.55 0.6 0.7 0.8 0.9 1.0] CLOUD MAP coverage — how much of the SKY the altocumulus fills (low = isolated patches in lots of clear sky, high = near-overcast). Macro placement.
@@ -172,8 +172,6 @@ const float renderScale = RENDER_SCALE;
 
 #define LIGHTING_DIRECT 200   // [50 75 100 110 125 150 200]
 #define LIGHTING_INDIRECT 100  // [25 40 55 70 85 100 125 150]
-#define PT_RASTER_AMBIENT_FLOOR 0 // [0 5 10 15 20 35 50] neutral indirect-light floor for path-traced GI. Fades out where real PT energy exists; does not inject sky or block lightmap color.
-//#define LIGHTING_AO_FULL
 
 //#define WIND_MOVEMENT // WIP
 
@@ -225,7 +223,7 @@ const float renderScale = RENDER_SCALE;
 #define WATER_SCATTER_B 0.060 // [0.0 0.03 0.045 0.060 0.08 0.11 0.15]
 
 //#define INTEGRATED_PBR        // write per-block-ID material to colortex7
-#define SPECULAR_REFLECTIONS  // opaque reflection pass (gates d7b_reflections)
+#define SPECULAR_REFLECTIONS  // opaque reflection pass. Its screen-space implementation (d7b/d7c) was removed in Phase 1; Phase 3.4 rebuilds it on the Lumen tracing stack.
 
 #define METAL_SMOOTHNESS 0.9          // [0.40 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90] center smoothness of metals
 #define METAL_ROUGHNESS_VARIATION 1.0 // [0.0 0.1 0.2 0.3 0.4 0.45 0.5 0.6 0.7 0.8] how much per-texel roughness varies with the texture's brightness (0 = uniform, high = bright spots mirror / dark spots rough)
@@ -233,26 +231,16 @@ const float renderScale = RENDER_SCALE;
 #define PBR_NORMAL_STRENGTH 0.6        // [0.1 0.2 0.3 0.4 0.5 0.6 0.8 1.0 1.5 2.0] bump strength (higher = more relief / wavier reflections)
 #define PBR_DIELECTRIC_NORMAL 2.0      // [1.0 1.25 1.5 1.75 2.0 2.5 3.0 4.0] extra bump-normal strength for NON-metals (stone/wood/etc.), on top of PBR_NORMAL_STRENGTH
 
-#define REFLECTION_RAYS 1          // [1 2 3 4 6 8] VNDF rays per pixel (rough reflections scatter these; more = cleaner, costs more)
-#define REFLECTION_STEPS 32        // [12 16 20 24 32 48 64] SSR march steps per ray
-#define REFLECTION_REFINE_STEPS 4  // [0 2 4 6 8] binary-search refinement steps after a hit
-#define REFLECTION_SMOOTHNESS_MIN 0.04 // [0.0 0.02 0.04 0.08 0.12 0.18 0.25 0.35] reflection cutoff / PERF knob: pixels below this smoothness skip the pass. 0.04 = full parity (even dirt/wool reflect faintly); ~0.25 skips the matte families (dirt/wood/wool/rough-stone) for performance
 #define REFLECTION_SKY_FADE 12.0   // [4.0 6.0 8.0 10.0 12.0 16.0 20.0] skylight power for the sky-reflection gate (higher = indoor blocks stop reflecting sky)
 #define REFLECTION_SKY_STRENGTH 0.5 // [0.0 0.2 0.3 0.4 0.5 0.6 0.7 0.8 1.0] brightness of the environment SKY reflection on PBR blocks (lower = less flat sky wash; SSR scene hits + sun glint unaffected)
 #define SPECULAR_SUN 1              // [0 1] direct GGX sun/moon specular highlight (glint) on PBR blocks
 #define SPECULAR_SUN_STRENGTH 1.0   // [0.0 0.25 0.5 0.75 1.0 1.5 2.0 3.0 4.0] brightness of the sun/moon glint
-#define PBR_REFLECT_SHADE 0.5       // [0.0 0.25 0.35 0.5 0.65 0.8 1.0] dim PBR reflections + sun glint in shadow / low sky-access (caves), using the real filtered+contact sun visibility from d7_composite. 0 = reflections ignore shading (physically pure, but shines in dark areas); 1 = reflections fully gated by sun visibility
 #define PBR_DIELECTRIC_REFLECT 0.1 // [0.0 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] non-metal SKY reflection strength only (scene reflection is F0-driven per class)
 #define PBR_DIELECTRIC_SUN 1.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
-#define REFLECTION_DENOISE         // temporal accumulation of the reflection across frames (colortex4) — removes the stochastic ray noise
-#define REFLECTION_ACCUM_FRAMES 48 // [4 8 12 16 24 32 48] frames blended by the reflection temporal filter (higher = cleaner but more ghosting on motion)
-#define REFLECTION_FIREFLY_CLAMP 24.0 // [2.0 4.0 6.0 8.0 12.0 16.0 24.0 1000.0] hard ceiling on a single reflected sample — backstop for pathological HDR spikes (1000 = off)
-#define REFLECTION_FIREFLY_WEIGHT 1.0 // [0.0 0.25 0.5 1.0 2.0 4.0] Karis inverse-luma weight on the per-ray average — suppresses sparkly fireflies from reflected emissive blocklights (lava/torch). 0 = off (plain average); higher = darker but cleaner. Self-correcting: never dims smooth/coherent reflections
-#define REFLECTION_SPATIAL_FIREFLY 4.0 // [0.0 2.0 3.0 4.0 6.0 8.0] spatial denoise (d7c): reject a neighbour tap whose luma exceeds the center by this factor — stops the bilateral blur from SMEARING a surviving emissive spike into a streak. 0 = off
-#define REFLECTION_SPATIAL_RADIUS 14.0 // [0.0 6.0 8.0 10.0 14.0 18.0 24.0] max blur radius (px) of the spatial reflection denoise; scales UP when temporal history is low (in motion), so motion noise is blurred but converged pixels stay sharp
 
-//   0 = off   1 = smoothness   2 = metal albedo(F0)   3 = skyVis gate   4 = raw reflection
-#define PBR_DEBUG 0 // [0 1 2 3 4]
+// The screen-space reflection pass (d7b/d7c) and its ray/march/denoise knobs
+// were removed with the rest of the screen-space lighting. Phase 3.4 rebuilds
+// reflections on the shared Lumen tracing stack and will bring its own options.
 
 #define VOXEL_GI
 
@@ -280,15 +268,10 @@ const float renderScale = RENDER_SCALE;
 // BVH over them, letting mobs, players and items cast path-traced shadows.
 // Shadows are box-shaped: an entity's silhouette is not resolved.
 #define ENTITY_SHADOWS
-#define GI_SAMPLES 1    // [1 2 3 4] TODO might be dead due to ReSTIR
-#define GI_RADIUS  48   // [12 16 24 32 48 64 96 128] GI/sun-shadow ray reach (blocks). Raised to 48 for the doubled (radius-256) grid; brick-skip keeps this affordable.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
 #define GI_STRENGTH 200 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
-#define GI_BOUNCE_SHADOWMAP
-#define GI_BOUNCE_SKY 0.0 // [0.25 0.4 0.6 0.8 1.0 1.5] sky contribution weight at bounce surfaces
-#define GI_SKY_PROBE_DIST 64   // [8 12 16 24 32 48 64 96] max blocks the sky-probe DDA ray travels from a bounce surface (raised for the doubled grid)
 #define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
 #define VOXEL_SHAPES
 
@@ -298,88 +281,48 @@ const float renderScale = RENDER_SCALE;
 #define EMISSIVE_BRIGHTNESS 6.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 16.0] HDR strength of the self-emission added to emissive texels. The texel's own albedo supplies the color.
 #define VOXEL_EMISSIVE_SHAPES // gate the gi.glsl emissive sub-box logic; off = whole-voxel emission (legacy)
 
-#define GI_FIREFLY 8.0 // [0.0 1.5 2.0 3.0 4.0 8.0 16.0] temporal firefly ceiling: cap a pixel's GI luma at N x the reprojected history mean. Lower = harsher (can lag/flicker bright emissive changes); 0 disables. Chroma is preserved (see clipHistoryMoments).
-#define GI_TEMPORAL_REJECT 8.0 // [1.0 1.5 2.0 3.0 4.0 8.0] TODO remove this and just rely on RESTIR_M_CLAMP for temporal blending
-#define GI_DENOISE
-//#define DENOISE_NO_EDGE_REJECT // EXPERIMENT (denoiser phase): disable a-trous geometric edge-stopping. Kept OFF now; testing the ACCUM phase instead.
-#define ACCUM_NO_EDGE_REJECT // Accumulation: drop the NORMAL/edge rejection in fetchBilateralHistory (it stopped edge pixels accumulating -> the edge fireflies) but KEEP a loose relative-depth DISOCCLUSION gate (ACCUM_DISOCC_DEPTH) so new geometry still flushes stale history. Fixes the edge fireflies while keeping disocclusion clean.
-#define ACCUM_DISOCC_DEPTH 0.1 // [0.03 0.05 0.07 0.1 0.15 0.2] relative depth jump that counts as disocclusion (history flush). Lower = crisper disocclusion but risks edge fireflies returning on slopes; higher = more tolerant but more disocclusion ghosting.
-#define SVGF_SIGMA_Z 2.0  // [0.5 1.0 2.0 4.0] Depth edge-stopping tolerance
-#define SVGF_SIGMA_N 32.0  // [4.0 8.0 16.0 32.0 64.0] Normal edge-stopping sharpness (power, capped at 16); lower = smoother
-#define SVGF_SIGMA_L 8.0 // [2.0 4.0 5.0 8.0 10.0 12.0 16.0] Luminance edge-stopping (variance-scaled); higher = smoother
-#define SVGF_VAR_BOOST 8  // [2 4 6 8 12 16] history length below which variance is estimated spatially
-#define SVGF_VAR_HISTNORM // QUALITY: normalize the variance estimate by the accumulated history length. The filtered buffer is a temporal MEAN, so its residual noise shrinks ~1/histLen; tracking that tightens the luminance gate as pixels converge -> blur fades out and fine GI detail survives, while fresh/disoccluded pixels still get the full kernel.
-#define SVGF_MIN_LUMA_SIGMA 0.08 // [0.0 0.02 0.035 0.05 0.08 0.12 0.16] minimum relative luminance gate after history normalization. Higher removes more residual/checker noise; lower keeps crisper fine bounce detail.
-#define SVGF_WORLD_RADIUS // bound the kernel's world-space footprint (keeps distant geometry from over-blurring)
-#define SVGF_SIGMA_WORLD 2.0
-//#define SVGF_ADAPTIVE_SKIP
-#define SVGF_SKIP_REL 0.05 // [0.02 0.03 0.05 0.08 0.12] relative std (vs luma) below which wide passes skip
-//TODO merge GI_ACCUM_FRAMES and AO_ACCUM_FRAMES into one general "temporal accumulation length" macro and use it for both GI and AO denoising, call it SVGF_ACCUMULATION_LENGTH or something
-#define GI_ACCUM_FRAMES 128 // [8 16 32 48 64 128 192 256] temporal frames to blend in denoiser
-#define AO_ACCUM_FRAMES 128   // [8 16 32 48 64 128 192 256]
+// --- Lumen GI ----------------------------------------------------------------
+// The ReSTIR reservoirs, the SVGF a-trous denoiser, GTAO and the voxel-AO path
+// are gone (Phase 1). What remains here are the options that surviving code
+// still reads; Phase 3 adds the surface-cache / radiance-cache / screen-probe
+// knobs as those passes land.
 
-// --- History reconstruction (edge / disocclusion prefilter) -------------------
-// Dedicated pass (d0b_historyfix) between temporal accumulation and the a-trous
-// chain. Pixels that never build history (silhouette edges, convex corners,
-// disocclusions) sit at giHist~1 and would display raw 1-spp GI -> edge fireflies.
-// This pools accumulated GI from geometrically-similar, higher-history neighbours
-// (Karis-weighted to damp outliers) and blends it in by (1 - history), writing it
-// back to the history so the temporal filter and a-trous both inherit it. Converged
-// pixels pass through untouched. See lib/pt/historyfix.glsl.
-#define HISTORY_FIX
+// Blue-noise ray directions. Formerly RESTIR_BLUE_NOISE -- the name outlived
+// ReSTIR because the STBN texture is still how every hemisphere ray is drawn.
+// Cosine hemisphere, noise/stbn_cosine.dat via customTexture.blueNoise; much
+// less low-spp boiling than white-noise PCG. Comment out for white noise.
+// Consumed by stbnCosineHemisphere (lib/pt/sampling.glsl).
+#define GI_BLUE_NOISE
+
+// Minimum relative-luminance variance floor, boosted in the dark. Formerly
+// SVGF_MIN_LUMA_SIGMA. Consumed by svgfVarianceFloor (lib/pt/reproject.glsl).
+#define GI_MIN_LUMA_SIGMA 0.08 // [0.0 0.02 0.035 0.05 0.08 0.12 0.16] higher removes more residual/checker noise; lower keeps crisper fine bounce detail.
+
+// Source firefly clamp: max luminance a single GI sample may contribute,
+// rescaled to keep chroma. A lone ray catching the bright sky through a gap
+// returns a spike no screen-space filter can tell from signal, and bloom then
+// smears it into a glowing blob. Formerly GID_FIREFLY_MAX. Currently read only
+// by the Distant Horizons raster-ambient fallback in d7_composite, which Phase
+// 3.2 replaces with a far-field radiance-cache probe lookup.
+#define GI_FIREFLY_MAX 8.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] 1000 = off
+
+// --- Disocclusion fill (history reconstruction) ------------------------------
+// Pixels that never build temporal history -- silhouette edges, convex corners,
+// disocclusions -- would otherwise display raw low-spp radiance as edge
+// fireflies. historyFixGI (lib/pt/reproject.glsl) pools accumulated GI from
+// geometrically-similar, higher-history neighbours (Karis-weighted to damp
+// outliers) and blends it in by (1 - history). Converged pixels pass through
+// untouched. Survives the denoiser wipe: screen probes converge, but a freshly
+// disoccluded pixel still has no history to converge from.
 #define HISTORYFIX_MIN_FRAMES 1   // [1 2 4] history length at/below which the fix is full strength
-#define HISTORYFIX_MAX_FRAMES 12  // [4 6 8 12 16 24] history length at/above which no fix is applied (detail preserved). Raised 8->12 to cover the hand's semi-converged flicker (bobbing keeps it low-history).
+#define HISTORYFIX_MAX_FRAMES 12  // [4 6 8 12 16 24] history length at/above which no fix is applied (detail preserved)
 #define HISTORYFIX_SAMPLES 16     // [8 12 16] pooled taps (Vogel disk)
-#define HISTORYFIX_RADIUS 32.0    // [8.0 16.0 24.0 32.0 48.0] max pooling radius in pixels (scaled by 1-history). Raised 24->32 so screen-border pixels (disk clamped to the rendered region) reach further inward to clean neighbours.
+#define HISTORYFIX_RADIUS 32.0    // [8.0 16.0 24.0 32.0 48.0] max pooling radius in pixels (scaled by 1-history)
 #define HISTORYFIX_SIGMA_N 8.0    // [2.0 4.0 8.0 16.0 32.0] normal edge-stopping for taps (higher = tighter to surface)
 #define HISTORYFIX_DEPTH_TOL 0.1  // [0.03 0.05 0.1 0.2 0.5] relative depth tolerance for taps
 
-#define RESTIR_GI
-#define RESTIR_INITIAL_SAMPLES 2 // [1 2 4 6] candidate rays generated per frame
-#define RESTIR_M_CAP 48          // [8 12 16 24 32 48] max reservoir confidence (history clamp)
-#define RESTIR_SCREEN_BOUNCE 0 // [0 1] Reproject previous HDR scene as secondary-bounce radiance. OFF avoids feeding denoised/TAA history back into ReSTIR reservoirs.
-#define RESTIR_JACOBIAN  // Spatial-reuse reconnection Jacobian (ENABLED). Clamped in d0_accum's calculateJacobian. NOTE: if grazing samples start hijacking flat walls (bright splotches), tighten that clamp toward [0.1, 5.0].
-#define RESTIR_SPATIAL          // enable spatial reservoir reuse from neighbours
-#define RESTIR_SPATIAL_SAMPLES 3 // [1 2 3 4 5] neighbour reservoirs merged per pixel
-#define RESTIR_SPATIAL_RADIUS 16.0 // [4.0 8.0 16.0 24.0 32.0] neighbour search radius (pixels)
-#define RESTIR_COHERENT_TILE 1 // [1 2 4 8] pixels per tile sharing candidate ray directions (voxel cache coherence). NOTE: >1 creates a correlated NxN checkerboard that the denoiser must blur away; with the responsive A-SVGF alpha it becomes visible (jittering checker under changing light). Keep at 1 unless you re-add strong spatial decorrelation.
-
-#define RESTIR_BLUE_NOISE // GI candidate ray direction uses NVIDIA spatiotemporal blue-noise (cosine hemisphere, noise/stbn_cosine.dat via customTexture.blueNoise) instead of white-noise PCG -> much less 1-spp boiling. Comment out to fall back to white noise.
-
-//#define RESTIR_CONVERGED_SKIP
-#define RESTIR_CONVERGED_SKIP_PROB 0.5 // [0.25 0.5 0.75] fraction of converged-static frames to skip the trace on
-
-// TODO these might be dead macros to fix spatial reservoir reuse
-#define RESTIR_W_MAX 8.0         // [2.0 4.0 8.0 16.0 32.0] clamp on the unbiased reservoir weight W 
-#define RESTIR_CLAMP 8.0         // [2.0 4.0 8.0 16.0 32.0] absolute firefly clamp on the resolved GI
-
-#define AO_GTAO              // ON: the irradiance cache is isotropic (no per-pixel directional occlusion), so screen-space GTAO restores the contact shadows / small-scale darkening the old per-pixel ReSTIR provided.
-#define AO_GI_STRENGTH 75    // [0 25 50 75 100] how strongly AO occludes the indirect (GI) term
-#define AO_DIRECT_STRENGTH 0 // [0 25 50 75 100] AO applied to direct sunlight (0 = leave shadows untouched)
-#define GTAO_SLICES 2        // [1 2 3 4] horizon slices per pixel per frame (rotates over the TAA cycle)
-#define GTAO_STEPS 4         // [2 3 4 6 8] horizon-march taps per slice side
-#define GTAO_RADIUS 1.0      // [0.5 0.75 1.0 1.5 2.0 3.0] AO world radius (blocks); short = tight contact shading
-
-#define GID_TEMPORAL_MAX_FRAMES 48 // [8 12 16 24 32 48 64 128] max temporal history. Higher = cleaner/steadier but more ghosting when lighting changes.
-#define GID_NORMAL_EXP_MIN 8.0     // loose normal rejection for LOW-history pixels: accepts slightly off-normal history at curved edges so disocclusions FILL IN instead of locking at 1-spp (the old fixed pow-128 caused permanent edge fireflies).
-#define GID_NORMAL_EXP_MAX 64.0    // sharp normal rejection once history has CONVERGED (keeps edges crisp).
-#define GID_CLAMP_K 4.0            // [2.0 3.0 4.0 6.0 8.0 1000.0] firefly clamp width (xσ) for the current sample vs its planar neighbourhood, in LUMA space so chroma survives and only bright outliers are rescaled. Lower = stronger firefly kill but dims sparse light; 1000 = off.
-#define GID_SIGMA_L 4.0            // [1.0 2.0 3.0 4.0 6.0 8.0] luminance edge-stop strength of the a-trous filter. Lower = more blur (smoother, softer detail); higher = preserves detail but lets through more noise.
-#define GID_DISOCC_BOOST 4.0       // [0.0 2.0 4.0 8.0 16.0] extra blur for freshly disoccluded (low-history) pixels: loosens the luma edge-stop so newly revealed geometry blurs out fast instead of showing raw 1-spp.
-#define GID_ATROUS_RADIUS 1        // [1 2] half-width of the per-pass à-trous kernel. 1 = 3x3 (8 taps/pass, the fast default — the per-pass spatial variance loop was also removed, edge-stop now derived from history length, so this is ~4x fewer denoiser taps than the old 5x5+variance). 2 = 5x5 (24 taps/pass, the old wider kernel) if 1 looks too noisy.
-#define GID_MOTION_TOLERANCE 1.0   // [0.5 1.0 1.5 2.0 3.0 4.0 6.0] how loose the temporal motion/disocclusion rejection is. Higher = history survives camera motion far more (much less motion noise) at the cost of some ghosting; lower = sharper/more responsive but noisier in motion. Was effectively ~0.2 before.
-#define GID_DEPTH_STRICTNESS 0.5   // [0.1 0.25 0.5 0.75 1.0 1.5 2.0] tightness of the SPATIAL à-trous depth edge-stop. Lower = looser: GI blurs more freely across depth so the filter denoises harder (smoother), at the risk of bleeding across depth edges; higher = preserves depth edges but keeps more noise. Lower this if the spatial filter rejects neighbours too aggressively.
-#define GID_LUMA_FLOOR 0.02        // [0.005 0.01 0.02 0.04 0.08 0.15] dark cutoff for the SCALE-INVARIANT luma edge-stop. The luma weight compares neighbours RELATIVE to local brightness (so dark interiors filter as hard as lit surfaces — fixes low-light "boiling"); below this brightness the relative metric is clamped so near-black noise is just blurred away instead of treated as detail. Raise if dark areas still boil; lower if dark GI detail washes out.
-#define GID_FIREFLY_MAX 8.0        // [1.0 2.0 3.0 4.0 6.0 8.0 12.0 20.0 1000.0] SOURCE firefly clamp (d0_trace): max luminance a single 1-spp GI ray may return, rescaled to keep chroma. A lone ray catching the bright sky/sun through a gap returns a huge spike no screen-space filter can tell from signal (neighbours near a bright opening are also bright) — bloom then smears it into glowing white blobs. Clamping at the source kills the blobs. LOWER if blobs remain; RAISE if GI next to bright openings looks dimmed/capped. 1000 = off.
-
-//#define VOXEL_AO
-#define AO_SAMPLES 2   // [2 4 6 8] 
-#define AO_RADIUS  8   // [4 6 8 10 12 16 24 32 48 64] 
-#define AO_STRENGTH 100 // [25 50 75 100] 
-
 //#define PT_DEBUG_VOXELS  // voxel debug view
-//#define GI_DEBUG_VIEW 1   // irradiance debug
-#define PT_LIGHT_DEBUG 0 // [0 1 2 3 4] Diagnostic isolation: 0=off, 1=RTAO/AO term, 2=indirect(GI), 3=direct-shadow visibility, 4=raw albedo. Shows the chosen lighting component alone so we can see which one makes the dark halo around torches.
+
 #define WATER_DEBUG 0 // [0 1 2]
 
 #include "/lib/pipelineSettings.glsl"
@@ -389,10 +332,6 @@ const float renderScale = RENDER_SCALE;
 // --- Utility Macros ---
 #ifndef PI
 #define PI 3.14159265359
-#endif
-
-#ifndef GTAO_HALF_PI
-#define GTAO_HALF_PI 1.57079632679
 #endif
 
 #ifndef clamp01

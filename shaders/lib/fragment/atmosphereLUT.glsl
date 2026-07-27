@@ -101,7 +101,7 @@ vec3 _uniformSphere(vec2 u) {
 
 
 // =============================================================================
-// SAMPLE helpers (called by sky.glsl, c_water.glsl, d0_restir.glsl, etc.)
+// SAMPLE helpers (called by sky.glsl, c_water.glsl, the deferred chain, etc.)
 // =============================================================================
 
 // Manual bilinear from colortex12 with explicit clamp to a packed region.
@@ -650,7 +650,7 @@ AerialPerspective computeAerialPerspective(
 // descends from noon the sample slid into the bright, warm circum-solar sky, so
 // the GI/cloud/fog ambient brightened and warmed at mid sun elevations. Sampling
 // straight up keeps the ambient stable across the day; intentional warmth comes
-// from GI_SKY_WARMTH in d0_restir.)
+// from GI_SKY_WARMTH by the GI producer.)
 vec3 getSkyAmbient(float eyeAltitude) {
     return textureLod(colortex12, _skyViewLUT_UV(vec3(0.0, 1.0, 0.0)), 0.0).rgb;
 }

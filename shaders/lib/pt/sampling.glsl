@@ -39,14 +39,14 @@ vec3 cosHemisphereDir(vec3 n, float r1, float r2) {
 
 // ---- Spatiotemporal blue noise ---------------------------------------------
 
-#ifdef RESTIR_BLUE_NOISE
+#ifdef GI_BLUE_NOISE
 #ifndef PT_BLUENOISE_DECLARED
 #define PT_BLUENOISE_DECLARED
 // STBN cosine-hemisphere texture (128x128 spatial tile x 64 temporal frames),
 // bound globally via customTexture.blueNoise -> noise/stbn_cosine.dat. Declared
 // HERE, not in uniforms.glsl, on purpose: the world0/*.fsh wrappers include
 // uniforms.glsl BEFORE the program file pulls in options.glsl, so a
-// RESTIR_BLUE_NOISE-gated decl there is reached before the macro exists (and the
+// GI_BLUE_NOISE-gated decl there is reached before the macro exists (and the
 // include guard then blocks the re-include). This file is included after
 // options.glsl, so the guard is live and the uniform is actually declared.
 uniform sampler3D blueNoise;
