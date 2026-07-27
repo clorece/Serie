@@ -98,6 +98,10 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
     float tWorld = 0.0;  // distance travelled in world units so far
     bool  first  = skipOrigin;
     vec3  accumEmission = vec3(0.0);
+    // Set when a cascade's step budget runs out with range to spare. See the
+    // handling below the inner loop -- this is what stops the ray teleporting
+    // over geometry it never examined.
+    bool  starved = false;
 
     for (; k < VOXEL_CASCADES; ++k) {
         float vs   = cascadeVoxelSize(k);
@@ -130,7 +134,11 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
         vec3  lastMask = vec3(0.0);
         ivec3 lastBrick = ivec3(-1);
 
-        for (int i = 0; i < CASCADE_MAX_STEPS; ++i) {
+        // i is declared outside the loop so the exit reason survives it: reaching
+        // CASCADE_MAX_STEPS means the budget ran out, whereas any break means the
+        // ray genuinely finished this cascade.
+        int i = 0;
+        for (; i < CASCADE_MAX_STEPS; ++i) {
             if (tLocal > tLimit) break;
             if (any(lessThan(vox, ivec3(0))) || any(greaterThanEqual(vox, CASCADE_DIMS))) break;
 
@@ -242,6 +250,26 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
             first    = false;
         }
 
+        // Out of step budget with range still left in this cascade.
+        //
+        // The old code fell straight through to the hand-off below, which
+        // advanced tWorld to the cascade's FAR SIDE and resumed in the next one
+        // -- silently skipping every voxel in between. That leaked light in
+        // exactly the dense geometry that exhausts the budget, and it also made
+        // escaped optimistic, so the caller substituted full sky for a ray that
+        // had actually stopped inside a forest canopy.
+        //
+        // Stop where the ray really is and mark it starved. The caller then
+        // treats it as "the far field is unknown from here" and applies its own
+        // sky-visibility gate, which is the same conservative answer a ray that
+        // merely ran out of maxDist gets. This is what makes GI_MAX_STEPS a
+        // usable performance knob: lowering it now costs reach, not correctness.
+        if (i == CASCADE_MAX_STEPS) {
+            starved = true;
+            tWorld += tLocal * vs;
+            break;
+        }
+
         // Hand off to the next cascade just past this one's boundary.
         tWorld += max(tCascadeExit, 0.0) * vs + 1e-3;
         if (tWorld >= maxDist) break;
@@ -258,18 +286,17 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
         miss.emission = accumEmission;
         return miss;
     }
-    // Distinguish the two ways to miss. Falling out of the cascade loop means the
+    // Distinguish the ways to miss. Falling out of the cascade loop means the
     // ray walked past the coarsest cascade with budget to spare -- it is out in
-    // the open and the sky is correct. Stopping because tWorld caught maxDist
-    // means the ray died inside the grid and knows nothing about what lies
-    // beyond, so the caller must NOT substitute the sky.
+    // the open and the sky is correct. Stopping because tWorld caught maxDist,
+    // or because a cascade's step budget ran out, means the ray died inside the
+    // grid and knows nothing about what lies beyond, so the caller must NOT
+    // substitute the sky.
     //
-    // (Caveat, inherited: a ray that exhausts CASCADE_MAX_STEPS inside a dense
-    // cascade also advances tWorld to that cascade's far side, so it can report
-    // escaped. That is the step-budget teleport listed under the known defects,
-    // and it makes this flag optimistic rather than wrong in the leaky direction
-    // only in very dense geometry.)
-    miss.escaped = tWorld < maxDist;
+    // The starved case used to be indistinguishable from the first: the ray
+    // teleported to the cascade boundary and reported escaped, which is how the
+    // step-budget defect turned into a light leak. It is now explicit.
+    miss.escaped = !starved && tWorld < maxDist;
     miss.pos = worldPos + rayDir * min(tWorld, maxDist);
     miss.emission = accumEmission;
     return miss;
@@ -277,6 +304,13 @@ VoxelHit traceVoxelCascaded(vec3 worldPos, vec3 rayDir, float maxDist, bool skip
 
 // ---------------------------------------------------------------------------
 // Any-hit traversal (shadow / occlusion rays)
+//
+// CURRENTLY UNUSED. Its only caller was the surface cache's per-face sky probe,
+// which now reads the skylight banked in the voxel word instead. Kept because it
+// is the natural any-hit primitive and Phase 3.4 reflections will want it -- but
+// note before reusing it that it still has both open defects: the step-budget
+// teleport fixed above in traceVoxelCascaded, and the torch asymmetry (this
+// blocks on the whole voxel where traceVoxelCascaded resolves the light shape).
 // ---------------------------------------------------------------------------
 bool traceVoxelOccluded(vec3 worldPos, vec3 rayDir, float maxDist, bool skipOrigin) {
     // Entities live outside the voxel grid entirely, so they get their own test.

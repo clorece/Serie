@@ -496,18 +496,57 @@ What changed
      Slots with no valid history ignore it and fill immediately, so it never
      leaves holes.
 
-NOT done, and deliberately -- see "REMAINING OPTIMISATION HEADROOM" below.
+OPTIMISATION PASS 2 -- feedback, tracer, and gather
+
+  7. SURFACE CACHE FEEDBACK (was headroom item 1). Lumen's
+     LumenSurfaceCacheFeedback at brick granularity. Every gather ray stamps the
+     low 8 bits of the frame onto the 8^3 brick it resolved through, into a new
+     16 KB R8UI image (scRequestImg); sc1 refuses to spend work on any brick
+     outside SC_NEAR_DIST with no stamp inside SC_REQUEST_TTL frames. Cache cost
+     now tracks what the camera can see rather than the size of the cascade.
+
+     THE TRAP, if this is ever revisited: bounce-ray stamping must stay confined
+     to the near field. If every updated voxel stamped, the requested set would
+     grow by SC_BOUNCE_DIST per frame -- requested bricks cast rays, those hits
+     get stamped, next frame THEY cast rays -- and saturate the cascade in about
+     eight frames, silently making the whole scheme worthless. GI_DEBUG_VIEW 8
+     is how you would catch that: mostly green everywhere means saturation.
+
+  8. STEP-BUDGET TELEPORT FIXED (was a known defect). A ray exhausting
+     CASCADE_MAX_STEPS used to advance to the far side of the cascade and resume
+     in the next, skipping everything in between AND reporting escaped, so the
+     caller substituted full sky for a ray that had actually stopped inside a
+     forest canopy. It now stops where it is and reports a non-escaped miss.
+
+     The point is as much performance as correctness: GI_MAX_STEPS was
+     previously a knob you could not turn down, because lowering it leaked
+     light. It now trades reach for speed and nothing else.
+
+  9. ADAPTIVE GATHER RAY BUDGET. GI_GATHER_RAYS is now what a pixel with NO
+     history gets; a pixel converged to GI_ADAPTIVE_FRAMES drops to one ray.
+     The full budget is paid only at disocclusions, silhouettes and on moving
+     geometry. Reprojection had to move ABOVE the gather to make this possible
+     -- it does not depend on the gather's result, and when histLen is 0 the
+     blend weight is exactly 1 so the history value is unused.
+
+NOTE: traceVoxelOccluded now has ZERO callers -- removing the per-face sky probe
+orphaned it. It is kept as the natural any-hit primitive for Phase 3.4, but it
+still carries both the teleport bug and the torch asymmetry. Fix them before
+reusing it.
 
 NEXT WORK, IN ORDER
 
-  1. Verify in-engine. The three debug views in the handoff above still apply;
-     SC_UPDATE_STRIDE is now 8 as intended. Watch specifically for: cave leak
-     (the sky term changed source), and whether SC_FACE_STRIDE 2 is visible on
-     a fast lighting change.
+  1. Verify in-engine. Nothing in either optimisation pass has been seen
+     running -- the checks below are compile-level only. Debug views to use:
+       5  cache coverage (unchanged meaning)
+       8  feedback coverage: green = brick stamped and refreshing, red = frozen,
+          blue = SURFACE_CACHE_FEEDBACK compiled out
+     Watch for: cave leak (the sky term changed source), a visible warm-up when
+     spinning the camera (raise SC_REQUEST_TTL or SC_NEAR_DIST), and whether
+     SC_FACE_STRIDE 2 is catchable on a fast lighting change.
   2. Tune. GI_SKY_LEAK_FALLOFF (cave leak), SC_BLEND / SC_UPDATE_STRIDE
-     (convergence vs latency), GI_GATHER_RAYS (noise vs cost), GI_STRENGTH.
-     GI_GATHER_RAYS is currently 1, which was a cost workaround for the cache
-     pass; with the cache cheaper it should be affordable to raise.
+     (convergence vs latency), GI_GATHER_RAYS with GI_ADAPTIVE_FRAMES,
+     GI_STRENGTH. GI_MAX_STEPS is now safe to lower.
   3. Phase 3.2 world radiance cache. Two jobs: give rays that exhaust
      GI_GATHER_DIST / SC_BOUNCE_DIST a real far-field answer instead of the
      current lightmap-gated sky approximation, and replace the hardcoded DH
@@ -517,77 +556,66 @@ NEXT WORK, IN ORDER
      surface cache lookup. colortex7 (PBR material) and the pbrSunVis output on
      colortex6 were both kept live for this. Free slots: ct4, ct9, ct10, ct11,
      ct14, and deferred4+.
-  5. Optional: screen probes (16x16 grid) as a cost optimisation over the current
-     per-pixel gather. Only worth it if the gather shows up in profiling.
 
 KNOWN DEFECTS STILL OPEN
 
-  - Step-budget teleport (voxelTrace.glsl): a ray exhausting CASCADE_MAX_STEPS
-    still advances to the far side of the cascade, silently skipping geometry.
-    This also makes VoxelHit.escaped optimistic in dense foliage.
   - Torch occlusion asymmetry: traceVoxelCascaded resolves a torch through its
-    light shape, traceVoxelOccluded blocks on the whole voxel.
+    light shape, traceVoxelOccluded blocks on the whole voxel. Currently moot --
+    traceVoxelOccluded has no callers -- but it will bite Phase 3.4.
   - Pre-existing, unrelated: shaders.properties lists SHADOW_BIAS and
     SHADOW_DISTORT_FACTOR in screen.Light but neither has a #define.
 
-REMAINING OPTIMISATION HEADROOM, ranked
+REMAINING OPTIMISATION HEADROOM
 
-Not done yet. Roughly in value order.
+Everything below is DELIBERATELY NOT DONE. Two of them were dropped after
+reconsidering, and the reasons matter more than the items.
 
-  1. SURFACE CACHE FEEDBACK -- the big architectural one, and the closest thing
-     here to what real Lumen does. Lumen does not update the whole surface
-     cache; rays record which card pages they hit into a feedback buffer and
-     only requested pages are updated (LumenSurfaceCacheFeedback). The direct
-     analogue: a small R8UI volume at BRICK granularity, written with
-     frameCounter & 255 by every scLookup / scImageLookup, and read by
-     sc1 as a gate -- skip any brick not requested in the last N frames. Plain
-     imageStore, no atomics needed: every writer writes the same value, so the
-     race is benign. Bounce rays write requests too, which keeps anything
-     reachable by the radiosity feedback loop warm and makes the scheme
-     self-consistent. Expected 10-20x beyond the brick culling already landed,
-     because the visible-and-reachable set is a few percent of the cascade.
-     Costs one image binding and a shaders.properties entry.
+  DROPPED -- slim the hot VoxelHit. category, shapeId, albedo and lightMat are
+  dead at both consumers, so a narrower struct looked like free register
+  pressure. But GLSL drivers inline traceVoxelCascaded unconditionally and then
+  dead-code-eliminate unread struct fields, so the gain is very likely already
+  being had. Duplicating a 100-line DDA to chase an unmeasurable win is a bad
+  trade. Revisit only with a profile that shows occupancy limited in that loop.
 
-  2. SPLIT DIRECT AND INDIRECT STORAGE. Lumen keeps separate Direct Lighting,
+  DROPPED -- R11F_G11F_B10F for the cache. Would take faceRadianceImg from
+  402 MB to ~251 MB and cut its bandwidth 37%. But the feedback gate shrank the
+  update set by more than an order of magnitude, which took cache bandwidth off
+  the list of things that matter; 402 MB is well inside the stated 8 GB budget;
+  and Iris support for that internal format on a custom image is unverified.
+  Cost and risk both now exceed the benefit.
+
+  STILL OPEN, needs profiling first:
+
+  a. Split direct and indirect storage. Lumen keeps separate Direct Lighting,
      Radiosity and Final Lighting atlases precisely so the cheap high-frequency
      term and the expensive low-frequency one can run at different rates and
-     different resolutions (r.Lumen.Radiosity.DownsampleFactor defaults to 4).
-     Here direct is one shadow-map lookup and indirect is SC_BOUNCE_RAYS full
-     DDA walks, but they are summed into one slot, so neither can be scheduled
-     independently. Splitting them allows radiosity at 1/8 rate or at 2x2x2
-     voxel granularity while direct stays per-voxel per-frame. SC_FACE_STRIDE is
-     the poor-man's version of this and was chosen because it needs no extra
-     storage.
+     resolutions (r.Lumen.Radiosity.DownsampleFactor defaults to 4). Here direct
+     is one shadow-map lookup and indirect is SC_BOUNCE_RAYS DDA walks, but they
+     are summed into one slot so neither can be scheduled independently.
+     SC_FACE_STRIDE is the poor-man's version and needs no extra storage.
 
-  3. OCCUPANCY-ONLY VOLUME FOR TRAVERSAL. This is the real answer to "can we
-     ditch the voxelisation" -- no, but it can be split. The DDA's hottest fetch
-     is the full R32UI word (134 MB), yet inside the loop it only needs one bit:
-     occupied or not. Category / albedo / shapeId are needed only AT the hit.
-     A dedicated occupancy volume -- R8UI is 33.5 MB, a packed bitmask 4.2 MB
-     and small enough to live in L2 -- would cut traversal bandwidth 4-32x, with
-     the fat word fetched once on hit. Costs an image binding in the shadow
-     fragment stage, which is near its 16-uniform budget; check first.
+  b. Occupancy-only volume for traversal. The DDA's hottest fetch is the full
+     R32UI word, yet the loop only needs one bit; the fat word is only needed AT
+     the hit. R8UI would be 33.5 MB, a packed bitmask 4.2 MB and L2-resident.
+     Estimate revised DOWN since first writing this: the brick/super-brick
+     skipping already handles the long walks through open air, so the remaining
+     steps are near geometry and about to hit anyway. It also costs an image
+     uniform in the shadow fragment stage, which is near its budget of 16.
 
-  4. SLIM THE HOT VoxelHit. category, shapeId, albedo and lightMat are dead at
-     BOTH consumers (dg0_gather and sc1 read only pos, normal, emission, hit,
-     escaped). A narrower traceVoxelRadiance() would cut register pressure in
-     the DDA loop, which directly buys occupancy. Low risk, unmeasured gain.
+  c. Gather at half resolution with a bilateral upsample -- 4x fewer rays, and
+     the gather's output is inherently low-frequency because the cache is smooth
+     at voxel granularity. Not done because it touches the renderScale and
+     jitter conventions that this pack has repeatedly broken silently on, and
+     the adaptive budget (item 9) already bought most of the headroom.
 
-  5. R11F_G11F_B10F FOR THE CACHE. Radiance is non-negative and the alpha
-     channel carries only a 6-bit tag. 4+1 bytes against the current 8 takes
-     faceRadianceImg from 402 MB to ~251 MB and cuts every cache read and write
-     by 37%. Needs a separate tag volume, and Iris support for the format
-     wants verifying.
+  d. Screen probes on a 16x16 grid -- Lumen's actual final gather, and the
+     structural fix that (c) approximates. A whole new pass; only worth it once
+     a profile shows the gather dominating.
 
-  6. GATHER-SIDE, once the cache stops dominating: half-resolution gather with
-     bilateral upsample (4x, nearly free), then Lumen's actual screen probes on
-     a 16x16 grid, which is the structural fix and was already sketched as
-     Phase 3.3's optional step.
-
-  7. voxelImg is clear=true, so 134 MB is cleared and fully re-rasterised every
-     frame. Avoiding that needs toroidal addressing for the GRID itself plus
-     explicit invalidation -- the same trick the cache already uses. Only worth
-     it if the shadow pass shows up in profiling.
+  e. voxelImg is clear=true, so 134 MB is cleared and fully re-rasterised every
+     frame -- roughly 0.33 ms on a 400 GB/s part. Avoiding it needs toroidal
+     addressing for the GRID plus explicit invalidation on block changes, which
+     is the same trick the cache uses but with much worse failure modes.
 
 VERIFICATION HARNESS
 

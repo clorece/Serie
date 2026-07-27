@@ -272,7 +272,19 @@ const float renderScale = RENDER_SCALE;
 // BVH over them, letting mobs, players and items cast path-traced shadows.
 // Shadows are box-shaped: an entity's silhouette is not resolved.
 #define ENTITY_SHADOWS
-#define GI_MAX_STEPS 96 // [64 96 128 192 256 384] The maximum number of individual 1-block steps a ray can take before giving up. Lowering this drastically improves framerates in dense areas like forests.
+// The maximum number of individual 1-block steps a ray may take inside ONE
+// cascade before giving up. Lowering it improves framerates in dense areas like
+// forests.
+//
+// This is a SAFE knob now. A ray that exhausted the budget used to jump to the
+// far side of the cascade and carry on, silently skipping everything in between
+// and reporting that it had escaped to open sky -- so lowering this leaked light
+// rather than merely costing reach. A starved ray now stops where it is and
+// reports an unknown far field, which every caller already gates by sky access.
+//
+// For reference a ray takes up to ~1.73 steps per block, so covering
+// GI_GATHER_DIST 48 needs ~83 steps.
+#define GI_MAX_STEPS 96 // [64 96 128 192 256 384] steps per cascade before a ray gives up
 #define GI_STRENGTH 50 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 1.0 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
@@ -401,6 +413,18 @@ const float renderScale = RENDER_SCALE;
 // shading their hit. Cheap enough to do per pixel precisely because there is no
 // shading at the hit: a DDA walk plus one texel fetch.
 #define GI_GATHER_RAYS 2  // [1 2 3 4 6 8 12 16] rays per pixel per frame
+
+// Adaptive ray budget. GI_GATHER_RAYS is what a pixel with NO temporal history
+// gets; a pixel whose history has reached GI_ADAPTIVE_FRAMES drops to a single
+// ray, interpolating in between. A converged pixel is already averaging dozens
+// of frames and gains almost nothing from more rays this frame, so the full
+// budget is paid only where it buys something: disocclusions, silhouettes and
+// moving geometry.
+//
+// This exists to make a higher GI_GATHER_RAYS affordable. Lower values ramp down
+// sooner (cheaper, but noisier just after a disocclusion); at GI_GATHER_RAYS 1
+// the whole mechanism compiles out and the loop bound stays constant.
+#define GI_ADAPTIVE_FRAMES 8 // [2 4 6 8 12 16 24 32] history length at which the budget bottoms out
 #define GI_GATHER_DIST 48 // [16 24 32 48 64 96 128] ray reach in blocks
 
 // How sharply the sky term falls off with the surface's skylight lightmap.

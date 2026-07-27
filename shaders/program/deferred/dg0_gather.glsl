@@ -108,6 +108,38 @@ void main() {
     float skyVis = texture(colortex2, gbufUV).g;
     skyVis = pow(clamp(skyVis, 0.0, 1.0), GI_SKY_LEAK_FALLOFF);
 
+    // --- reprojection -------------------------------------------------------
+    // Done BEFORE the gather, because how converged this pixel already is
+    // decides how many rays it is worth casting. Nothing here depends on the
+    // gather's result: reprojection needs only the surface, and when histLen is
+    // 0 the blend weight below is exactly 1, so the history value is unused.
+    //
+    // Both matrices are un-jittered and the GI buffer is indexed by logical uv,
+    // so no jitter enters this path at all.
+    vec3 prevPlayer = playerPos + (cameraPosition - previousCameraPosition);
+    vec4 prevClip   = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
+    vec2 prevUV     = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
+
+    float histLen = 0.0;
+    vec3  history = vec3(0.0);
+
+    if (prevClip.w > 0.0 && all(greaterThanEqual(prevUV, vec2(0.0))) && all(lessThan(prevUV, vec2(1.0)))) {
+        vec4 h8  = texture(colortex8,  prevUV * renderScale);
+        vec4 h15 = texture(colortex15, prevUV * renderScale);
+
+        vec3  prevNormal = octDecodeNormal(h15.xy);
+        float prevDepth  = h15.z;
+
+        // Disocclusion gates: same plane, same surface orientation.
+        bool depthOk  = abs(prevDepth - linDepth) < max(linDepth, 1.0) * GI_REJECT_DEPTH;
+        bool normalOk = dot(prevNormal, worldNormal) > GI_REJECT_NORMAL;
+
+        if (depthOk && normalOk) {
+            histLen = min(h8.a + 1.0, float(GI_ACCUM_FRAMES));
+            history = h8.rgb;
+        }
+    }
+
     // --- gather -------------------------------------------------------------
     ivec2 pix    = ivec2(gl_FragCoord.xy);
     float eyeAlt = ptEyeAltitude();
@@ -117,8 +149,24 @@ void main() {
     // front of it, not the block the pixel belongs to.
     vec3 origin = worldPos + worldNormal * 0.05;
 
+    // Adaptive ray budget. A pixel with a long history is already averaging many
+    // frames of samples and gains very little from more this frame; a fresh or
+    // just-disoccluded pixel has nothing and needs the full budget. Lumen varies
+    // its screen-probe budget on the same principle.
+    //
+    // The point of this is to make a HIGHER GI_GATHER_RAYS affordable: the full
+    // count is then paid only at disocclusions and on moving geometry, which is
+    // a small and shrinking fraction of the screen, instead of on every pixel
+    // every frame. At GI_GATHER_RAYS 1 the whole thing compiles out and the
+    // loop bound stays constant.
+    int rays = GI_GATHER_RAYS;
+    #if GI_GATHER_RAYS > 1
+        float conv = clamp(histLen / float(GI_ADAPTIVE_FRAMES), 0.0, 1.0);
+        rays = max(int(mix(float(GI_GATHER_RAYS), 1.0, conv) + 0.5), 1);
+    #endif
+
     vec3 incoming = vec3(0.0);
-    for (int r = 0; r < GI_GATHER_RAYS; ++r) {
+    for (int r = 0; r < rays; ++r) {
         #ifdef GI_BLUE_NOISE
             vec3 dir = stbnCosineHemisphere(worldNormal, pix, frameCounter * GI_GATHER_RAYS + r);
         #else
@@ -148,7 +196,8 @@ void main() {
     // cosine-weighted mean incident radiance = irradiance / PI, which is exactly
     // the unit d7_composite wants (it does albedo * indirect, not
     // albedo/PI * indirect). No 1/pdf, no NdotL, no extra 1/PI.
-    vec3 gi = incoming / float(GI_GATHER_RAYS);
+    // Divide by the rays actually cast, not the configured maximum.
+    vec3 gi = incoming / float(rays);
 
     // GI_STRENGTH is the producer's responsibility; LIGHTING_INDIRECT is d7's.
     gi *= float(GI_STRENGTH) / 100.0;
@@ -157,33 +206,8 @@ void main() {
     if (GI_FIREFLY_MAX < 1000.0 && lum > GI_FIREFLY_MAX) gi *= GI_FIREFLY_MAX / lum;
 
     // --- temporal accumulation ---------------------------------------------
-    // Reproject through the previous frame's camera. Both matrices are
-    // un-jittered, and the GI buffer is indexed by logical uv, so no jitter
-    // enters this path at all.
-    vec3 prevPlayer = playerPos + (cameraPosition - previousCameraPosition);
-    vec4 prevClip   = gbufferPreviousProjection * (gbufferPreviousModelView * vec4(prevPlayer, 1.0));
-    vec2 prevUV     = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
-
-    float histLen = 0.0;
-    vec3  history = gi;
-
-    if (prevClip.w > 0.0 && all(greaterThanEqual(prevUV, vec2(0.0))) && all(lessThan(prevUV, vec2(1.0)))) {
-        vec4 h8  = texture(colortex8,  prevUV * renderScale);
-        vec4 h15 = texture(colortex15, prevUV * renderScale);
-
-        vec3  prevNormal = octDecodeNormal(h15.xy);
-        float prevDepth  = h15.z;
-
-        // Disocclusion gates: same plane, same surface orientation.
-        bool depthOk  = abs(prevDepth - linDepth) < max(linDepth, 1.0) * GI_REJECT_DEPTH;
-        bool normalOk = dot(prevNormal, worldNormal) > GI_REJECT_NORMAL;
-
-        if (depthOk && normalOk) {
-            histLen = min(h8.a + 1.0, float(GI_ACCUM_FRAMES));
-            history = h8.rgb;
-        }
-    }
-
+    // histLen / history came from the reprojection above, which had to run
+    // before the gather so the ray budget could depend on it.
     float alpha = 1.0 / max(histLen + 1.0, 1.0);
     vec3  accum = mix(history, gi, alpha);
 
