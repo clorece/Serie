@@ -438,7 +438,22 @@ void main() {
         // meant the only way to tame that flat fill was to attenuate the
         // path-traced GI by the same factor, which is backwards: the traced
         // result is the thing that should survive. Use GI_STRENGTH to scale GI.
-        indirect = texture(colortex8, unjitteredTexCoord * renderScale).rgb;
+        //
+        // Which buffer this is depends on how many a-trous passes ran, because
+        // they ping-pong 8 -> 9 -> 10 -> 9 -> 10 and the ladder therefore ends on
+        // a different one for an odd or even pass count. Resolved at compile time
+        // from the same option that gates the passes, so the two cannot disagree:
+        //   0 off      -> colortex8   (raw temporal accumulation)
+        //   1 low      -> colortex10  (2 passes)
+        //   2 balanced -> colortex9   (3 passes)
+        //   3 quality  -> colortex10  (4 passes)
+        #if GI_DENOISE_QUALITY == 0
+            indirect = texture(colortex8,  unjitteredTexCoord * renderScale).rgb;
+        #elif GI_DENOISE_QUALITY == 2
+            indirect = texture(colortex9,  unjitteredTexCoord * renderScale).rgb;
+        #else
+            indirect = texture(colortex10, unjitteredTexCoord * renderScale).rgb;
+        #endif
     #else
         // Analytic lightmap ambient: the pre-path-tracer fallback, and genuinely
         // rasterised, so LIGHTING_INDIRECT applies to it here.

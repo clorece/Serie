@@ -2,4 +2,4 @@
 #define VERTEX
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/dg1_denoise1.glsl"
+#include "/program/deferred/d7_composite.glsl"

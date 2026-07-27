@@ -590,6 +590,57 @@ preprocessor discards -- which made pass 4's change first appear to make the
 tracers BIGGER, and made pass 3's palette win read as -276 lines when the real
 figure is -223.
 
+OPTIMISATION PASS 5 -- contact AO, and a small a-trous denoiser
+
+ 14. SHORT-RANGE CONTACT AO. Ray occlusion alone barely darkens anything in
+     daylight: a gather ray that hits a nearby block resolves it through the
+     surface cache, which holds direct + albedo*indirect, so a SUNLIT occluder
+     returns roughly what the sky it replaced would have. Geometry blocks the ray
+     without lowering what the ray returns, and corners/creases/seams come back
+     as bright as open ground. Nothing else supplied contact shading either --
+     GTAO went in Phase 1 and the d7 seam contract says "AO is NOT pre-applied".
+
+     Lumen has the same problem and answers it the same way, with a Short-Range
+     AO on top of the probe gather. This derives it from the hit distances the
+     gather already has (no extra rays) and applies it BEFORE the temporal
+     accumulation, so the existing history denoises it.
+
+     NOT a normals bug -- that was checked end to end first. gbuffers/terrain
+     writes normalize(gl_NormalMatrix * gl_Normal), i.e. view space, encoded
+     *0.5+0.5 into colortex1 via DRAWBUFFERS:0127; dg0_gather decodes *2-1 and
+     applies gbufferModelViewInverse. Correct.
+
+ 15. A-TROUS DENOISER, deliberately small. The undenoised image is already good
+     because the surface cache converges before the gather runs, so this is a
+     short stride ladder rather than the five-pass SVGF chain Phase 1 deleted --
+     no variance buffer, no moment accumulation. 3x3 taps per pass (9), not
+     SVGF's 5x5 (25); four passes at strides 1/2/4/8 reach a 31x31 footprint for
+     36 taps where one 31x31 gather would be 961.
+
+       GI_DENOISE_QUALITY  0 off / 1 low (1,2) / 2 balanced (1,2,4) / 3 (1,2,4,8)
+
+     Edge stopping is normal + depth from colortex15 plus a luma term whose
+     tolerance widens where history is short -- history length standing in for
+     SVGF's variance estimate, using a value the pack already carries rather than
+     another buffer.
+
+     THE PASS ORDER MOVED. deferred1/2/3 were d7_composite / d8_fog_sky / d9_vl;
+     they are now deferred5/6/7, with deferred1-4 holding the stride ladder.
+     program.deferred7.enabled carries VOLUMETRIC_LIGHT accordingly.
+
+     Two things to keep right if this is ever touched:
+       - colortex8 is NEVER written by the denoiser. It is dg0_gather's temporal
+         history, and feeding a filtered result back would compound blur every
+         frame with no new information to anchor it. SVGF does feed its first
+         pass back, but its history is a 1-spp estimate that needs the help.
+       - the ladder ping-pongs 8->9->10->9->10, so it ENDS on a different buffer
+         for an odd or even pass count. d7 resolves which at compile time from
+         the same option that gates the passes. Verified mechanically across all
+         four levels: 0->ct8, 1->ct10, 2->ct9, 3->ct10.
+       - RENDERTARGETS is a literal in each of the four wrapper files, never
+         behind an #if. Iris reads it out of the source text exactly as it reads
+         `const ivec3 workGroups`.
+
 NOTE: traceVoxelOccluded now has ZERO callers -- removing the per-face sky probe
 orphaned it. It is kept as the natural any-hit primitive for Phase 3.4, but it
 still carries both the teleport bug and the torch asymmetry. Fix them before

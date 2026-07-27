@@ -185,7 +185,7 @@ const float renderScale = RENDER_SCALE;
 //
 // The range now goes below 25: values that low used to be a way of fighting the
 // GI itself, and are legitimate for trimming a flat fill.
-#define LIGHTING_INDIRECT 0  // [0 5 10 15 25 40 55 70 85 100 125 150]
+#define LIGHTING_INDIRECT 100  // [0 5 10 15 25 40 55 70 85 100 125 150]
 
 //#define WIND_MOVEMENT // WIP
 
@@ -310,8 +310,8 @@ const float renderScale = RENDER_SCALE;
 // Note it also scales shadeDhTerrain's raster ambient, deliberately, so Distant
 // Horizons LOD tracks the near field's brightness. LIGHTING_INDIRECT trims that
 // DH fill independently.
-#define GI_STRENGTH 100 // [25 50 75 100 150 200]
-#define GI_SKY_BRIGHTNESS 0.5 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
+#define GI_STRENGTH 150 // [25 50 75 100 150 200]
+#define GI_SKY_BRIGHTNESS 0.2 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
 #define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
 // Write the 10-bit model-derived shape id into the voxel word. Leave this ON.
@@ -490,6 +490,31 @@ const float renderScale = RENDER_SCALE;
 // by pow(skylight, this) instead of the full sky it used to get. 1.0 is linear;
 // raise it to darken tunnels and cave mouths further, lower it if shaded outdoor
 // spots (under trees, north-facing walls) lose too much ambient.
+// --- GI denoiser (a-trous) ---------------------------------------------------
+// A short edge-stopping stride ladder over the GI buffer, ReLAX-flavoured.
+//
+// Deliberately much smaller than the SVGF chain Phase 1 deleted. That one had to
+// rescue a 1-spp ReSTIR signal and needed five passes plus per-pixel variance and
+// moment accumulation. Here the surface cache is already converged before the
+// gather runs, so what arrives is a mild residual -- a couple of rays of sampling
+// noise plus the contact-AO term, both already through 32 frames of temporal
+// accumulation. Every pass skipped is a full-res RGBA16F read AND write saved.
+//
+//   0 off       d7 reads the raw accumulation                  (0 passes)
+//   1 low       strides 1,2      -> 7x7 effective footprint    (2 passes)
+//   2 balanced  strides 1,2,4    -> 15x15                      (3 passes)
+//   3 quality   strides 1,2,4,8  -> 31x31                      (4 passes)
+//
+// 3x3 taps per pass (9), not SVGF's 5x5 (25). Four passes reach a 31x31 footprint
+// for 36 taps, where one 31x31 gather would be 961.
+#define GI_DENOISE_QUALITY 2 // [0 1 2 3] off / low / balanced / quality
+
+// Edge-stopping tolerances. Raise to blur across more of an edge, lower to
+// preserve more detail at the cost of leaving noise.
+#define GI_DN_SIGMA_N 64.0  // [8.0 16.0 32.0 64.0 128.0 256.0] normal falloff exponent; HIGHER = stricter
+#define GI_DN_SIGMA_Z 0.02  // [0.005 0.01 0.02 0.04 0.08 0.15] depth tolerance, fraction of view distance
+#define GI_DN_SIGMA_L 0.35  // [0.1 0.2 0.35 0.5 0.8 1.5] luma tolerance; widened automatically where history is short
+
 // --- Contact ambient occlusion ----------------------------------------------
 // THIS IS THE FLAT-SHADING CONTROL.
 //
