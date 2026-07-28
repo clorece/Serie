@@ -12,12 +12,12 @@ const int colortex0Format = RGBA16F; // lit HDR scene (tonemapped in final.glsl)
 const int colortex1Format = RGB10_A2; // .rgb = view normals, .a = material code (2-bit: 0=normal, 1/3=foliage, 2/3=grass, 1=emissive)
 const int colortex2Format = RGBA16;   // Lightmap data
 const int colortex3Format = RGBA16F; // bloom atlas (composite). (Former SVGF a-trous role removed with the IRC migration.)
-const int colortex4Format = RGBA16F; // FREE (was the reflection temporal history; d7b/d7c removed in Phase 1)
+const int colortex4Format = RGBA16F; // reflections: .rgb DEMODULATED env reflection (no Fresnel tint), .a temporal history length. Written by dr0_reflect, blurred+composited by dr1_reflect_spatial.
 const int colortex5Format = RGBA16F; // TAA history + auto exposure (alpha) / prev-frame HDR scene
 const int colortex6Format = RGBA16F; // pbrSunVis from d7_composite; also rebound to Luts2.png during composite (shaders.properties). NOT reclaimable.
-// colortex7 = PBR material G-buffer (persistent, written by opaque gbuffers).
-// Its reader (d7b_reflections) is gone; kept for the Phase 3.4 material-aware
-// reflections rebuild. Metals-first layout:
+// colortex7 = PBR material G-buffer (persistent, written by opaque gbuffers
+// under INTEGRATED_PBR). Read by dr0_reflect / dr1_reflect_spatial, the Phase
+// 3.4 traced reflections. Metals-first layout:
 //   .rgb = raw metal albedo (= F0 for the metal Fresnel tint)
 //   .a   = perceptual smoothness (0 = non-reflective; metal pixels > 0)
 // RGBA8 is enough; cleared to 0 so any pixel that doesn't write it is non-metal.

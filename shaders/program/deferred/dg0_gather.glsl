@@ -57,9 +57,16 @@ void main() {
     #define SC_FEEDBACK_WRITE
 #endif
 
+// Far-field answer for rays that exhaust GI_GATHER_DIST. Read-only here;
+// sc3_radiance_cache owns the volume.
+#ifdef RADIANCE_CACHE
+    #define RC_READ
+#endif
+
 #include "/lib/util/common.glsl"
 #include "/lib/util/jitter.glsl"
 #include "/lib/pt/surfaceCache.glsl"
+#include "/lib/pt/radianceCache.glsl"
 #include "/lib/pt/voxelFormat.glsl"
 #include "/lib/pt/directLight.glsl"
 #include "/lib/pt/rand.glsl"
@@ -207,6 +214,24 @@ void main() {
     vec3  incoming = vec3(0.0);
     float occlusion = 0.0;   // short-range AO, accumulated from these same rays
 
+    // Far-field term (Phase 3.2), evaluated ONCE per pixel rather than per ray.
+    //
+    // Every ray that dies on GI_GATHER_DIST without leaving the grid is asking
+    // the same question -- "what is out there past 48 blocks" -- and the answer
+    // does not depend on which ray asked. Evaluating the probe volume once for
+    // the surface normal and reusing it for however many rays ran out is both
+    // cheaper than a per-ray lookup and lower variance, because it removes the
+    // ray-to-ray difference from a term that has none.
+    //
+    // Units line up with the rest of the loop: rcSample returns cosine-weighted
+    // mean incident radiance about the normal, which is what the per-ray values
+    // being summed here already are.
+    vec3  farRadiance = vec3(0.0);
+    bool  farValid    = false;
+    #ifdef RADIANCE_CACHE
+        farValid = rcSample(worldPos, worldNormal, farRadiance);
+    #endif
+
     for (int r = 0; r < rays; ++r) {
         #ifdef GI_BLUE_NOISE
             vec3 dir = stbnCosineHemisphere(worldNormal, pix, frameCounter * GI_GATHER_RAYS + r);
@@ -216,8 +241,12 @@ void main() {
 
         VoxelHit h = traceVoxelCascaded(origin, dir, float(GI_GATHER_DIST), true);
 
-        if (h.hit) {
-            incoming += scLookup(h.pos, h.normal) + h.emission;
+        // A hit the cache does not cover -- an entity box, or a ray that walked
+        // past cascade SC_CASCADES-1 -- has no radiance to look up. Treat it as a
+        // far-field case rather than as a black surface, which is what it used to
+        // read as.
+        if (h.hit && scHasCoverage(h.cascade)) {
+            incoming += scLookupAt(h.pos, h.normal, h.cascade) + h.emission;
 
             // Short-range ambient occlusion, from the ray we already cast.
             //
@@ -255,7 +284,21 @@ void main() {
             #else
                 vec3 skyRad = sampleSky_fast(dir, eyeAlt);
             #endif
-            incoming += skyRad * float(GI_SKY_BRIGHTNESS) * skyWeight + h.emission;
+            vec3 farRad = skyRad * float(GI_SKY_BRIGHTNESS);
+
+            // A ray that ran out of GI_GATHER_DIST inside the grid never saw the
+            // sky; flat sky was a placeholder for a far field nobody had traced.
+            // The radiance cache has traced it, so substitute the real answer.
+            //
+            // The skyVis gate STAYS. It is not sky-specific -- it is this pack's
+            // standing answer to "this ray does not know what is out there", and
+            // the probe volume, at 16-block spacing with a scalar occlusion
+            // heuristic, is not accurate enough to be trusted through a cave
+            // wall. What changes is the colour and direction of the term, which
+            // is where the flat blue wash came from.
+            if (!h.escaped && farValid) farRad = farRadiance;
+
+            incoming += farRad * skyWeight + h.emission;
         }
     }
 

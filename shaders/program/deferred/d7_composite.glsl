@@ -178,7 +178,14 @@ float getInfiniteShadows(vec3 viewPos, vec3 lightDir, float dither, vec3 normalV
     #define SC_FEEDBACK
 #endif
 
+// World radiance cache: the far-field answer shadeDhTerrain uses in place of the
+// hardcoded ambient constant it carried until Phase 3.2.
+#ifdef RADIANCE_CACHE
+    #define RC_READ
+#endif
+
 #include "/lib/pt/surfaceCache.glsl"
+#include "/lib/pt/radianceCache.glsl"
 
 #ifdef DISTANT_HORIZONS
 // dhLighting.glsl provides dhSunShadow (the shadow-map term used below).
@@ -239,28 +246,57 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
                 * (1.0 - rainStrength * 0.75) * lightmap.y * 2.5;
     }
 
-    // Ambient. DH is out of the voxel-GI range, so approximate the near scene's
-    // resolved sky irradiance with the SAME base the cache is fed (irc_update.glsl:
-    // ambientColor * GI_SKY_BRIGHTNESS, warmed by GI_SKY_WARMTH) — this is what
-    // makes the LODs read warm/golden like the near terrain instead of flat-blue.
-    // Hemisphere weight + a mild "sky ambient dims where directly sunlit" term
-    // (mirrors d7's giSkyComponent modulation) give it shape instead of flatness.
+    // Ambient (Phase 3.2 seam).
+    //
+    // DH LOD terrain sits outside every voxel cascade, so there is no surface
+    // cache entry to look up and never will be. What there IS, out to the world
+    // radiance cache's window, is a traced far-field answer: probes on a
+    // 16-block lattice that fired real rays through the same stack and resolved
+    // them through the same surface cache the near field uses.
+    //
+    // Where that volume covers the pixel, use it. Beyond it -- DH draws far
+    // further than 256 blocks -- fall back to the analytic hemisphere fill that
+    // was the only thing here before. The two are deliberately kept in the same
+    // units (cosine-weighted mean incident radiance, albedo-demodulated) so the
+    // hand-off between them is a change of accuracy, not of exposure.
     float shadowLuma = dot(shadow, vec3(0.2126, 0.7152, 0.0722));
-    vec3  giSky = ambientColor * float(GI_SKY_BRIGHTNESS);
-    giSky *= mix(vec3(1.0), vec3(1.25, 1.04, 0.72), GI_SKY_WARMTH);
-    // DH has no voxel GI/AO, so recover large-scale form from its geometry normal.
-    // The previous 65% wall floor erased most of the slope contrast.
-    float hemi = 0.14 + 0.86 * pow(max(worldNormal.y, 0.0), 1.35);
-    // Match the near GI path: sky irradiance yields to visible direct light
-    // instead of stacking a half-strength ambient wash on sun-facing surfaces.
-    vec3 ambient = giSky * skyLight * hemi;
+
+    vec3 ambient;
+    bool ambientTraced = false;
+
+    #if defined(RADIANCE_CACHE) && defined(VOXEL_GI)
+    {
+        vec3 rcRad;
+        if (rcSample(playerPos + cameraPosition, worldNormal, rcRad)) {
+            // No hemisphere weight and no skyLight gate. Both exist to fake
+            // shape and occlusion into a constant; the probe carries real
+            // directionality in its L1 band and real occlusion in the rays that
+            // built it, so applying them on top would double-count.
+            ambient = rcRad;
+            ambientTraced = true;
+        }
+    }
+    #endif
+
+    if (!ambientTraced) {
+        // Raster fallback: approximate the near scene's resolved sky irradiance
+        // with the same base the cache is fed (ambientColor * GI_SKY_BRIGHTNESS,
+        // warmed by GI_SKY_WARMTH) — this is what makes the LODs read
+        // warm/golden like the near terrain instead of flat-blue. Hemisphere
+        // weight + a mild "sky ambient dims where directly sunlit" term give it
+        // shape instead of flatness.
+        vec3 giSky = ambientColor * float(GI_SKY_BRIGHTNESS);
+        giSky *= mix(vec3(1.0), vec3(1.25, 1.04, 0.72), GI_SKY_WARMTH);
+        // DH has no voxel GI/AO, so recover large-scale form from its geometry
+        // normal. The previous 65% wall floor erased most of the slope contrast.
+        float hemi = 0.14 + 0.86 * pow(max(worldNormal.y, 0.0), 1.35);
+        ambient = giSky * skyLight * hemi;
+    }
 
     #ifdef VOXEL_GI
-        // Reproduce d0_trace's energy pipeline for the raster DH fallback. Near
-        // terrain applies GI_STRENGTH, a small light-colour tint, and the source
-        // luminance clamp before d7 receives the resolved indirect buffer. DH
-        // previously skipped all three, so LIGHTING_INDIRECT amplified a much
-        // larger raw ambient value than it did on regular terrain.
+        // Both paths take the producer-side energy pipeline the near field's GI
+        // buffer already carries: GI_STRENGTH, a small light-colour tint, and the
+        // source luminance clamp.
         ambient *= float(GI_STRENGTH) / 100.0;
 
         vec3 normLightCol = lightColor
@@ -273,26 +309,29 @@ vec3 shadeDhTerrain(vec3 viewPos, vec3 albedo) {
         }
     #endif
 
-    float directSkyMask = 1.0 - shadowLuma * max(NdotL, 0.0);
-    ambient *= directSkyMask;
+    // "Sky ambient yields to visible direct light" — a hand-shaped substitute for
+    // the occlusion a flat fill does not have. The traced path has real occlusion
+    // and must not be given this as well.
+    if (!ambientTraced) {
+        float directSkyMask = 1.0 - shadowLuma * max(NdotL, 0.0);
+        ambient *= directSkyMask;
+    }
 
-    // Torch term (matches getLightmap's daylight suppression).
+    // Torch term (matches getLightmap's daylight suppression). Always rasterised.
     float sunUpA = clamp(dot(normalize(sunPosition), normalize(upPosition)), 0.0, 1.0);
     float blockSupp = mix(1.0, 0.05, sunUpA * smoothstep(0.75, 0.9, skyLight));
     vec3  torch = pow(lightmap.x, 5.06) * torchColor * blockSupp;
 
-    vec3 indirect = ambient + torch;
+    direct *= float(LIGHTING_DIRECT) / 100.0;
 
-    direct   *= float(LIGHTING_DIRECT)   / 100.0;
-    // LIGHTING_INDIRECT DOES apply here, and this is the path it is really for.
-    // Everything in `indirect` above is a rasterised fill: `ambient` is a pure
-    // hemisphere term (hemi = 0.14 + 0.86 * pow(n.y, 1.35)) with no occlusion of
-    // any kind, and `torch` is the vanilla blocklight lightmap. Both are scaled
-    // by GI_STRENGTH and GI_SKY_BRIGHTNESS just above so DH LOD matches the
-    // near-field GI's brightness -- but having no occlusion term, it goes flat
-    // as those are raised, which is exactly what LIGHTING_INDIRECT is for
-    // trimming. Phase 3.2 replaces this block with a far-field probe lookup.
-    indirect *= float(LIGHTING_INDIRECT) / 100.0;
+    // LIGHTING_INDIRECT scales RASTERISED fills only -- that is the whole point
+    // of the decoupling in ff0b0d7, and it now applies per-term rather than to
+    // the sum. `torch` is the vanilla blocklight lightmap and always takes it.
+    // `ambient` takes it only when it is the analytic hemisphere fill; when the
+    // radiance cache answered, it is a traced result and belongs to GI_STRENGTH,
+    // exactly like the near field's indirect buffer.
+    float rasterScale = float(LIGHTING_INDIRECT) / 100.0;
+    vec3  indirect = ambient * (ambientTraced ? 1.0 : rasterScale) + torch * rasterScale;
 
     // Small DH-only exposure trim. The LOD albedo is a spatially averaged block
     // colour and therefore retains less dark texture detail than regular terrain;
@@ -528,12 +567,45 @@ void main() {
                 vec3 rd = normalize(getWorldPosition().xyz);
                 VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 256.0, false);
                 #ifdef SC_FEEDBACK
-                    dbg = !dh.hit ? vec3(0.0)
-                        : scRequested(scVoxelForHit(dh.pos, dh.normal))
+                    int fk = dh.hit ? scCoverageCascade(dh.pos) : -1;
+                    dbg = (!dh.hit || fk < 0) ? vec3(0.0)
+                        : scRequested(scVoxelForHit(dh.pos, dh.normal, fk), fk)
                             ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
                 #else
                     dbg = vec3(0.0, 0.0, 1.0); // feedback compiled out
                 #endif
+            #elif GI_DEBUG_VIEW == 9
+                // World radiance cache, evaluated at the primary ray's hit for
+                // that surface's own normal. This is the far-field answer that
+                // replaced flat sky for out-of-range rays and the hardcoded
+                // ambient for Distant Horizons LOD.
+                //
+                // Black where the probe volume does not cover the point (beyond
+                // its window, or every nearby probe rejected by the mean-distance
+                // test); MAGENTA where RADIANCE_CACHE is compiled out, so "the
+                // volume is off" cannot be mistaken for "the volume is dark".
+                #ifdef RADIANCE_CACHE
+                    vec3 rd = normalize(getWorldPosition().xyz);
+                    VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 512.0, false);
+                    vec3 rcRad;
+                    vec3 probePos = dh.hit ? dh.pos : cameraPosition + rd * 64.0;
+                    vec3 probeN   = dh.hit ? dh.normal : -rd;
+                    dbg = rcSample(probePos, probeN, rcRad) ? rcRad : vec3(0.0);
+                #else
+                    dbg = vec3(1.0, 0.0, 1.0);
+                #endif
+            #elif GI_DEBUG_VIEW == 10
+                // Which cascade of the surface cache resolves the primary ray.
+                // GREEN = cascade 0, BLUE = cascade 1, RED = no coverage at all,
+                // which past 256 blocks means SC_CASCADES is set to 1 and every
+                // hit out there is resolving to black.
+                vec3 rd = normalize(getWorldPosition().xyz);
+                VoxelHit dh = traceVoxelCascaded(cameraPosition, rd, 512.0, false);
+                int ck = dh.hit ? scCoverageCascade(dh.pos) : -2;
+                dbg = ck == -2 ? vec3(0.0)
+                    : ck <  0  ? vec3(1.0, 0.0, 0.0)
+                    : ck == 0  ? vec3(0.0, 1.0, 0.0)
+                               : vec3(0.0, 0.3, 1.0);
             #endif
             /* RENDERTARGETS: 0,6 */
             gl_FragData[0] = vec4(dbg, 1.0);

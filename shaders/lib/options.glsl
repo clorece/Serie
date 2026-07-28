@@ -252,9 +252,66 @@ const float renderScale = RENDER_SCALE;
 #define PBR_DIELECTRIC_REFLECT 0.1 // [0.0 0.05 0.1 0.15 0.2 0.3 0.4 0.6 0.8 1.0] non-metal SKY reflection strength only (scene reflection is F0-driven per class)
 #define PBR_DIELECTRIC_SUN 1.0      // [1.0 1.5 2.0 2.5 3.0 4.0 5.0 6.0 8.0] non-metal SUN/MOON glint boost. Higher = stronger sun highlight on non-metals
 
-// The screen-space reflection pass (d7b/d7c) and its ray/march/denoise knobs
-// were removed with the rest of the screen-space lighting. Phase 3.4 rebuilds
-// reflections on the shared Lumen tracing stack and will bring its own options.
+// --- Traced reflections (Phase 3.4) -----------------------------------------
+// Rays are GGX-VNDF importance sampled, traced through the same voxel cascades
+// the diffuse gather uses, and resolved through the same surface cache. No
+// screen-space march: reflections show the whole world, including what is behind
+// the camera, off the edge of the frame, or hidden from the camera's own view --
+// the three things the deleted screen-space pass (d7b/d7c) could never show.
+//
+// REQUIRES INTEGRATED_PBR. The material buffer these read (colortex7) is only
+// written by gbuffers_terrain under that define; with it off, colortex7 clears
+// to zero, every pixel takes the early-out, and this stack costs one texture
+// fetch per pixel and draws nothing.
+//
+// What it cannot do: the surface cache stores DIFFUSE outgoing radiance, so a
+// reflection cannot contain a reflection. A mirror facing a mirror resolves to
+// the diffuse colour of the second mirror's blocks. Lumen has the same property
+// for the same reason.
+
+// Rays per pixel. Low is fine -- the temporal accumulation in dr0 and the
+// history-driven spatial blur in dr1 are what actually resolve the estimate,
+// and each ray is a DDA walk plus one texel fetch with no shading at the hit.
+#define REFLECTION_RAYS 1 // [1 2 3 4 6 8]
+
+// How far a reflection ray travels before giving up and taking the far field.
+// Longer than the diffuse gather on purpose: a reflection is a near-delta lobe,
+// so its ray genuinely points at one place and truncating it is visible, whereas
+// a diffuse ray is one of many being averaged.
+#define REFLECTION_DIST 96 // [32 48 64 96 128 192 256] blocks
+
+// Cone-step promotion distance, SCALED BY ROUGHNESS. A near-mirror gets ~0 and
+// keeps cascade-0 detail the whole way out, because a promoted ray visibly
+// coarsens a sharp reflection; a rough surface integrates over a wide lobe and
+// cannot resolve what promotion discards, so it gets the full value and the
+// speed that comes with it.
+#define REFLECTION_CONE_BASE 32.0 // [8.0 16.0 32.0 64.0 128.0] blocks at roughness 1
+
+// Smoothness below which a pixel is not worth reflecting. Doubles as the
+// performance cutoff: raise it to skip the matte families (dirt, wood, wool,
+// rough stone) while keeping metals and polished blocks.
+#define REFLECTION_SMOOTHNESS_MIN 0.25 // [0.0 0.15 0.25 0.35 0.5 0.65 0.8]
+
+// Reflection denoise: demodulate -> temporally accumulate -> blur spatially ->
+// re-modulate with a sharp per-texel Fresnel. Off composites the raw per-frame
+// rays, which is only useful for A/B-ing the tracer against its filter.
+#define REFLECTION_DENOISE
+#define REFLECTION_ACCUM_FRAMES 24 // [4 8 12 16 24 32 48] max frames blended
+#define REFLECTION_SPATIAL_RADIUS 12.0 // [0.0 4.0 8.0 12.0 16.0 24.0 32.0] max blur radius in pixels, at zero history
+// Skip a spatial tap whose luma exceeds the centre's by this factor, so an
+// emissive spike cannot smear into a streak. 0 disables the test entirely.
+#define REFLECTION_SPATIAL_FIREFLY 4.0 // [0.0 2.0 3.0 4.0 6.0 10.0]
+
+// Per-ray clamps. The hard ceiling catches pathological HDR values before they
+// enter the mean; the Karis weight suppresses a lone bright ray only where rays
+// diverge, so a legitimately bright reflection on a smooth surface is untouched.
+#define REFLECTION_FIREFLY_CLAMP 8.0 // [1.0 2.0 4.0 8.0 16.0 32.0 1000.0]
+#define REFLECTION_FIREFLY_WEIGHT 1.0 // [0.0 0.5 1.0 2.0 4.0]
+
+// How much a reflection dims in shadow / low sky access, driven by the same
+// filtered sun visibility d7 writes to colortex6. 0 = reflections ignore shadow
+// (shiny caves), 1 = fully dark in shadow.
+#define PBR_REFLECT_SHADE 0.5 // [0.0 0.2 0.35 0.5 0.65 0.8 1.0]
 
 #define VOXEL_GI
 
@@ -299,6 +356,29 @@ const float renderScale = RENDER_SCALE;
 // For reference a ray takes up to ~1.73 steps per block, so covering
 // GI_GATHER_DIST 48 needs ~83 steps.
 #define GI_MAX_STEPS 96 // [64 96 128 192 256 384] steps per cascade before a ray gives up
+
+// --- Cone stepping (Phase 3.2) ----------------------------------------------
+// Promote a ray to a coarser cascade by how far it has TRAVELLED, not only by
+// which box it has left. This is the voxel analogue of Lumen's software tracer
+// widening its cone with distance and sampling coarser SDF mips, and it is the
+// single largest ray-cost win available here.
+//
+// A 48-block gather ray used to walk cascade 0 at one block per step for its
+// whole length -- up to 83 steps. Promoting at GI_CONE_BASE and again at double
+// that puts most of the ray on 2- and 4-block voxels: roughly 32 steps for the
+// same reach.
+//
+// This was BLOCKED before SC_CASCADES existed. A promoted ray resolves its hit
+// against the coarser cascade's surface cache, and with the cache covering only
+// cascade 0 every one of those lookups came back black. Turning this on with
+// SC_CASCADES 1 will visibly darken everything past GI_CONE_BASE.
+//
+// The trade is occlusion detail at range: past GI_CONE_BASE a ray sees 2-block
+// voxels, so a one-block gap stops letting light through. That over-occludes
+// slightly, which is the safe direction and is already how the coarse cascades
+// behave for anything that reaches them.
+#define GI_CONE_STEP
+#define GI_CONE_BASE 16.0 // [8.0 12.0 16.0 24.0 32.0 48.0 64.0] blocks before the first promotion
 // Scales the PATH-TRACED GI and nothing else. Applied by the producer
 // (dg0_gather) before the buffer ever reaches d7_composite.
 //
@@ -313,7 +393,7 @@ const float renderScale = RENDER_SCALE;
 #define GI_STRENGTH 150 // [25 50 75 100 150 200]
 #define GI_SKY_BRIGHTNESS 0.2 // [0.1 0.2 0.3 0.4 0.5 0.6 0.75 1.0 2.0 3.0 4.0 6.0 8.0] strength of the path-traced SKYLIGHT (sky-miss) ambient ONLY. Does NOT scale colored sun-bounce or block emission, so LOWER this to prioritize colored GI over the flat skylight wash; raise it for a brighter open-sky ambient.
 #define GI_SKY_WARMTH 0.30 // [0.0 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.65 0.80 1.00] warms the path-traced SKYLIGHT illumination on terrain (more golden, less blue) WITHOUT tinting the rendered sky/clouds/fog. 0 = raw sky color.
-#define GI_EMISSION 0.25   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
+#define GI_EMISSION 0.1   // [0.1 0.25 0.5 0.75 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0] emissive block glow strength
 // Write the 10-bit model-derived shape id into the voxel word. Leave this ON.
 // Its #else branch in gbuffers/shadow.glsl maps shaped blocks to VOXEL_AIR,
 // which deletes every stair, slab, fence and wall from the grid rather than
@@ -341,6 +421,25 @@ const float renderScale = RENDER_SCALE;
 // cost from ray count. See lib/pt/surfaceCache.glsl for the toroidal addressing
 // that lets it survive camera motion.
 #define SURFACE_CACHE
+
+// How many cascades of the clipmap the surface cache covers (Phase 3.2).
+//
+//   1  cascade 0 only -- 256 blocks of lit radiance, 402 MB. Anything a ray hits
+//      beyond that resolves to BLACK, because the slot it addresses belongs to a
+//      different world voxel and the tag correctly rejects it. This was the
+//      pre-3.2 behaviour and it is what made distant geometry unlit rather than
+//      merely approximate.
+//   2  cascades 0-1 -- 512 blocks, 804 MB. Also what makes GI_CONE_STEP sound:
+//      a ray may only be promoted to a coarser cascade if there is radiance
+//      stored there for it to resolve against.
+//
+// Capped at 2 by hardware, not by taste: the image is 128 * 6 * SC_CASCADES
+// texels tall, so three cascades at VOXEL_CASCADE_SIZE 256 would need 2304 and
+// GL_MAX_3D_TEXTURE_SIZE is 2048 on a good deal of hardware.
+//
+// MUST stay in sync with the faceRadianceImg / scRequestImg heights in
+// shaders.properties.
+#define SC_CASCADES 2 // [1 2] cascades of lit radiance
 
 // Refresh period for the FAR field, in frames. Voxels closer than SC_NEAR_DIST
 // refresh every frame regardless; the two bands between there and SC_FAR_DIST
@@ -427,6 +526,60 @@ const float renderScale = RENDER_SCALE;
 // SC_UPDATE_STRIDE * SC_FACE_STRIDE / SC_BLEND frames.
 #define SC_BLEND 0.25 // [0.05 0.1 0.15 0.25 0.4 0.6 1.0]
 
+// --- World radiance cache (Phase 3.2) ----------------------------------------
+// A sparse volume of irradiance probes that answers "what does the far field
+// look like from here" -- the question a ray that ran out of range is actually
+// asking, and one the surface cache structurally cannot answer because such a
+// ray has no hit point to look up.
+//
+// It replaces two placeholders:
+//   - gather and surface-cache-bounce rays that exhaust their distance used to
+//     receive flat sky scaled by the surface's skylight, which is why a large
+//     room lit through a doorway read as a uniform blue wash instead of as light
+//     coming from the doorway;
+//   - shadeDhTerrain had no traced answer at all and used a hardcoded
+//     ambientColor * GI_SKY_BRIGHTNESS constant.
+//
+// 32 x 16 x 32 = 16384 probes of L1 spherical harmonics, four RGBA16F texels
+// each: 512 KB total, and a few thousand rays a frame. It is by an order of
+// magnitude the cheapest pass in the tracing stack.
+//
+// Turn it off to fall back to the flat-sky and hardcoded-ambient behaviour.
+#define RADIANCE_CACHE
+
+// Probe spacing in blocks. The probe COUNT is fixed, so this is purely a
+// range-vs-resolution trade: 16 covers 512 x 256 x 512 blocks around the camera,
+// which comfortably contains the gather's reach and the near Distant Horizons
+// ring. Raising it reaches further into the DH field at the cost of interpolating
+// far-field light across larger rooms.
+#define RC_SPACING 16 // [8 12 16 24 32] blocks between probes
+
+// Rays per probe per refresh, uniform over the sphere (a probe has no normal, so
+// nothing privileges a hemisphere). This buys angular accuracy in the L1 fit,
+// not bounce count -- bounces come from resolving each hit through the surface
+// cache, which already contains them.
+#define RC_RAYS 16 // [4 8 16 24 32 48 64]
+
+// How far a probe ray travels. Long on purpose: a ray that crosses this much
+// Minecraft geometry without hitting anything is outdoors essentially by
+// definition, which is what lets sc3 treat every miss as sky without the
+// cave-flooding that the same assumption would cause in the 48-block gather.
+#define RC_RAY_DIST 128 // [64 96 128 192 256 384] blocks
+
+// Probe rays cone-step hard from the first metre: this volume stores far-field
+// light at 16-block spacing, so cascade-0 detail along its rays is precision
+// nothing downstream could resolve.
+#define RC_CONE_BASE 8.0 // [4.0 8.0 16.0 32.0 0.0] blocks before promotion; 0 = off
+
+// Frames between refreshes for a probe that already holds a valid estimate.
+// Probes with NO history ignore this and trace immediately, so a newly exposed
+// shell of the volume never reads as "no coverage".
+#define RC_UPDATE_STRIDE 4 // [1 2 4 8 16] frames per probe refresh
+
+// Temporal blend weight per refresh. RC_RAYS is far too few to use raw, so the
+// volume is its own accumulator, exactly as the surface cache is.
+#define RC_BLEND 0.15 // [0.05 0.1 0.15 0.25 0.4 0.6 1.0]
+
 // --- Lumen GI ----------------------------------------------------------------
 // The ReSTIR reservoirs, the SVGF a-trous denoiser, GTAO and the voxel-AO path
 // are gone (Phase 1). What remains here are the options that surviving code
@@ -507,7 +660,7 @@ const float renderScale = RENDER_SCALE;
 //
 // 3x3 taps per pass (9), not SVGF's 5x5 (25). Four passes reach a 31x31 footprint
 // for 36 taps, where one 31x31 gather would be 961.
-#define GI_DENOISE_QUALITY 2 // [0 1 2 3] off / low / balanced / quality
+#define GI_DENOISE_QUALITY 3 // [0 1 2 3] off / low / balanced / quality
 
 // Edge-stopping tolerances. Raise to blur across more of an edge, lower to
 // preserve more detail at the cost of leaving noise.
@@ -533,7 +686,7 @@ const float renderScale = RENDER_SCALE;
 // Costs no extra rays -- it reuses the hit distance the gather already has.
 #define GI_CONTACT_AO
 #define GI_AO_RADIUS 4.0 // [1.0 2.0 3.0 4.0 6.0 8.0 12.0] blocks; hits nearer than this darken, further ones do not
-#define GI_AO_STRENGTH 0.7 // [0.0 0.25 0.4 0.55 0.7 0.85 1.0] 0 = off, 1 = fully dark in a sealed corner
+#define GI_AO_STRENGTH 2.0 // [0.0 0.25 0.4 0.55 0.7 0.85 1.0] 0 = off, 1 = fully dark in a sealed corner
 
 #define GI_SKY_LEAK_FALLOFF 2.0 // [1.0 1.5 2.0 3.0 4.0 6.0]
 
@@ -547,15 +700,20 @@ const float renderScale = RENDER_SCALE;
 //   7 = tag the reader EXPECTS (same ramp) -- compare with 6
 //   8 = feedback coverage: green = brick stamped recently and being refreshed,
 //       red = frozen, blue = SURFACE_CACHE_FEEDBACK compiled out
+//   9 = world radiance cache at the primary ray's hit (Phase 3.2). Black = the
+//       probe volume does not cover that point; magenta = RADIANCE_CACHE is off
+//  10 = which surface-cache cascade resolves the primary ray: green = 0,
+//       blue = 1, RED = no coverage (at SC_CASCADES 1 everything past 256
+//       blocks reads red, and every hit out there is resolving to black)
 // If 3 is lit but 1 is black, the gather is at fault. If 3 is black, the surface
 // cache update (sc1_surface_direct) is -- then compare 4 and 5: lit in 4 but
 // black in 3 means the tag is wrongly rejecting entries; black in both means
 // those slots are simply never written (a dispatch-coverage problem).
-#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8]
+#define GI_DEBUG_VIEW 0 // [0 1 2 3 4 5 6 7 8 9 10]
 
 // Temporal accumulation. The surface cache is already converged, so this is a
 // light denoise rather than the old SVGF-scale machinery.
-#define GI_ACCUM_FRAMES 32 // [8 16 24 32 48 64 128] max frames blended
+#define GI_ACCUM_FRAMES 16 // [8 16 24 32 48 64 128] max frames blended
 #define GI_REJECT_DEPTH 0.1 // [0.02 0.05 0.1 0.15 0.25] relative depth jump that counts as disocclusion
 #define GI_REJECT_NORMAL 0.85 // [0.5 0.7 0.8 0.85 0.92 0.97] min dot(prevNormal, normal) to reuse history
 

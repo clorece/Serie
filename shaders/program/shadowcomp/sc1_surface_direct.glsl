@@ -1,9 +1,17 @@
 // sc1_surface_direct : surface cache update (direct light + radiosity)
 //
-// One thread per cascade-0 voxel; each thread lights all six of its faces and
-// writes their outgoing radiance into faceRadianceImg. Runs in shadowcomp, after
-// the shadow pass has both rasterised the voxel grid and filled the shadow map,
-// so the voxel word and the sun visibility this pass needs are already current.
+// One thread per cached voxel across SC_CASCADES cascades; each thread lights
+// all six of that voxel's faces and writes their outgoing radiance into
+// faceRadianceImg. Runs in shadowcomp, after the shadow pass has both rasterised
+// the voxel grid and filled the shadow map, so the voxel word and the sun
+// visibility this pass needs are already current.
+//
+// Phase 3.2 widened this from cascade 0 to the cascade set. The cost is far
+// below the naive multiple: a coarse cascade holds the same voxel COUNT spread
+// over eight times the volume, so its near field is an eighth of cascade 0's
+// work, and everything past SC_NEAR_DIST still has to earn its refresh through
+// the feedback gate -- which, because gather rays stamp the cascade they
+// actually resolved through, requests exactly the coarse bricks being read.
 //
 // Cost is fixed and independent of screen resolution -- the whole point of a
 // world-space cache. Four gates keep that fixed cost small, applied in
@@ -60,8 +68,18 @@
     #define SC_FEEDBACK
 #endif
 
+// Far-field terminator for bounce rays that run out of range. READ side only:
+// sc3_radiance_cache owns the image, and it runs after this pass, so what is
+// read here is one frame old. Harmless -- the volume's own temporal blend has a
+// far longer time constant than a frame, which is the same argument the sky LUT
+// and the surface cache itself already rely on.
+#ifdef RADIANCE_CACHE
+    #define RC_READ
+#endif
+
 #include "/lib/util/common.glsl"
 #include "/lib/pt/surfaceCache.glsl"
+#include "/lib/pt/radianceCache.glsl"
 #include "/lib/pt/voxelFormat.glsl"
 #include "/lib/pt/directLight.glsl"
 #include "/lib/pt/rand.glsl"
@@ -106,16 +124,24 @@
 layout(local_size_x = 256) in;
 const ivec3 workGroups = ivec3(4096, 1, 1);
 
-// Voxel word at a cascade-0 LOCAL coordinate, or air outside the volume.
-uint fetchLocal(ivec3 local) {
+// Voxel word at a cascade-k LOCAL coordinate, or air outside the volume.
+uint fetchLocal(ivec3 local, int k) {
     if (any(lessThan(local, ivec3(0))) || any(greaterThanEqual(local, CASCADE_DIMS))) {
-        return 0u; // outside cascade 0 -> treat as air, so border faces stay lit
+        return 0u; // outside the cascade -> treat as air, so border faces stay lit
     }
-    return texelFetch(voxelSampler, cascadeAtlasCoord(local, 0), 0).r;
+    return texelFetch(voxelSampler, cascadeAtlasCoord(local, k), 0).r;
 }
 
 void updateVoxel(uint idx) {
-    // --- flat index -> cascade-0 local coordinate ---------------------------
+    // --- flat index -> cascade + local coordinate ---------------------------
+    // The cascade is the OUTER division so each cascade's slice of the index
+    // space stays contiguous, which keeps the brick-major ordering below (and
+    // therefore the group-uniform occupancy test) intact within each one.
+    int  k     = int(idx / uint(SC_VOXELS_PER_CASCADE));
+    uint local1D = idx % uint(SC_VOXELS_PER_CASCADE);
+    float vs   = cascadeVoxelSize(k);
+
+    // --- flat index -> cascade-local coordinate -----------------------------
     // BRICK-MAJOR ordering, deliberately: consecutive threads walk one 8^3 brick
     // to completion before moving to the next, so a 256-thread work group lands
     // entirely inside a single brick and the occupancy test below is uniform
@@ -131,8 +157,8 @@ void updateVoxel(uint idx) {
     // exactly once.
     const ivec3 bDims = ivec3(SC_XZ >> 3, SC_Y >> 3, SC_XZ >> 3);
 
-    int brickIdx = int(idx >> 9);   // 512 voxels per 8^3 brick
-    int inBrick  = int(idx & 511u);
+    int brickIdx = int(local1D >> 9);   // 512 voxels per 8^3 brick
+    int inBrick  = int(local1D & 511u);
 
     ivec3 b;
     b.x =  brickIdx % bDims.x;
@@ -141,8 +167,17 @@ void updateVoxel(uint idx) {
 
     ivec3 local = b * 8 + ivec3(inBrick & 7, (inBrick >> 3) & 7, (inBrick >> 6) & 7);
 
-    ivec3 org = scCascadeOriginVoxel();
+    ivec3 org = scCascadeOriginVoxel(k);
     ivec3 wv  = org + local;
+
+    // World-space centre of this voxel, in ITS cascade's units.
+    vec3 centre = (vec3(wv) + 0.5) * vs;
+
+    // NOTE: there is deliberately no "skip coarse voxels that a finer cascade
+    // already covers" gate here, even though it would halve this pass. Cone
+    // stepping resolves hits in cascade 1 after only GI_CONE_BASE metres, well
+    // inside cascade 0's window, and those slots must be live or every promoted
+    // ray in the near field reads black. See surfaceCache.glsl.
 
     // --- gate 1: distance band (pure ALU, no memory touched) ----------------
     //
@@ -152,7 +187,7 @@ void updateVoxel(uint idx) {
     // frame the sun moves while the far corner of the cascade -- a handful of
     // pixels, seen through the temporal filter anyway -- takes
     // SC_UPDATE_STRIDE frames.
-    vec3  dcam      = vec3(wv) + 0.5 - cameraPosition;
+    vec3  dcam      = centre - cameraPosition;
     float dist2     = dot(dcam, dcam);
     bool  nearField = dist2 < float(SC_NEAR_DIST * SC_NEAR_DIST);
 
@@ -169,13 +204,13 @@ void updateVoxel(uint idx) {
     // gather ray within SC_REQUEST_TTL frames. Bricks nothing looks at hold
     // their last value; nothing reads them, so nothing notices.
     #ifdef SC_FEEDBACK
-    if (!nearField && !scRequested(wv)) return;
+    if (!nearField && !scRequested(wv, k)) return;
     #endif
 
     // --- gate 3: refresh phase ----------------------------------------------
     if (period > 1) {
         uint phase = pcgHash(uint(wv.x * 73856093) ^ uint(wv.y * 19349663)
-                           ^ uint(wv.z * 83492791));
+                           ^ uint(wv.z * 83492791) ^ (uint(k) * 2654435761u));
         // Every period the ladder can produce is a power of two, so the mask is
         // exact and this stays a single AND. Hashing the phase spreads updates
         // as dither instead of the planar sweep a slab stride produced.
@@ -188,10 +223,10 @@ void updateVoxel(uint idx) {
     // data, both of which stay in cache. Roughly nine tenths of this volume is
     // open air, and before these tests every one of those threads paid a fetch
     // into the 134 MB voxel atlas to learn it.
-    if (texelFetch(superBrickSampler, cascadeSuperCoord(local, 0), 0).r == 0u) return;
-    if (texelFetch(brickSampler,      cascadeBrickCoord(local, 0), 0).r == 0u) return;
+    if (texelFetch(superBrickSampler, cascadeSuperCoord(local, k), 0).r == 0u) return;
+    if (texelFetch(brickSampler,      cascadeBrickCoord(local, k), 0).r == 0u) return;
 
-    uint w = fetchLocal(local);
+    uint w = fetchLocal(local, k);
 
     // Air voxels are left alone rather than cleared.
     //
@@ -227,7 +262,7 @@ void updateVoxel(uint idx) {
     float rain      = 1.0 - rainStrength * 0.75;
     float eyeAlt    = ptEyeAltitude();
     uint  vHash     = pcgHash(uint(wv.x * 73856093) ^ uint(wv.y * 19349663)
-                            ^ uint(wv.z * 83492791));
+                            ^ uint(wv.z * 83492791) ^ (uint(k) * 2246822519u));
     uint  seed      = pcgHash(vHash ^ uint(frameCounter) * 2654435761u);
 
     // Sky access, straight out of the voxel word.
@@ -258,7 +293,7 @@ void updateVoxel(uint idx) {
         // The previous value is needed for the temporal blend regardless, so
         // reading it first costs nothing and lets both gates below decide
         // whether the rest of this face's work is worth doing at all.
-        vec4 prev  = imageLoad(faceRadianceImg, scImageCoord(wv, f));
+        vec4 prev  = imageLoad(faceRadianceImg, scImageCoord(wv, f, k));
         bool valid = abs(prev.a - tag) < 0.5;
 
         // Face round-robin: Lumen's per-frame card-capture budget, one level
@@ -276,15 +311,17 @@ void updateVoxel(uint idx) {
         // change something -- in the steady state a buried face is already black
         // with a matching tag, and rewriting that every refresh was most of what
         // remained of this pass's write traffic.
-        if (!voxelIsAir(fetchLocal(local + scFaceOffset(f)))) {
-            if (!valid || any(greaterThan(prev.rgb, vec3(0.0)))) scImageStore(wv, f, vec3(0.0));
+        if (!voxelIsAir(fetchLocal(local + scFaceOffset(f), k))) {
+            if (!valid || any(greaterThan(prev.rgb, vec3(0.0)))) scImageStore(wv, f, k, vec3(0.0));
             continue;
         }
 
         // Face centre, lifted off the plane so neither the shadow lookup nor the
-        // bounce rays start inside the block they belong to.
-        vec3 faceCentre = vec3(wv) + 0.5 + n * 0.5;
-        vec3 origin     = faceCentre + n * 0.02;
+        // bounce rays start inside the block they belong to. Every offset here is
+        // in units of THIS cascade's voxel, so a coarse face lifts proportionally
+        // rather than starting a bounce ray inside its own 8-metre cell.
+        vec3 faceCentre = centre + n * (0.5 * vs);
+        vec3 origin     = faceCentre + n * (0.02 * vs);
 
         // --- direct ---------------------------------------------------------
         vec3  direct = emission;
@@ -292,7 +329,7 @@ void updateVoxel(uint idx) {
         if (NdotL > 0.0) {
             // isInShadow wants a CAMERA-RELATIVE position: it applies
             // shadowModelView, which is already camera-centred.
-            if (!isInShadow(origin + n * 0.03 - cameraPosition)) {
+            if (!isInShadow(origin + n * (0.03 * vs) - cameraPosition)) {
                 direct += albedo * lightCol * NdotL * rain;
             }
         }
@@ -312,14 +349,22 @@ void updateVoxel(uint idx) {
         // --- indirect -------------------------------------------------------
         // Cosine-weighted, so the estimator is a plain mean: no 1/pdf, no NdotL.
         vec3 incoming = vec3(0.0);
+        // Bounce range scales with the cell. A cascade-1 voxel is a 2-metre cube
+        // whose neighbourhood is twice as coarse, so holding it to the cascade-0
+        // reach would make its estimate a study of its own immediate surroundings.
+        float bounceDist = float(SC_BOUNCE_DIST) * vs;
         for (int r = 0; r < SC_BOUNCE_RAYS; ++r) {
             vec3 dir = cosHemisphereDir(n, randFloat(seed), randFloat(seed));
-            VoxelHit h = traceVoxelCascaded(origin, dir, float(SC_BOUNCE_DIST), true);
+            VoxelHit h = traceVoxelCascaded(origin, dir, bounceDist, true);
 
-            if (h.hit) {
+            // A hit outside the cache's coverage (an entity box, or a ray that
+            // walked past cascade SC_CASCADES-1) has nothing to look up; let it
+            // fall through to the far-field branch instead of contributing black.
+            if (h.hit && scHasCoverage(h.cascade)) {
                 // The whole point: resolve the hit through the cache instead of
                 // shading it. Emitters passed through on the way are additive.
-                incoming += scImageLookup(h.pos, h.normal) + h.emission;
+                // At the cascade that RESOLVED it -- see scLookupAt.
+                incoming += scImageLookupAt(h.pos, h.normal, h.cascade) + h.emission;
 
                 // ONE level of feedback propagation, and only from the near
                 // field. This keeps the surfaces that light what you are
@@ -329,8 +374,13 @@ void updateVoxel(uint idx) {
                 // saturate the cascade in about eight frames -- see the note in
                 // surfaceCache.glsl. Near-field voxels refresh unconditionally,
                 // so the shell they warm cannot itself propagate further.
+                //
+                // Stamp the cascade the READER would resolve this hit through,
+                // not the one being updated: a cascade-0 face's bounce ray can
+                // easily land somewhere only cascade 1 covers, and stamping the
+                // wrong slice would keep the wrong bricks warm.
                 #ifdef SC_FEEDBACK
-                if (nearField) scRequestAt(scVoxelForHit(h.pos, h.normal));
+                if (nearField) scRequestAt(scVoxelForHit(h.pos, h.normal, h.cascade), h.cascade);
                 #endif
             } else {
                 // A ray that left the cascades outright sees sky unconditionally.
@@ -352,7 +402,22 @@ void updateVoxel(uint idx) {
                 #else
                     vec3 skyRad = sampleSky_fast(dir, eyeAlt);
                 #endif
-                incoming += skyRad * float(GI_SKY_BRIGHTNESS) * skyWeight + h.emission;
+                vec3 farRad = skyRad * float(GI_SKY_BRIGHTNESS);
+
+                // Far field (Phase 3.2). A ray that ran out of bounceDist while
+                // still inside the grid has NOT seen the sky -- it has seen
+                // nothing, and flat sky was only ever a placeholder for that.
+                // The world radiance cache holds a real traced answer for where
+                // it stopped, so use that instead. Escaped rays keep the sky:
+                // they genuinely left the cascades and nothing can occlude them.
+                #ifdef RADIANCE_CACHE
+                if (!h.escaped) {
+                    vec3 rcRad;
+                    if (rcSample(h.pos, dir, rcRad)) farRad = rcRad;
+                }
+                #endif
+
+                incoming += farRad * skyWeight + h.emission;
             }
         }
         incoming *= 1.0 / float(SC_BOUNCE_RAYS);
@@ -375,7 +440,7 @@ void updateVoxel(uint idx) {
         // loop, where the round-robin gate also needed them.)
         vec3 outR = valid ? mix(prev.rgb, total, SC_BLEND) : total;
 
-        scImageStore(wv, f, outR);
+        scImageStore(wv, f, k, outR);
     }
 }
 
@@ -387,7 +452,7 @@ void main() {
     // budget by distance instead of spreading it uniformly over a volume that is
     // mostly out of sight. A thread that bails costs a few ALU and two fetches
     // that never leave L1.
-    uint total  = uint(SC_XZ * SC_Y * SC_XZ);
+    uint total  = uint(SC_VOXELS_PER_CASCADE) * uint(SC_CASCADES);
     // The REAL dispatch, whatever it turned out to be -- not what workGroups
     // asked for. Guarded against a degenerate report so this can never spin.
     uint stride = max(gl_NumWorkGroups.x * gl_WorkGroupSize.x, 1u);

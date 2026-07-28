@@ -2,4 +2,4 @@
 #define VERTEX
 #include "/lib/uniforms.glsl"
 
-#include "/program/deferred/dr1_reflect_spatial.glsl"
+#include "/program/deferred/d8_fog_sky.glsl"
