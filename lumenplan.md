@@ -360,10 +360,15 @@ STATUS
     [x] Phase 2   gate sub-block BLAS behind VOXEL_BLAS    6462309
     [x] Phase 3.1 surface cache                            40440b9
     [x] Phase 3.3 final gather + Phase 4 d7 seam           1860503
-    [ ] Phase 3.2 world radiance cache      NOT STARTED (deliberately deferred)
-    [ ] Phase 3.4 reflections               NOT STARTED
+    [x] Phase 3.2 far field: multi-cascade surface cache + cone stepping
+                  + world radiance cache probes + DH seam
+    [x] Phase 3.4 reflections on the tracing stack
 
-  Five optimisation passes then landed on top. The pipeline runs and is fast.
+  Every phase in this plan is now implemented. Nothing below "NEXT WORK" is
+  outstanding except verification and tuning.
+
+  Five optimisation passes landed on top of Phase 3.3; the pipeline ran and was
+  fast at that point. Phases 3.2 and 3.4 then landed and have NOT been run.
 
 WHAT IS AND IS NOT CONFIRMED IN-ENGINE — READ THIS FIRST
 
@@ -372,7 +377,14 @@ WHAT IS AND IS NOT CONFIRMED IN-ENGINE — READ THIS FIRST
     2062fea  surface cache feedback
     aa71d79  step-budget teleport fix + adaptive gather rays
 
-  NOT YET SEEN RUNNING. Compile-validated only:
+  NOT YET SEEN RUNNING. Compile-validated only.
+  Everything in Phase 3.2 and 3.4 belongs in this list -- see NEXT WORK for the
+  order to check them in:
+    (3.2)    multi-cascade surface cache, cone stepping, world radiance cache,
+             the shadeDhTerrain far-field seam
+    (3.4)    dr0_reflect / dr1_reflect_spatial, and the traceVoxelOccluded fixes
+
+  Older, still unconfirmed:
     aeab753  emitter palette baked to SSBO
     ae89987  sky SH
     a786d87  emitter AABBs baked
@@ -391,24 +403,34 @@ ARCHITECTURE AS BUILT
     shadowcomp   sc0_entity_bvh
     shadowcomp1  sc1_surface_direct  surface cache update
     shadowcomp2  sc2_sky_sh          sky -> 9 SH coefficients
+    shadowcomp3  sc3_radiance_cache  world radiance cache probes (3.2)
     prepare      p0_atmosphere_lut
     prepare1     p1_cloud_shadow
     deferred     dg0_gather          final gather -> ct8, ct15
     deferred1-4  dg1_denoise1..4     a-trous strides 1/2/4/8
     deferred5    d7_composite        lighting hub
-    deferred6    d8_fog_sky
-    deferred7    d9_vl
+    deferred6    dr0_reflect         traced reflections -> ct4 (3.4)
+    deferred7    dr1_reflect_spatial reflection denoise + THE composite (3.4)
+    deferred8    d8_fog_sky
+    deferred9    d9_vl
     composite..  unchanged
 
-  NOTE the renumbering: d7/d8/d9 used to be deferred1/2/3.
+  NOTE the renumbering, twice over: d7/d8/d9 used to be deferred1/2/3, and
+  Phase 3.4 pushed d8/d9 from deferred6/7 to deferred8/9.
 
   Images
     voxelImg         256x512x256 R32UI   cascaded grid, clear=true
     brickImg/super   hierarchical occupancy, clear=true
-    faceRadianceImg  256x768x256 RGBA16F surface cache, ~402 MB, clear MUST be false
-    scRequestImg     32x16x32 R8UI       feedback stamps, 16 KB, clear MUST be false
+    faceRadianceImg  256x1536x256 RGBA16F surface cache, ~805 MB at SC_CASCADES 2
+                                          (402 MB per cascade), clear MUST be false
+    scRequestImg     32x32x32 R8UI       feedback stamps, 16 KB per cascade,
+                                          clear MUST be false
+    giProbeImg       32x64x32 RGBA16F    world radiance cache, 512 KB,
+                                          clear MUST be false
 
   Buffers
+    ct4   reflections: .rgb DEMODULATED env reflection (no Fresnel tint),
+          .a temporal history length. dr0 writes, dr1 blurs and composites.
     ct8   GI: .rgb indirect, .a history length. dg0_gather's temporal history.
     ct9   denoise ping-pong
     ct10  denoise ping-pong
@@ -511,6 +533,75 @@ WHAT THE OPTIMISATION PASSES DID, AND THE TRAPS IN THEM
      rasterised fills: the analytic lightmap fallback, and shadeDhTerrain's
      hemisphere ambient. Previously the only way to trim the flat raster ambient
      was to attenuate the traced result by the same factor.
+     Phase 3.2 made that per-TERM rather than per-sum inside shadeDhTerrain: the
+     torch fill always takes it, the ambient takes it only when it is the
+     analytic hemisphere and not when the radiance cache answered.
+
+PHASE 3.2 AND 3.4 — WHAT THEY DID, AND THE TRAPS IN THEM
+
+  The through-line: everything past the surface cache's reach was a placeholder,
+  and the placeholders were load-bearing in ways that were not obvious.
+
+ 13. THE SURFACE CACHE COVERS SC_CASCADES CASCADES, not just cascade 0. Before
+     this, any ray that hit past 256 blocks addressed a slot belonging to a
+     different world voxel; the tag correctly rejected it and the ray came back
+     BLACK. Distant geometry was not approximate, it was unlit.
+     ** THE TRAP, and it cost a rewrite mid-implementation: it is tempting to
+     skip a coarse voxel that sits well inside a finer cascade, on the grounds
+     that a reader would have picked the finer one. That halves the update pass
+     and it is WRONG, because cone stepping resolves hits in cascade 1 after only
+     GI_CONE_BASE metres -- deep inside cascade 0's window -- and those slots must
+     be live. Every cascade is maintained everywhere. **
+     The cost is far under the naive doubling anyway: a coarse cascade holds the
+     same voxel COUNT over eight times the volume, so its near field is an eighth
+     of cascade 0's work.
+
+ 14. VoxelHit CARRIES THE CASCADE THAT RESOLVED IT, and the cache must be read
+     there -- NOT at scCoverageCascade(hit.pos). The two differ whenever cone
+     stepping promoted the ray, and the difference is not subtle: a hit found in
+     cascade 1 lies on a 2-block voxel face whose cascade-0 neighbour is usually
+     AIR, because a coarse voxel counts as occupied if any block inside it is.
+     Asking cascade 0 lands on a slot nothing ever wrote and reads black.
+     scLookupAt / scImageLookupAt take the cascade explicitly for this reason;
+     the inferring scLookup remains only for the debug views, which have a
+     position and no trace result.
+
+ 15. CONE STEPPING, clamped to the cache's coverage. See headroom item (a) below
+     for why the clamp costs half the theoretical win and what would lift it.
+     ** TRAP: the LAST cascade a ray may be promoted into must never be distance-
+     capped -- not the coarsest one, and not SC_CASCADES-1. Capping it strands the
+     ray in mid-grid with nowhere to promote to; it falls out of the cascade loop
+     and `escaped` claims it reached open sky. That is the step-budget teleport
+     defect again, in a new place. **
+
+ 16. WORLD RADIANCE CACHE, as an L1 SH probe volume rather than more cascades.
+     The handoff previously suggested coarser cascades INSTEAD of a probe grid.
+     Both were built, because they answer different questions: coarser cascades
+     fix far HITS, and cannot fix a ray that stopped in mid-air (no face to
+     address) or Distant Horizons terrain (past every cascade). Those are exactly
+     the two jobs Phase 3.2 was specified to do, so the probe volume is what
+     actually does them. It is 512 KB and a few thousand rays a frame.
+     Leak control is a scalar mean-hit-distance per probe, not DDGI's directional
+     Chebyshev test -- enough to reject a probe buried in rock, not enough to
+     reject one in the next room, so callers still apply their own sky gate.
+     ** TRAP: probe rays treat EVERY miss as sky, including a non-escaped one.
+     The gather must not do that -- at 48 blocks inside a cave nearly every ray
+     dies without hitting anything, and charging them sky floods the cave. Probe
+     rays run RC_RAY_DIST (128), where a miss really does mean open sky. Do not
+     "fix" the inconsistency by making them match. **
+
+ 17. REFLECTIONS TRACE THE SAME STACK. No screen-space march at all: the deleted
+     d7b marched the depth buffer, so it could not show anything behind the
+     camera, off-frame, or occluded from the camera's view. The denoiser IS the
+     old one, deliberately -- ratio-estimator demodulation, Karis ray weighting,
+     screen-velocity rejection, adaptive blur radius all survive.
+     Cone base scales with ROUGHNESS: a near-mirror gets 0 (no promotion, full
+     detail at range), a rough surface gets the full value and the speed.
+     ** TRAP: dr0 and dr1 repeat the same early-out test. They must agree, or a
+     pixel composites against a colortex4 value dr0 never wrote. **
+     Limit worth knowing: the cache stores DIFFUSE outgoing radiance, so a
+     reflection cannot contain a reflection. Two facing mirrors resolve to each
+     other's diffuse block colour. Lumen has the same property.
 
 THINGS RULED OUT BY INSPECTION — do not re-investigate
 
@@ -544,11 +635,13 @@ REVERTED, BUT THE FINDING STANDS
 
 KNOWN DEFECTS STILL OPEN
 
-  - Torch occlusion asymmetry: traceVoxelCascaded resolves a torch through its
-    light shape, traceVoxelOccluded blocks on the whole voxel. Currently moot --
-    traceVoxelOccluded has ZERO callers since the per-face sky probe was removed
-    -- but it will bite Phase 3.4. It also still carries the teleport bug, which
-    was only fixed in traceVoxelCascaded.
+  - FIXED in Phase 3.4. traceVoxelOccluded carried both the torch asymmetry
+    (it blocked on the whole voxel where traceVoxelCascaded resolves the light
+    shape) and the step-budget teleport. It now routes emitters through
+    intersectLightShape, and a starved ray returns OCCLUDED rather than
+    teleporting past a span it never examined -- the conservative direction for
+    an any-hit query, and the likely answer besides, since brick skipping means
+    open air costs almost no steps.
   - Pre-existing, unrelated: shaders.properties lists SHADOW_BIAS and
     SHADOW_DISTORT_FACTOR in screen.Light but neither has a #define.
 
@@ -614,38 +707,83 @@ VERIFICATION HARNESS
 
 NEXT WORK, IN ORDER
 
-  1. Verify the seven unconfirmed commits in-engine, appearance ones first:
-     contact AO, denoiser, sky SH, LIGHTING_INDIRECT. Debug views 1, 5 and 8.
-  2. Tune: GI_AO_STRENGTH / GI_AO_RADIUS (contact shading),
-     GI_DN_SIGMA_* (denoiser edge stopping), GI_SKY_BRIGHTNESS vs GI_STRENGTH
-     (sky wash vs coloured bounce), GI_SKIP_PERIOD, GI_MAX_STEPS.
-  3. Phase 3.2 world radiance cache. Two jobs: give rays that exhaust
-     GI_GATHER_DIST / SC_BOUNCE_DIST a real far-field answer, and replace the
-     hardcoded DH ambient in shadeDhTerrain with a far-field probe lookup.
-     ** Consider extending faceRadianceImg to coarser cascades INSTEAD of a
-     separate probe grid. Old Lumen used exactly this: a 4-cascade voxel
-     clipmap storing radiance in 6 directions, which is the structure already
-     here. It would also unblock cone-stepping (below). Cost: cascade 0 is
-     402 MB, so 2 cascades ~804 MB. R11F_G11F_B10F becomes worth revisiting at
-     that size -- it was dropped earlier only because bandwidth stopped
-     mattering at one cascade. **
-  4. Phase 3.4 reflections on the same stack: sampleGGXVNDF -> voxel trace ->
-     surface cache lookup. colortex7 and the pbrSunVis output on colortex6 were
-     both kept live for this. Free slots: ct4, ct11, ct14.
+  All implementation in this plan is done. What remains is verification and
+  tuning -- and the list of things never seen running is now LONGER, not shorter,
+  so treat it as the priority.
+
+  1. Verify in-engine. NOTHING in Phase 3.2 or 3.4 has been run; both were
+     written and compile-validated only, against all 69 programs and across
+     SC_CASCADES 1/2, RADIANCE_CACHE on/off, GI_CONE_STEP on/off,
+     INTEGRATED_PBR on/off, SPECULAR_REFLECTIONS on/off, VOXEL_BLAS on/off,
+     VOXEL_CASCADE_SIZE 128/256 and every debug view. That proves they compile
+     and nothing more.
+
+     In order, cheapest diagnosis first:
+       GI_DEBUG_VIEW 10  which cascade resolves the primary ray. Green = 0,
+                         blue = 1, RED = no coverage. Red anywhere inside 512
+                         blocks means the cascade-1 slice is not being written.
+       GI_DEBUG_VIEW 5   cache coverage. Should stay green much further out
+                         than before; red past 256 blocks means cascade 1 is
+                         addressed or dispatched wrongly.
+       GI_DEBUG_VIEW 9   the world radiance cache at the primary ray's hit.
+                         Magenta = compiled out. Black = no probe coverage,
+                         which past ~256 blocks is expected and inside it is a
+                         bug.
+       GI_DEBUG_VIEW 8   feedback coverage, as before. Watch for saturation
+                         (mostly green everywhere) now that promoted rays stamp
+                         cascade-1 bricks too.
+
+     Then the appearance changes, which are the ones most likely to look wrong:
+       - Distant Horizons LOD ambient. Where the probe volume covers a DH pixel
+         it now takes a traced answer and is NOT scaled by LIGHTING_INDIRECT;
+         beyond the volume it keeps the old analytic fill, which IS scaled. A
+         visible ring at the hand-off means the two are not in the same units.
+       - Rays that run out of range now take a directional far-field colour
+         instead of flat sky. Large interiors should stop reading as a uniform
+         blue wash.
+       - Cone stepping over-occludes slightly past GI_CONE_BASE: a one-block gap
+         at 20 metres stops letting light through. Set GI_CONE_BASE higher, or
+         turn GI_CONE_STEP off, to A/B it.
+
+  2. VRAM. SC_CASCADES 2 takes the surface cache from 402 MB to 805 MB. That is
+     inside the plan's stated 8 GB target but it is the single largest allocation
+     in the pack by a wide margin. Drop to SC_CASCADES 1 if anything OOMs -- but
+     read the note on GI_CONE_STEP first, because cone promotion is clamped to
+     the cache's coverage and at SC_CASCADES 1 it does nothing at all.
+
+  3. Reflections need INTEGRATED_PBR, which is OFF by default. With it off,
+     colortex7 clears to zero, every pixel takes dr0's early-out, and the whole
+     reflection stack costs one texture fetch per pixel and draws nothing. That
+     was left as the author's call: turning INTEGRATED_PBR on also enables
+     PBR_GEN_NORMALS and the per-block material classification, which changes
+     the look of the whole pack, not just its reflections.
+
+  4. Tune, roughly in order of how much each is likely to be wrong:
+     GI_CONE_BASE (occlusion detail vs ray cost), RC_SPACING / RC_RAYS /
+     RC_BLEND (far-field accuracy vs lag), REFLECTION_RAYS /
+     REFLECTION_SMOOTHNESS_MIN / REFLECTION_ACCUM_FRAMES, and the pre-existing
+     GI_AO_STRENGTH / GI_DN_SIGMA_* / GI_SKY_BRIGHTNESS knobs.
+
+  5. Still unverified from BEFORE this work, and still worth doing first if the
+     pack looks wrong in ways unrelated to the far field: contact AO (9abbabf),
+     the a-trous denoiser (5096165), sky SH (ae89987), LIGHTING_INDIRECT
+     decoupling (ff0b0d7).
 
 REMAINING OPTIMISATION HEADROOM
 
   Ranked, all needing a profile rather than more guessing.
 
-  a. CONE-STEPPING ACROSS CASCADES. The biggest single ray-cost win left. Lumen's
-     software tracer widens the cone with distance and samples coarser SDF mips;
-     the voxel analogue is to promote k by distance travelled, not only on
-     leaving a cascade. A 48-block gather ray currently walks cascade 0 at one
-     block per step for up to 83 steps; promoting to cascade 1 after ~16 blocks
-     and cascade 2 after ~48 gets it to roughly 32.
-     BLOCKED on the surface cache covering coarser cascades -- see item 3 above.
-     (This already bites today: a ray starting near the cascade-0 edge can cross
-     out and scLookup silently returns black.)
+  a. CONE-STEPPING ACROSS CASCADES -- DONE in Phase 3.2, but only half the
+     theoretical win is available and it is worth knowing why. Promotion is
+     CLAMPED to SC_CASCADES-1, because a ray promoted into a cascade the surface
+     cache does not store resolves against radiance that was never written and
+     comes back black. At SC_CASCADES 2 a 48-block gather ray therefore runs
+     cascade 0 to 16 blocks and cascade 1 for the rest -- about 56 steps against
+     the old 83, not the ~32 a three-cascade cache would allow.
+     Raising SC_CASCADES to 3 would unlock the rest, and is blocked on
+     GL_MAX_3D_TEXTURE_SIZE: the cache image would need 2304 rows and 2048 is a
+     common limit. Splitting the atlas into two images, or dropping to
+     R11F_G11F_B10F with the validity tag moved out of alpha, would both work.
 
   b. IMPORTANCE SAMPLING from the cache. Lumen builds a per-probe PDF from the
      previous frame's radiance and inverse-CDF samples it. A coarse luminance
